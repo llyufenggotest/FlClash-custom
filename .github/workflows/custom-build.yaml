@@ -1,0 +1,112 @@
+name: Custom Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - my-magic-ui
+
+env:
+  FLUTTER_VERSION: '3.44.4'
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Android arm64-v8a
+            platform: android
+            os: ubuntu-latest
+            args: android --arch arm64 --targets apk --env stable -v
+            artifact: FlClash-android-arm64-v8a
+          - name: Windows x64
+            platform: windows
+            os: windows-2022
+            args: windows --targets zip,exe --env stable -v
+            artifact: FlClash-windows-x64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Enable Git long paths
+        if: matrix.platform == 'windows'
+        run: git config --global core.longpaths true
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.4'
+          cache-dependency-path: core/go.sum
+
+      - name: Setup Rust
+        if: matrix.platform == 'windows'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: master
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Setup Android NDK
+        if: matrix.platform == 'android'
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r28c
+          add-to-path: true
+          link-to-sdk: true
+
+      - name: Setup Android signing
+        if: matrix.platform == 'android'
+        shell: bash
+        env:
+          KEYSTORE: ${{ secrets.KEYSTORE }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          printf '%s' "$KEYSTORE" | base64 --decode > android/app/keystore.jks
+          {
+            printf 'keyAlias=%s\n' "$KEY_ALIAS"
+            printf 'storePassword=%s\n' "$STORE_PASSWORD"
+            printf 'keyPassword=%s\n' "$KEY_PASSWORD"
+          } >> android/local.properties
+
+      - name: Install Flutter dependencies
+        run: |
+          flutter --version
+          flutter pub get
+
+      - name: Verify Windows toolchain
+        if: matrix.platform == 'windows'
+        shell: bash
+        run: |
+          rustc --version
+          cargo --version
+          rustup target list --installed
+
+      - name: Build
+        run: dart setup.dart ${{ matrix.args }}
+
+      - name: Verify outputs
+        shell: bash
+        run: |
+          test -d dist
+          find dist -maxdepth 2 -type f -print
+          test -n "$(find dist -maxdepth 2 -type f -print -quit)"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/
+          if-no-files-found: error

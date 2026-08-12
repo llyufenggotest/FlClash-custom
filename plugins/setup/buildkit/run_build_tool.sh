@@ -5,12 +5,27 @@ set -e
 BASEDIR=$(cd "$(dirname "$0")" && pwd)
 PROJECT_DIR="${PROJECT_DIR:-$(pwd)}"
 
+echo "========================"
+echo "PWD=$PWD"
+echo "PROJECT_DIR=$PROJECT_DIR"
+env | grep PROJECT_DIR
+echo "========================"
+
 if [ ! -f "$PROJECT_DIR/pubspec.yaml" ] || [ ! -d "$PROJECT_DIR/core" ]; then
   echo "Error: Could not find project root at $PROJECT_DIR" >&2
   exit 1
 fi
 
 BUILD_TOOL_PKG_DIR="$BASEDIR/build_tool"
+
+# Windows Git Bash -> Windows Dart
+# Dart on Windows 不识别 /h/...，转换成 H:/...
+if command -v cygpath >/dev/null 2>&1; then
+  BUILD_TOOL_PKG_DIR=$(cygpath -m "$BUILD_TOOL_PKG_DIR")
+fi
+
+echo "BUILD_TOOL_PKG_DIR=$BUILD_TOOL_PKG_DIR"
+
 BUILD_TOOL_TEMP_DIR="$PROJECT_DIR/build/setup_build_tool"
 
 mkdir -p "$BUILD_TOOL_TEMP_DIR"
@@ -35,10 +50,15 @@ dependencies:
     path: "$BUILD_TOOL_PKG_DIR"
 EOF
 
+echo "===== Generated pubspec.yaml ====="
+cat pubspec.yaml
+echo "=================================="
+
 mkdir -p "bin"
 
 cat << EOF > "bin/build_tool_runner.dart"
 import 'package:build_tool/build_tool.dart' as build_tool;
+
 void main(List<String> args) {
   build_tool.runMain(args);
 }
@@ -71,7 +91,7 @@ if [ ! -f "$PACKAGE_HASH_FILE" ]; then
 fi
 
 if [ ! -f "bin/build_tool_runner.dill" ]; then
-  "$DART" compile kernel bin/build_tool_runner.dart
+    "$DART" compile kernel bin/build_tool_runner.dart
 fi
 
 set +e
@@ -81,10 +101,10 @@ set +e
 exit_code=$?
 
 if [ $exit_code == 253 ]; then
-  "$DART" pub get --no-precompile
-  "$DART" compile kernel bin/build_tool_runner.dart
-  "$DART" bin/build_tool_runner.dill "$@" --root-dir "$PROJECT_DIR"
-  exit_code=$?
+    "$DART" pub get --no-precompile
+    "$DART" compile kernel bin/build_tool_runner.dart
+    "$DART" bin/build_tool_runner.dill "$@" --root-dir "$PROJECT_DIR"
+    exit_code=$?
 fi
 
 exit $exit_code
