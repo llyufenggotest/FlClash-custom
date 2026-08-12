@@ -29,6 +29,13 @@ jobs:
             artifact: FlClash-windows-x64
 
     steps:
+      - name: Free disk space for Android build
+        if: matrix.platform == 'android'
+        shell: bash
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android/sdk/system-images /opt/ghc /usr/local/.ghcup
+          df -h /
+
       - name: Checkout
         uses: actions/checkout@v5
         with:
