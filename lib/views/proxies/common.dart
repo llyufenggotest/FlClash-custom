@@ -79,7 +79,7 @@ Future<void> proxyDelayTest(Proxy proxy, [String? testUrl]) async {
   }
 }
 
-const proxyDelayTestConcurrency = 10;
+const proxyDelayTestConcurrency = 20;
 
 Future<void> runWithConcurrencyLimit<T>(
   Iterable<T> items, {

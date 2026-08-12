@@ -10,8 +10,8 @@ void main() {
     final completed = <int>[];
 
     await runWithConcurrencyLimit(
-      List<int>.generate(37, (index) => index),
-      concurrency: 10,
+      List<int>.generate(57, (index) => index),
+      concurrency: proxyDelayTestConcurrency,
       action: (item) async {
         active += 1;
         if (active > maxActive) {
@@ -23,8 +23,8 @@ void main() {
       },
     );
 
-    expect(maxActive, lessThanOrEqualTo(10));
-    expect(completed, hasLength(37));
-    expect(completed.toSet(), hasLength(37));
+    expect(maxActive, lessThanOrEqualTo(proxyDelayTestConcurrency));
+    expect(completed, hasLength(57));
+    expect(completed.toSet(), hasLength(57));
   });
 }
