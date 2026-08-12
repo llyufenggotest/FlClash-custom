@@ -79,15 +79,36 @@ Future<void> proxyDelayTest(Proxy proxy, [String? testUrl]) async {
   }
 }
 
-Future<void> delayTest(List<Proxy> proxies, [String? testUrl]) async {
-  final batches = proxies.batch(100);
-  for (final batch in batches) {
-    await Future.wait(
-      batch.map((proxy) async {
-        await proxyDelayTest(proxy, testUrl);
-      }),
+const proxyDelayTestConcurrency = 10;
+
+Future<void> runWithConcurrencyLimit<T>(
+  Iterable<T> items, {
+  required int concurrency,
+  required Future<void> Function(T item) action,
+}) async {
+  if (concurrency <= 0) {
+    throw ArgumentError.value(
+      concurrency,
+      'concurrency',
+      'must be greater than zero',
     );
   }
+  final iterator = items.iterator;
+  Future<void> worker() async {
+    while (iterator.moveNext()) {
+      await action(iterator.current);
+    }
+  }
+
+  await Future.wait(List<Future<void>>.generate(concurrency, (_) => worker()));
+}
+
+Future<void> delayTest(List<Proxy> proxies, [String? testUrl]) async {
+  await runWithConcurrencyLimit(
+    proxies,
+    concurrency: proxyDelayTestConcurrency,
+    action: (proxy) => proxyDelayTest(proxy, testUrl),
+  );
   globalState.container.read(sortNumProvider.notifier).add();
 }
 
