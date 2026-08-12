@@ -79,7 +79,10 @@ Future<void> proxyDelayTest(Proxy proxy, [String? testUrl]) async {
   }
 }
 
-const proxyDelayTestConcurrency = 15;
+// Keep this below the Go core limit (50). On Windows, delay tests also cross
+// named-pipe IPC; device testing showed 15 and 20 still cause false timeouts,
+// while 10 completes reliably. Do not raise without Windows bulk-test evidence.
+const proxyDelayTestConcurrency = 10;
 
 Future<void> runWithConcurrencyLimit<T>(
   Iterable<T> items, {
