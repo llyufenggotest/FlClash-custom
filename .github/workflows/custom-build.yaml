@@ -27,6 +27,16 @@ jobs:
             os: windows-2022
             args: windows --targets zip,exe --env stable -v
             artifact: FlClash-windows-x64
+          - name: macOS Intel x64
+            platform: macos
+            os: macos-15-intel
+            args: macos --targets dmg --env stable -v
+            artifact: FlClash-macos-x64
+          - name: macOS Apple Silicon arm64
+            platform: macos
+            os: macos-latest
+            args: macos --targets dmg --env stable -v
+            artifact: FlClash-macos-arm64
 
     steps:
       - name: Free disk space for Android build
@@ -63,6 +73,12 @@ jobs:
           channel: master
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
+
+      - name: Setup Xcode
+        if: matrix.platform == 'macos'
+        run: |
+          sudo xcode-select -s /Applications/Xcode_26.3.app || sudo xcode-select -s /Applications/Xcode_26.2.app
+          xcodebuild -version
 
       - name: Setup Android NDK
         if: matrix.platform == 'android'
