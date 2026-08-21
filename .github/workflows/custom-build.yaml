@@ -97,6 +97,11 @@ jobs:
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
+          set -euo pipefail
+          if [[ -z "$KEYSTORE" || -z "$KEY_ALIAS" || -z "$STORE_PASSWORD" || -z "$KEY_PASSWORD" ]]; then
+            echo "Android signing secrets are absent; using unsigned/debug signing fallback."
+            exit 0
+          fi
           printf '%s' "$KEYSTORE" | base64 --decode > android/app/keystore.jks
           {
             printf 'keyAlias=%s\n' "$KEY_ALIAS"
