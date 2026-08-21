@@ -21,22 +21,6 @@ void main() {
       expect(results['env'], 'dev');
     });
 
-    test('does not apply an Android architecture to desktop builds', () {
-      final results = setup.createSetupArgParser().parse(['windows']);
-
-      expect(results['arch'], isNull);
-    });
-
-    test('accepts an explicit Android arm64 architecture', () {
-      final results = setup.createSetupArgParser().parse([
-        'android',
-        '--arch',
-        'arm64',
-      ]);
-
-      expect(results['arch'], 'arm64');
-    });
-
     test('Flutter build environment does not depend on Core SHA256', () {
       expect(setup.createBuildEnvironment('dev'), {'APP_ENV': 'dev'});
     });

@@ -79,39 +79,15 @@ Future<void> proxyDelayTest(Proxy proxy, [String? testUrl]) async {
   }
 }
 
-// Keep this below the Go core limit (50). On Windows, delay tests also cross
-// named-pipe IPC; device testing showed 15 and 20 still cause false timeouts,
-// while 10 completes reliably. Do not raise without Windows bulk-test evidence.
-const proxyDelayTestConcurrency = 10;
-
-Future<void> runWithConcurrencyLimit<T>(
-  Iterable<T> items, {
-  required int concurrency,
-  required Future<void> Function(T item) action,
-}) async {
-  if (concurrency <= 0) {
-    throw ArgumentError.value(
-      concurrency,
-      'concurrency',
-      'must be greater than zero',
+Future<void> delayTest(List<Proxy> proxies, [String? testUrl]) async {
+  final batches = proxies.batch(maxConcurrentDelayTests);
+  for (final batch in batches) {
+    await Future.wait(
+      batch.map((proxy) async {
+        await proxyDelayTest(proxy, testUrl);
+      }),
     );
   }
-  final iterator = items.iterator;
-  Future<void> worker() async {
-    while (iterator.moveNext()) {
-      await action(iterator.current);
-    }
-  }
-
-  await Future.wait(List<Future<void>>.generate(concurrency, (_) => worker()));
-}
-
-Future<void> delayTest(List<Proxy> proxies, [String? testUrl]) async {
-  await runWithConcurrencyLimit(
-    proxies,
-    concurrency: proxyDelayTestConcurrency,
-    action: (proxy) => proxyDelayTest(proxy, testUrl),
-  );
   globalState.container.read(sortNumProvider.notifier).add();
 }
 

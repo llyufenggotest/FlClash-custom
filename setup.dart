@@ -172,11 +172,6 @@ Future<int> _package(
     return activateResult.exitCode;
   }
 
-  if (platform == 'windows' && androidArch != null) {
-    stderr.writeln('The Android --arch option cannot be used for Windows.');
-    return 64;
-  }
-
   final process = await Process.start(
     'flutter_distributor',
     [
@@ -193,46 +188,17 @@ Future<int> _package(
       ...descriptionArgs,
     ],
     includeParentEnvironment: true,
-    environment: {if (androidArch != null) 'ANDROID_ARCH': androidArch},
+    environment: {'ANDROID_ARCH': ?androidArch},
     runInShell: Platform.isWindows,
   );
 
   process.stdout.listen((data) {
     stdout.write(utf8.decode(data));
   });
-
-  // [✨强迫症专属修复：拦截并屏蔽底层转换 Bug 报错]
-  var hasCastingBug = false;
   process.stderr.listen((data) {
-    final msg = utf8.decode(data);
-    if (platform == 'android' &&
-        Platform.isWindows &&
-        msg.contains('_BuildAndroidApkResult')) {
-      hasCastingBug = true;
-      return; // 直接拦截掉这句报错
-    }
-    // 拦截后续由这个 Bug 引发的栈追踪（带有 #0, #1 标志的行或 Unhandled exception）
-    if (hasCastingBug &&
-        (msg.contains('#') ||
-            msg.contains('Unhandled exception') ||
-            msg.contains('type cast'))) {
-      return;
-    }
-    stderr.write(msg);
+    stderr.write(utf8.decode(data));
   });
-
-  var exitCode = await process.exitCode;
-
-  // 治愈强迫症：如果只是因为那个已知 Bug 崩溃，我们强制认为它成功了！
-  if (platform == 'android' && Platform.isWindows && hasCastingBug) {
-    stdout.writeln('\n🎉 [完美治愈] Android APK 构建完毕！(已自动屏蔽底层工具的转换报错)');
-    exitCode = 0;
-  }
-
-  if (exitCode != 0) {
-    stderr.writeln('flutter_distributor failed with exit code $exitCode.');
-  }
-
+  final exitCode = await process.exitCode;
   return exitCode;
 }
 
