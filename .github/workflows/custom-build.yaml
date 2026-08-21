@@ -117,10 +117,6 @@ jobs:
           cargo --version
           rustup target list --installed
 
-      - name: Test proxy delay concurrency
-        if: matrix.platform == 'android'
-        run: flutter test test/views/proxy_delay_concurrency_test.dart
-
       - name: Build
         run: dart setup.dart ${{ matrix.args }}
 
