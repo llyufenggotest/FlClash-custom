@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - my-magic-ui
+      - fastup-integration
 
 env:
   FLUTTER_VERSION: '3.44.4'
@@ -113,6 +113,12 @@ jobs:
         run: |
           flutter --version
           flutter pub get
+
+      - name: Verify Fastup integration
+        shell: bash
+        run: |
+          (cd core/Clash.Meta && go test ./adapter/outbound ./adapter)
+          flutter test test/common/fastup_subscription_test.dart
 
       - name: Verify Windows toolchain
         if: matrix.platform == 'windows'

@@ -1,7 +1,7 @@
 [submodule "core/Clash.Meta"]
 	path = core/Clash.Meta
-	url = https://github.com/llyufeng/Clash.Meta-custom.git
-	branch = my-magic-mod
+	url = https://github.com/llyufenggotest/Clash.Meta-custom.git
+	branch = fastup-integration
 [submodule "core/sing-shadowsocks2"]
 	path = core/sing-shadowsocks2
 	url = https://github.com/llyufeng/sing-shadowsocks2-meta.git
