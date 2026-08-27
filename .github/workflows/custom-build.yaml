@@ -25,7 +25,7 @@ jobs:
           - name: Windows x64
             platform: windows
             os: windows-2022
-            args: windows --targets zip,exe --env stable -v
+            args: windows --targets zip --env stable -v
             artifact: FlClash-windows-x64
           - name: macOS Intel x64
             platform: macos
