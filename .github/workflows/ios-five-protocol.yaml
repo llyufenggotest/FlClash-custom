@@ -48,7 +48,11 @@ jobs:
         shell: bash
         run: |
           (cd core/mihomo && go test ./transport/oppa && go test ./adapter -run 'Test(ParseOppa|ParseTrojanFastup)' -count=1 && go test ./adapter/outbound -run 'Test(Fastup|Vless)' -count=1)
-          (cd core && go build ./... && go build -tags with_low_memory ./... && go vet ./... && go test ./...)
+          # Type-check both memory profiles with cgo off: core/platform only has
+          # ios/android/linux files, so a darwin+cgo resolution finds none and
+          # fails. The real iOS compile happens in `setup.dart ios`, which builds
+          # libclash.a and libclash_lowmem.a for ios/arm64.
+          (cd core && CGO_ENABLED=0 go build ./... && CGO_ENABLED=0 go build -tags with_low_memory ./... && CGO_ENABLED=0 go vet ./... && CGO_ENABLED=0 go test ./...)
           python3 scripts/verify_ios_contracts.py
           flutter test test/common/fastup_subscription_test.dart
           flutter test test/oppa_yaml_test.dart
