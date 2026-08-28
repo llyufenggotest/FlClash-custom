@@ -5,19 +5,33 @@ import Foundation
 final class NativeResourceHeartbeat {
   private var timer: DispatchSourceTimer?
   private let startedAt = ProcessInfo.processInfo.systemUptime
+  private var pressureReported = false
+
+  /// iOS terminates a packet-tunnel provider near a ~50 MB phys_footprint.
+  /// Warn early so the last line before a jetsam kill is explicit instead of
+  /// having to be inferred from footprint trends after the fact.
+  private static let footprintWarningMB = 40
 
   func start() {
     stop()
+    pressureReported = false
     let timer = DispatchSource.makeTimerSource(
       queue: DispatchQueue(label: "com.follow.clash.necore-heartbeat")
     )
     timer.schedule(deadline: .now(), repeating: .seconds(1), leeway: .milliseconds(200))
-    timer.setEventHandler {
+    timer.setEventHandler { [weak self] in
+      guard let self else { return }
       let usage = Self.resourceUsage()
       let uptime = Int((ProcessInfo.processInfo.systemUptime - self.startedAt) * 1000)
       NativeDiagnosticLog.shared.append(
         "heartbeat uptime_ms=\(uptime) resident_mb=\(usage.residentMB) footprint_mb=\(usage.footprintMB) virtual_mb=\(usage.virtualMB)"
       )
+      if usage.footprintMB >= Self.footprintWarningMB, !self.pressureReported {
+        self.pressureReported = true
+        NativeDiagnosticLog.shared.append(
+          "memory_pressure_warning footprint_mb=\(usage.footprintMB) threshold_mb=\(Self.footprintWarningMB)"
+        )
+      }
     }
     self.timer = timer
     timer.resume()
