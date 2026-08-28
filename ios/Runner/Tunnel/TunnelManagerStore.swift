@@ -42,7 +42,9 @@ final class TunnelManagerStore {
     subsystem: Bundle.main.bundleIdentifier ?? "com.follow.clash",
     category: "TunnelManagerStore"
   )
-  private let loadTimeout: TimeInterval = 5
+  // Preference loading is separate from NECore startup. Allow slow iOS
+  // preference services to return without creating a false startup failure.
+  private let loadTimeout: TimeInterval = 15
   private let maxInvalidationReloadCount = 1
 
   private var cacheGeneration: UInt64 = 0

@@ -47,6 +47,18 @@ void main() {
     expect(service, contains("invokeMethod<String>('getNativeLogs')"));
   });
 
+  test('slow NECore startup is not force-stopped into an on-demand restart loop', () {
+    final coordinator = source('ios/Runner/Tunnel/TunnelCoordinator.swift');
+    expect(coordinator, contains('connectTimeout: TimeInterval = 30'));
+    expect(coordinator, contains('startup still pending after timeout'));
+    final runningStart = coordinator.indexOf('private func reconcileRunningTunnel');
+    final runningEnd = coordinator.indexOf('private func settleBeforeStart');
+    final runningBody = coordinator.substring(runningStart, runningEnd);
+    expect(runningBody, isNot(contains('cleanUpFailedStart')));
+    expect(coordinator, isNot(contains('failed start requested cleanup stop')));
+    expect(coordinator, contains('settle still pending after timeout'));
+  });
+
   test('extension has process-local resource heartbeat', () {
     final heartbeat = source('ios/NECore/NativeResourceHeartbeat.swift');
     final provider = source('ios/NECore/PacketTunnelProvider.swift');
