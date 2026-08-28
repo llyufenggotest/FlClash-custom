@@ -30,6 +30,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     guard let vpnOptions = sharedStateStore.loadVPNOptions() else {
       logger.error("startTunnel failed: missing vpn options")
       nativeLog("startTunnel failed missing_vpn_options")
+      nativeLog("startup_failure phase=vpn_options_missing")
       completionHandler(PacketTunnelProviderError.missingVPNOptions)
       return
     }
@@ -47,6 +48,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
           "setTunnelNetworkSettings failed: \(error.localizedDescription, privacy: .public)"
         )
         self.nativeLog("setTunnelNetworkSettings failed error=\(self.safeError(error))")
+        self.nativeLog("startup_failure phase=set_network_settings_failed")
         completionHandler(error)
         return
       }
@@ -59,6 +61,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
           "startTunnel failed: tunnel file descriptor missing"
         )
         self.nativeLog("tunnel file descriptor missing")
+        self.nativeLog("startup_failure phase=tunnel_fd_missing")
         completionHandler(
           PacketTunnelProviderError.couldNotDetermineFileDescriptor
         )
@@ -86,6 +89,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             "quickSetup failed: \(message, privacy: .public)"
           )
           self.nativeLog("quickSetup failed")
+          self.nativeLog("startup_failure phase=quick_setup_failed response_bytes=\(result.count)")
           self.rollbackPartialStart(reason: "quick_setup_failed")
           completionHandler(PacketTunnelProviderError.couldNotStartCoreTun)
           return
@@ -102,6 +106,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         )
         guard let coreTunOptionsData = try? JSONEncoder().encode(coreTunOptions)
         else {
+          self.nativeLog("startup_failure phase=tun_options_encoding_failed")
           self.rollbackPartialStart(reason: "tun_options_encoding_failed")
           completionHandler(PacketTunnelProviderError.couldNotStartCoreTun)
           return
@@ -119,6 +124,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
           self.sharedStateStore.saveRunTime()
           self.resourceHeartbeat.start()
         } else {
+          self.nativeLog("startup_failure phase=start_tun_failed result=failure")
           self.rollbackPartialStart(reason: "start_tun_failed")
         }
         completionHandler(
