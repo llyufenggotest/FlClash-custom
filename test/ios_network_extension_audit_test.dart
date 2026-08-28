@@ -68,4 +68,70 @@ void main() {
     expect(provider, contains('resourceHeartbeat.start()'));
     expect(provider, contains('resourceHeartbeat.stop()'));
   });
+
+  test('only one process binds the profile DNS listener', () {
+    final defaults = source('core/dns_listener_default.go');
+    final iosApp = source('core/dns_listener_ios_app.go');
+    final common = source('core/common.go');
+    final hub = source('core/hub.go');
+    final path = source('core/mihomo/constant/path.go');
+    expect(defaults, contains('//go:build !(ios && !with_low_memory)'));
+    expect(defaults, contains('disableDNSListener = false'));
+    expect(defaults, contains('secondaryCacheFileName = ""'));
+    expect(iosApp, contains('//go:build ios && !with_low_memory'));
+    expect(iosApp, contains('disableDNSListener = true'));
+    expect(iosApp, contains('network-extension'));
+    expect(iosApp, contains('cache-app.db'));
+    expect(common, contains('applyDNSListenerOwnership(currentConfig)'));
+    expect(common, contains('cfg.DNS.Listen = ""'));
+    expect(hub, contains('constant.SetCacheFileName(secondaryCacheFileName)'));
+    expect(path, contains('func SetCacheFileName'));
+    expect(path, contains('p.cacheFileName()'));
+  });
+
+  test('config reload returns pages to the OS on memory-constrained builds', () {
+    final common = source('core/common.go');
+    expect(common, contains('releaseReloadMemory()'));
+    expect(common, contains('debug.FreeOSMemory()'));
+    final start = common.indexOf('func releaseReloadMemory');
+    final body = common.substring(start, start + 400);
+    expect(body, contains('features.WithLowMemory'));
+    expect(body, contains('features.IOS'));
+  });
+
+  test('native log rotation preserves line boundaries', () {
+    for (final path in [
+      'ios/NECore/NativeDiagnosticLog.swift',
+      'ios/Runner/ServiceChannel.swift',
+    ]) {
+      final text = source(path);
+      expect(text, contains('static func retainedTail'));
+      expect(text, contains('firstIndex(of: 0x0A)'));
+      expect(text, isNot(contains('data.suffix(min(data.count')));
+      expect(text, contains('maxBytes: UInt64 = 4 * 1024 * 1024'));
+    }
+  });
+
+  test('durable native log drops debug spam and keeps failure shapes', () {
+    final log = source('ios/NECore/NativeDiagnosticLog.swift');
+    final channel = source('ios/Runner/ServiceChannel.swift');
+    final provider = source('ios/NECore/PacketTunnelProvider.swift');
+    expect(log, contains('caseInsensitiveCompare("debug")'));
+    expect(channel, contains('if call.method != "invokeMethod"'));
+    for (final phase in [
+      'startup_failure phase=vpn_options_missing',
+      'startup_failure phase=set_network_settings_failed',
+      'startup_failure phase=tunnel_fd_missing',
+      'startup_failure phase=quick_setup_failed',
+      'startup_failure phase=start_tun_failed',
+    ]) {
+      expect(provider, contains(phase));
+    }
+  });
+
+  test('heartbeat warns before jetsam instead of only after the fact', () {
+    final heartbeat = source('ios/NECore/NativeResourceHeartbeat.swift');
+    expect(heartbeat, contains('memory_pressure_warning'));
+    expect(heartbeat, contains('footprintWarningMB'));
+  });
 }

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"sync"
 
 	"github.com/metacubex/mihomo/adapter"
@@ -272,6 +273,7 @@ func applyConfig(params *SetupParams) error {
 	if err != nil {
 		currentConfig, _ = config.ParseRawConfig(config.DefaultRawConfig())
 	}
+	applyDNSListenerOwnership(currentConfig)
 	hub.ApplyConfig(currentConfig)
 	patchSelectGroup(params.SelectedMap)
 	updateListeners()
@@ -280,7 +282,39 @@ func applyConfig(params *SetupParams) error {
 	} else {
 		updater.RegisterGeoUpdater()
 	}
+	releaseReloadMemory()
 	return err
+}
+
+// applyDNSListenerOwnership keeps a single process bound to the profile's DNS
+// listener. Two processes racing for the same port makes one of them fail with
+// "address already in use", and the loser silently loses fake-ip and sniffing.
+func applyDNSListenerOwnership(cfg *config.Config) {
+	if !disableDNSListener || cfg == nil || cfg.DNS == nil {
+		return
+	}
+	if cfg.DNS.Listen == "" {
+		return
+	}
+	log.Infoln(
+		"[DNS] releasing listener %s; owner is %s",
+		cfg.DNS.Listen,
+		dnsListenerOwner,
+	)
+	cfg.DNS.Listen = ""
+}
+
+// releaseReloadMemory returns pages retained by a config reload to the OS.
+// runtime.GC alone only frees the Go heap; iOS jetsam accounts phys_footprint,
+// so a Network Extension that reloads a profile keeps growing until it is
+// killed. Rebuilding geosite matchers is the dominant allocation here because
+// the low-memory build has the matcher cache disabled.
+func releaseReloadMemory() {
+	if !features.WithLowMemory && !features.IOS && !features.Android {
+		return
+	}
+	runtime.GC()
+	debug.FreeOSMemory()
 }
 
 func UnmarshalJson(data []byte, v any) error {

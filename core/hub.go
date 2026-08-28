@@ -76,6 +76,10 @@ func handleInitClash(params *InitParams) bool {
 	defer runLock.Unlock()
 	version = params.Version
 	constant.SetHomeDir(params.HomeDir)
+	if secondaryCacheFileName != "" {
+		// Avoid racing the process that owns the canonical bbolt cache.
+		constant.SetCacheFileName(secondaryCacheFileName)
+	}
 	constant.Path.MMDB()
 	constant.Path.ASN()
 	constant.Path.GeoIP()

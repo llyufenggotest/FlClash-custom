@@ -97,7 +97,12 @@ final class ServiceChannel {
   }
 
   private func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
-    log("handle method=\(call.method)")
+    // "invokeMethod" is the high-frequency core RPC envelope and carries no
+    // useful information at this layer. Recording it floods the bounded native
+    // log and evicts the lifecycle window we actually need after a failure.
+    if call.method != "invokeMethod" {
+      log("handle method=\(call.method)")
+    }
     switch call.method {
     case "invokeMethod":
       guard let data = methodCallData(call) else {
@@ -185,7 +190,7 @@ final class ServiceChannel {
 final class NativeDiagnosticLog {
   static let shared = NativeDiagnosticLog()
   private let queue = DispatchQueue(label: "com.follow.clash.native-diagnostics")
-  private let maxBytes: UInt64 = 512 * 1024
+  private let maxBytes: UInt64 = 4 * 1024 * 1024
   private let runnerFile = "ios-runner-native.log"
   private let neCoreFile = "ios-necore-native.log"
   private let tunnelAttemptIDKey = "tunnelAttemptID"
@@ -238,7 +243,19 @@ final class NativeDiagnosticLog {
     let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(UInt64.init) ?? 0
     guard size + incomingBytes > maxBytes else { return }
     let data = (try? Data(contentsOf: url)) ?? Data()
-    try Data(data.suffix(min(data.count, Int(maxBytes / 2)))).write(to: url, options: .atomic)
+    try Self.retainedTail(of: data, limit: Int(maxBytes / 2))
+      .write(to: url, options: .atomic)
+  }
+
+  /// Keeps the newest bytes but starts at a line boundary, so the first
+  /// retained record still carries a full timestamp and attempt ID.
+  static func retainedTail(of data: Data, limit: Int) -> Data {
+    guard data.count > limit else { return data }
+    let tail = data.suffix(limit)
+    guard let newline = tail.firstIndex(of: 0x0A) else { return Data(tail) }
+    let start = tail.index(after: newline)
+    guard start < tail.endIndex else { return Data() }
+    return Data(tail[start...])
   }
 
   private func attemptID() -> String {

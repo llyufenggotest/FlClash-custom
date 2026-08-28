@@ -6,7 +6,7 @@ import Foundation
 final class NativeDiagnosticLog: NSObject {
   static let shared = NativeDiagnosticLog()
   private let queue = DispatchQueue(label: "com.follow.clash.necore-diagnostics")
-  private let maxBytes: UInt64 = 512 * 1024
+  private let maxBytes: UInt64 = 4 * 1024 * 1024
   private let fileName = "ios-necore-native.log"
   private let tunnelAttemptIDKey = "tunnelAttemptID"
 
@@ -14,6 +14,11 @@ final class NativeDiagnosticLog: NSObject {
 
   @objc(appendCoreLogLevel:message:)
   static func appendCoreLog(level: String, message: String) {
+    // Persist info and above only. The profile's log level drives the core, and
+    // debug emits tens of lines per second, which rotates the bounded file
+    // before a tester can export it. Debug still reaches Unified Logging and
+    // the in-app log view; only the durable file is filtered.
+    guard level.caseInsensitiveCompare("debug") != .orderedSame else { return }
     shared.append("core level=\(level) message=\(sanitize(message))")
   }
 
@@ -47,7 +52,19 @@ final class NativeDiagnosticLog: NSObject {
     let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(UInt64.init) ?? 0
     guard size + incomingBytes > maxBytes else { return }
     let data = (try? Data(contentsOf: url)) ?? Data()
-    try Data(data.suffix(min(data.count, Int(maxBytes / 2)))).write(to: url, options: .atomic)
+    try Self.retainedTail(of: data, limit: Int(maxBytes / 2))
+      .write(to: url, options: .atomic)
+  }
+
+  /// Keeps the newest bytes but starts at a line boundary. Cutting mid-line
+  /// leaves a truncated first record that breaks timestamp/attempt parsing.
+  static func retainedTail(of data: Data, limit: Int) -> Data {
+    guard data.count > limit else { return data }
+    let tail = data.suffix(limit)
+    guard let newline = tail.firstIndex(of: 0x0A) else { return Data(tail) }
+    let start = tail.index(after: newline)
+    guard start < tail.endIndex else { return Data() }
+    return Data(tail[start...])
   }
 
   private func attemptID() -> String {
