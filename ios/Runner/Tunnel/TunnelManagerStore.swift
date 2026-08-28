@@ -177,6 +177,10 @@ final class TunnelManagerStore {
     return proto.providerBundleIdentifier == networkExtensionIdentifier
   }
 
+  func beginTunnelAttempt() -> String {
+    sharedStateStore.beginTunnelAttempt()
+  }
+
   func isCachedConnection(_ connection: NEVPNConnection) -> Bool {
     guard case .loaded(let manager) = cacheState,
       let manager

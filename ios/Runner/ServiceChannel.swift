@@ -130,6 +130,8 @@ final class ServiceChannel {
       Task {
         result(await tunnelController.getRunTime())
       }
+    case "getNativeLogs":
+      result(NativeDiagnosticLog.shared.exportText())
     default:
       result(FlutterMethodNotImplemented)
     }
@@ -174,5 +176,77 @@ final class ServiceChannel {
 
   private func log(_ message: String) {
     logger.debug("\(message, privacy: .public)")
+    NativeDiagnosticLog.shared.append(source: "Runner.ServiceChannel", message: message)
+  }
+}
+
+/// Failure-tolerant, bounded lifecycle diagnostics shared with the export UI.
+/// Callers must never pass full configurations, credentials, or node secrets.
+final class NativeDiagnosticLog {
+  static let shared = NativeDiagnosticLog()
+  private let queue = DispatchQueue(label: "com.follow.clash.native-diagnostics")
+  private let maxBytes: UInt64 = 512 * 1024
+  private let runnerFile = "ios-runner-native.log"
+  private let neCoreFile = "ios-necore-native.log"
+  private let tunnelAttemptIDKey = "tunnelAttemptID"
+
+  private init() {}
+
+  func append(source: String, message: String) {
+    queue.async { [weak self] in
+      guard let self, let url = self.fileURL(named: self.runnerFile),
+        let data = "\(ISO8601DateFormatter().string(from: Date())) [attempt=\(self.attemptID())] [\(source)] \(message)\n".data(using: .utf8)
+      else { return }
+      do {
+        try self.rotateIfNeeded(url: url, incomingBytes: UInt64(data.count))
+        if !FileManager.default.fileExists(atPath: url.path) {
+          FileManager.default.createFile(atPath: url.path, contents: nil)
+        }
+        let handle = try FileHandle(forWritingTo: url)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: data)
+        try handle.close()
+      } catch {
+        // Diagnostics must never block or fail tunnel control.
+      }
+    }
+  }
+
+  func exportText() -> String {
+    queue.sync {
+      [runnerFile, neCoreFile].compactMap { name in
+        guard let url = fileURL(named: name),
+          let data = try? Data(contentsOf: url),
+          let text = String(data: data, encoding: .utf8), !text.isEmpty
+        else { return nil }
+        return "--- \(name) ---\n\(text)"
+      }.joined(separator: "\n")
+    }
+  }
+
+  private func fileURL(named name: String) -> URL? {
+    let bundleIdentifier = Bundle.main.bundleIdentifier ?? "com.follow.clash"
+    let appBundleIdentifier = bundleIdentifier.hasSuffix(".NECore")
+      ? String(bundleIdentifier.dropLast(".NECore".count))
+      : bundleIdentifier
+    return FileManager.default.containerURL(
+      forSecurityApplicationGroupIdentifier: "group.\(appBundleIdentifier)"
+    )?.appendingPathComponent(name)
+  }
+
+  private func rotateIfNeeded(url: URL, incomingBytes: UInt64) throws {
+    let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(UInt64.init) ?? 0
+    guard size + incomingBytes > maxBytes else { return }
+    let data = (try? Data(contentsOf: url)) ?? Data()
+    try Data(data.suffix(min(data.count, Int(maxBytes / 2)))).write(to: url, options: .atomic)
+  }
+
+  private func attemptID() -> String {
+    let bundleIdentifier = Bundle.main.bundleIdentifier ?? "com.follow.clash"
+    let appBundleIdentifier = bundleIdentifier.hasSuffix(".NECore")
+      ? String(bundleIdentifier.dropLast(".NECore".count))
+      : bundleIdentifier
+    return UserDefaults(suiteName: "group.\(appBundleIdentifier)")?
+      .string(forKey: tunnelAttemptIDKey) ?? "none"
   }
 }

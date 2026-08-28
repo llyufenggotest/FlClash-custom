@@ -5,6 +5,10 @@
 #import <os/log.h>
 #import <string.h>
 
+@interface NECoreNativeDiagnosticLog : NSObject
++ (void)appendCoreLogLevel:(NSString *)level message:(NSString *)message;
+@end
+
 static void *NECoreCallbackQueueKey(void);
 static dispatch_queue_t NECoreCallbackQueue(void);
 
@@ -123,6 +127,11 @@ static void NECoreSystemLog(const char *level, const char *message) {
       NECoreLogType(level),
       "%{public}s",
       message);
+  NSString *levelString = level == NULL ? @"default" : [NSString stringWithUTF8String:level];
+  NSString *messageString = [NSString stringWithUTF8String:message];
+  if (messageString != nil) {
+    [NECoreNativeDiagnosticLog appendCoreLogLevel:levelString message:messageString];
+  }
 }
 
 @implementation NECoreBridge

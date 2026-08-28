@@ -57,7 +57,14 @@ class Logs extends _$Logs with AutoDisposeNotifierMixin {
   }
 
   Future<bool> exportLogs() async {
-    final logString = await encodeLogsTask(value.list);
+    var logString = await encodeLogsTask(value.list);
+    if (system.isIOS) {
+      final nativeLogs = await service?.getNativeLogs() ?? '';
+      if (nativeLogs.isNotEmpty) {
+        logString =
+            '$logString\n\n===== iOS Runner / Network Extension =====\n$nativeLogs';
+      }
+    }
     final tempFilePath = await appPath.tempFilePath;
     final file = File(tempFilePath);
     await file.safeWriteAsString(logString);

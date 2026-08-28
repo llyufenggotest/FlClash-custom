@@ -336,6 +336,10 @@ Future<int> packageIOSNoSign({
   String? iosDevelopmentTeam,
   required bool verbose,
 }) async {
+  final noSignEnvironment = Map<String, String>.from(Platform.environment)
+    ..['CODE_SIGNING_ALLOWED'] = 'NO'
+    ..['CODE_SIGNING_REQUIRED'] = 'NO'
+    ..['CODE_SIGN_IDENTITY'] = '';
   final process = await Process.start('flutter', [
     if (verbose) '--verbose',
     'build',
@@ -343,7 +347,7 @@ Future<int> packageIOSNoSign({
     '--release',
     '--no-codesign',
     '--dart-define-from-file=env.json',
-  ], workingDirectory: rootDir);
+  ], workingDirectory: rootDir, environment: noSignEnvironment);
   process.stdout.listen((data) {
     stdout.write(systemEncoding.decode(data));
   });

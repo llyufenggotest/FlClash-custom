@@ -283,8 +283,9 @@ final class TunnelCoordinator {
       }
 
       do {
+        let attemptID = managerStore.beginTunnelAttempt()
+        log("startVPNTunnel requested attempt=\(attemptID)")
         try manager.connection.startVPNTunnel()
-        log("start requested")
       } catch {
         if finishRunningRequestIfSatisfied(request, manager: manager) {
           return
@@ -364,6 +365,18 @@ final class TunnelCoordinator {
     if status.tunnelState == .stopped {
       finishTunnelRequest(request, actualState: .stopped)
       return
+    }
+
+    if manager.isOnDemandEnabled {
+      manager.isOnDemandEnabled = false
+      do {
+        try await awaitPreferenceResult { completion in
+          manager.saveToPreferences(completionHandler: completion)
+        }
+        log("stop disabled on-demand policy")
+      } catch {
+        log("stop disable on-demand failed: \(error.localizedDescription)")
+      }
     }
 
     if status != .disconnecting {
@@ -686,5 +699,6 @@ final class TunnelCoordinator {
 
   private func log(_ message: String) {
     logger.debug("\(message, privacy: .public)")
+    NativeDiagnosticLog.shared.append(source: "Runner.TunnelCoordinator", message: message)
   }
 }

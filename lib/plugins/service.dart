@@ -103,6 +103,11 @@ class Service {
     return DateTime.fromMillisecondsSinceEpoch(ms);
   }
 
+  Future<String> getNativeLogs() async {
+    if (!system.isIOS) return '';
+    return await methodChannel.invokeMethod<String>('getNativeLogs') ?? '';
+  }
+
   bool get hasListeners {
     return _listeners.isNotEmpty;
   }
