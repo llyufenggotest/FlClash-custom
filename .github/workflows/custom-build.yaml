@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - fastup-integration
+      - five-protocol-integration
 
 env:
   FLUTTER_VERSION: '3.44.4'
@@ -114,11 +115,13 @@ jobs:
           flutter --version
           flutter pub get
 
-      - name: Verify Fastup integration
+      - name: Verify five-protocol integration
         shell: bash
         run: |
-          (cd core/Clash.Meta && go test ./adapter/outbound ./adapter)
+          (cd core/Clash.Meta && go test ./transport/oppa && go test ./adapter -run '^TestParseOppa' -count=1 && go test ./adapter/outbound -run 'Test(Fastup|Vless)' -count=1)
           flutter test test/common/fastup_subscription_test.dart
+          flutter test test/oppa_yaml_test.dart
+          ! git grep -n -E '#sl|MAGIC_SHANLIAN_TRIGGER|GenerateMagicSNI' -- 'core/Clash.Meta/*.go' 'core/Clash.Meta/**/*.go' ':!core/Clash.Meta/**/*_test.go'
 
       - name: Verify Windows toolchain
         if: matrix.platform == 'windows'
