@@ -2,3 +2,7 @@
 	path = core/mihomo
 	url = git@github.com:chenx-dust/mihomo.git
 	branch = FlClash
+[submodule "core/sing-shadowsocks2"]
+	path = core/sing-shadowsocks2
+	url = https://github.com/llyufeng/sing-shadowsocks2-meta.git
+	branch = ios-integration

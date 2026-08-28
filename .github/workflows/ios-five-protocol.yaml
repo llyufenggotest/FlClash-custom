@@ -1,0 +1,71 @@
+name: iOS Five Protocol Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - five-protocol-ios
+
+permissions:
+  contents: read
+
+env:
+  FLUTTER_VERSION: '3.44.4'
+
+jobs:
+  ios:
+    name: Build unsigned iOS IPA
+    runs-on: macos-26
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.5'
+          cache-dependency-path: core/go.sum
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: master
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Setup Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode_26.3.app || sudo xcode-select -s /Applications/Xcode_26.2.app
+          xcodebuild -version
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Verify five-protocol and iOS contracts
+        shell: bash
+        run: |
+          (cd core/mihomo && go test ./transport/oppa && go test ./adapter -run 'Test(ParseOppa|ParseTrojanFastup)' -count=1 && go test ./adapter/outbound -run 'Test(Fastup|Vless)' -count=1)
+          flutter test test/common/fastup_subscription_test.dart
+          flutter test test/oppa_yaml_test.dart
+          flutter test test/ios_network_extension_audit_test.dart
+          flutter test test/setup_test.dart
+          ! git grep -n -E '#sl|MAGIC_SHANLIAN_TRIGGER|GenerateMagicSNI' -- 'core/mihomo/*.go' 'core/mihomo/**/*.go' ':!core/mihomo/**/*_test.go'
+
+      - name: Build unsigned IPA
+        run: dart setup.dart ios --no-codesign --ios-bundle-id com.follow.clash.llyufeng -v
+
+      - name: Verify IPA exists
+        shell: bash
+        run: |
+          find dist -maxdepth 2 -type f -print
+          test -n "$(find dist -type f -name '*.ipa' -print -quit)"
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v7
+        with:
+          name: FlClash-five-protocol-ios-arm64
+          path: dist/*.ipa
+          if-no-files-found: error

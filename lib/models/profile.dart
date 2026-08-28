@@ -197,6 +197,7 @@ extension ProfileExtension on Profile {
   }
 
   Future<Profile> saveFile(Uint8List bytes) async {
+    bytes = convertFastupSubscriptionBytes(bytes);
     String content = utf8.decode(bytes);
     final key = ageSecretKey;
     if (key != null && key.isNotEmpty) {
