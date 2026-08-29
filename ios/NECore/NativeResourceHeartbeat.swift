@@ -5,16 +5,30 @@ import Foundation
 final class NativeResourceHeartbeat {
   private var timer: DispatchSourceTimer?
   private let startedAt = ProcessInfo.processInfo.systemUptime
-  private var pressureReported = false
+  private var warnReported = false
+  private var lastReclaimUptime: TimeInterval = 0
 
   /// iOS terminates a packet-tunnel provider near a ~50 MB phys_footprint.
-  /// Warn early so the last line before a jetsam kill is explicit instead of
-  /// having to be inferred from footprint trends after the fact.
-  private static let footprintWarningMB = 40
+  /// Device traces showed 47 MB peaks immediately before an external stop, so
+  /// warning alone is not enough: the extension must actively shed pages.
+  private static let footprintWarningMB = 35
+  private static let footprintReclaimMB = 42
+  /// Reclaiming walks the whole Go heap. Throttle it so a sustained plateau
+  /// above the threshold cannot turn into a per-second stall.
+  private static let reclaimCooldown: TimeInterval = 15
+
+  /// Injected so the heartbeat stays unit-testable and never hard-depends on
+  /// the ObjC bridge being linked into a test target.
+  private let reclaim: () -> Void
+
+  init(reclaim: @escaping () -> Void = { NECoreBridge.releaseMemory() }) {
+    self.reclaim = reclaim
+  }
 
   func start() {
     stop()
-    pressureReported = false
+    warnReported = false
+    lastReclaimUptime = 0
     let timer = DispatchSource.makeTimerSource(
       queue: DispatchQueue(label: "com.follow.clash.necore-heartbeat")
     )
@@ -22,19 +36,43 @@ final class NativeResourceHeartbeat {
     timer.setEventHandler { [weak self] in
       guard let self else { return }
       let usage = Self.resourceUsage()
-      let uptime = Int((ProcessInfo.processInfo.systemUptime - self.startedAt) * 1000)
+      let uptimeSeconds = ProcessInfo.processInfo.systemUptime - self.startedAt
+      let uptime = Int(uptimeSeconds * 1000)
       NativeDiagnosticLog.shared.append(
         "heartbeat uptime_ms=\(uptime) resident_mb=\(usage.residentMB) footprint_mb=\(usage.footprintMB) virtual_mb=\(usage.virtualMB)"
       )
-      if usage.footprintMB >= Self.footprintWarningMB, !self.pressureReported {
-        self.pressureReported = true
+      if usage.footprintMB >= Self.footprintWarningMB, !self.warnReported {
+        self.warnReported = true
         NativeDiagnosticLog.shared.append(
           "memory_pressure_warning footprint_mb=\(usage.footprintMB) threshold_mb=\(Self.footprintWarningMB)"
         )
       }
+      guard usage.footprintMB >= Self.footprintReclaimMB else { return }
+      guard Self.shouldReclaim(
+        uptimeSeconds: uptimeSeconds,
+        lastReclaimUptime: self.lastReclaimUptime
+      ) else { return }
+      self.lastReclaimUptime = uptimeSeconds
+      NativeDiagnosticLog.shared.append(
+        "memory_pressure_reclaim footprint_mb=\(usage.footprintMB) threshold_mb=\(Self.footprintReclaimMB)"
+      )
+      self.reclaim()
+      let after = Self.resourceUsage()
+      NativeDiagnosticLog.shared.append(
+        "memory_pressure_reclaimed footprint_mb=\(after.footprintMB)"
+      )
     }
     self.timer = timer
     timer.resume()
+  }
+
+  /// First crossing always reclaims; later crossings wait out the cooldown.
+  static func shouldReclaim(
+    uptimeSeconds: TimeInterval,
+    lastReclaimUptime: TimeInterval
+  ) -> Bool {
+    if lastReclaimUptime == 0 { return true }
+    return uptimeSeconds - lastReclaimUptime >= reclaimCooldown
   }
 
   func stop() {

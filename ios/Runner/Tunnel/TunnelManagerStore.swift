@@ -33,6 +33,11 @@ private enum ManagerLoadError: LocalizedError {
   }
 }
 
+struct TunnelStartPayload {
+  let options: [String: NSObject]
+  let snapshotCommitted: Bool
+}
+
 @MainActor
 final class TunnelManagerStore {
   private let sharedStateStore: SharedStateStore
@@ -181,6 +186,25 @@ final class TunnelManagerStore {
 
   func beginTunnelAttempt() -> String {
     sharedStateStore.beginTunnelAttempt()
+  }
+
+  /// Commits the App Group snapshot and returns the in-memory start payload.
+  /// Called immediately before `startVPNTunnel(options:)` so the extension has
+  /// three independent ways to obtain its startup state.
+  func prepareTunnelStartPayload() -> TunnelStartPayload {
+    var committed = false
+    if let data = sharedStateStore.sharedStateData() {
+      committed = sharedStateStore.commitSharedStateSnapshot(data)
+      if !committed {
+        log("startVPNTunnel snapshot commit failed bytes=\(data.count)")
+      }
+    } else {
+      log("startVPNTunnel shared state unavailable for snapshot")
+    }
+    return TunnelStartPayload(
+      options: sharedStateStore.makeTunnelStartOptions(),
+      snapshotCommitted: committed
+    )
   }
 
   func isCachedConnection(_ connection: NEVPNConnection) -> Bool {

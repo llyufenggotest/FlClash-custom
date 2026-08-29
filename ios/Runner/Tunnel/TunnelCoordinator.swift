@@ -286,8 +286,14 @@ final class TunnelCoordinator {
 
       do {
         let attemptID = managerStore.beginTunnelAttempt()
-        log("startVPNTunnel requested attempt=\(attemptID)")
-        try manager.connection.startVPNTunnel()
+        // Commit the container snapshot and hand the payload to the system in
+        // memory. A freshly launched extension must not depend on App Group
+        // UserDefaults visibility for its startup state.
+        let startOptions = managerStore.prepareTunnelStartPayload()
+        log(
+          "startVPNTunnel requested attempt=\(attemptID) snapshot=\(startOptions.snapshotCommitted) optionKeys=\(startOptions.options.keys.sorted().joined(separator: ","))"
+        )
+        try manager.connection.startVPNTunnel(options: startOptions.options)
       } catch {
         if finishRunningRequestIfSatisfied(request, manager: manager) {
           return

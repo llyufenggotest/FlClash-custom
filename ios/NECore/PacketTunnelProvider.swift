@@ -27,13 +27,22 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     nativeLog("startTunnel begin")
     sharedStateStore.clearRunTime()
     reloadControlWidget()
-    guard let vpnOptions = sharedStateStore.loadVPNOptions() else {
-      logger.error("startTunnel failed: missing vpn options")
-      nativeLog("startTunnel failed missing_vpn_options")
-      nativeLog("startup_failure phase=vpn_options_missing")
+    // Prefer the payload the system delivered in memory; fall back to the App
+    // Group suite, then to the snapshot the app committed before starting.
+    sharedStateStore.adoptStartOptions(options)
+    nativeLog("startTunnel options keys=\(options?.keys.sorted().joined(separator: ",") ?? "none")")
+    let stateResult = sharedStateStore.loadVPNOptionsResult()
+    guard let vpnOptions = stateResult.options else {
+      let failure = stateResult.failure?.rawValue ?? "unknown"
+      logger.error("startTunnel failed: missing vpn options reason=\(failure, privacy: .public)")
+      nativeLog("startTunnel failed missing_vpn_options reason=\(failure)")
+      nativeLog("startup_failure phase=vpn_options_missing reason=\(failure)")
       completionHandler(PacketTunnelProviderError.missingVPNOptions)
       return
     }
+    nativeLog(
+      "shared_state source=\(stateResult.source?.rawValue ?? "unknown") bytes=\(stateResult.byteCount)"
+    )
     logger.info(
       "startTunnel options stack=\(vpnOptions.stack, privacy: .public) ipv6=\(vpnOptions.ipv6, privacy: .public) captureDns=\(vpnOptions.captureDns, privacy: .public) systemProxy=\(vpnOptions.systemProxy, privacy: .public) suspendSupport=\(vpnOptions.suspendSupport, privacy: .public)"
     )
