@@ -38,7 +38,16 @@ type TunHandler struct {
 	limit *semaphore.Weighted
 }
 
-func (th *TunHandler) start(fd int, options t.Options) {
+// start brings up the TUN listener and reports whether a data path actually
+// exists afterwards.
+//
+// The boolean is not cosmetic: on iOS the caller uses it to decide whether to
+// roll back a partial start. A 2026-08-29 device trace caught
+// `syscall.Dup` failing with "bad file descriptor", so `t.Start` returned nil,
+// yet the old code reported success all the way up to Swift. The tunnel then sat
+// in "connected" with no data path at all, which the user experiences as a
+// profile that connects but carries no traffic.
+func (th *TunHandler) start(fd int, options t.Options) bool {
 	runLock.Lock()
 	defer runLock.Unlock()
 	_ = th.limit.Acquire(context.TODO(), 4)
@@ -48,9 +57,10 @@ func (th *TunHandler) start(fd int, options t.Options) {
 	if tunListener != nil {
 		log.Infoln("TUN address: %v", tunListener.Address())
 		th.listener = tunListener
-		return
+		return true
 	}
 	th.clear()
+	return false
 }
 
 func (th *TunHandler) close() {
@@ -140,18 +150,21 @@ func handleStopTun() {
 	}
 }
 
-func handleStartTun(callback unsafe.Pointer, fd int, options t.Options) {
+// handleStartTun reports whether the TUN data path is live. A false result means
+// the caller must not treat the tunnel as usable.
+func handleStartTun(callback unsafe.Pointer, fd int, options t.Options) bool {
 	handleStopTun()
 	tunLock.Lock()
 	defer tunLock.Unlock()
-	if fd != 0 {
-		tunHandler = &TunHandler{
-			callback: callback,
-			limit:    semaphore.NewWeighted(4),
-		}
-		tunHandler.start(fd, options)
+	if fd == 0 {
+		log.Errorln("TUN: refusing to start with fd=0")
+		return false
 	}
-	return
+	tunHandler = &TunHandler{
+		callback: callback,
+		limit:    semaphore.NewWeighted(4),
+	}
+	return tunHandler.start(fd, options)
 }
 
 func (response MethodResponse) send() {
@@ -218,13 +231,19 @@ func startTUN(callback unsafe.Pointer, fd C.int, optionsChar *C.char) bool {
 		}
 		return false
 	}
-	handleStartTun(callback, int(fd), options)
+	started := handleStartTun(callback, int(fd), options)
+	// The listener/connection steps run exactly as before even on failure: they
+	// own the mixed-port inbound the iOS proxy settings and checkIp depend on,
+	// and the caller rolls the whole start back when `started` is false.
 	if !isRunning {
 		handleStartListener()
 	} else {
 		handleResetConnections()
 	}
-	return true
+	if !started {
+		log.Errorln("TUN: data path unavailable; reporting start failure")
+	}
+	return started
 }
 
 //export quickSetup

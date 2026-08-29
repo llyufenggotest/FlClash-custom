@@ -396,6 +396,66 @@ check(
     present=['flutter test test/ios_delay_concurrency_test.dart'],
 )
 
+# --- honest start result + non-blocking first rule-provider fetch ------------
+# Device trace 2026-08-29 23:39 produced two independent failures:
+#
+# 1. Attempt 0fa73135 logged `TUN: dup fd: bad file descriptor` and then
+#    `startTun result=true` in the same second. `startTUN` ended in a literal
+#    `return true`, so Swift never ran rollbackPartialStart and the tunnel sat in
+#    "connected" with no data path -- the user's "Oppa loses its configuration".
+#
+# 2. Oppa's quickSetup took 24-25s while all 24 remote rule providers failed DNS.
+#    Config parsing itself finished in 66ms; the rest was waiting for providers
+#    that cannot resolve until the tunnel exists, while applyConfig held the
+#    `runLock` that startTUN also needs. Chicken-and-egg: "connected, no network".
+
+check(
+    'core/lib.go',
+    present=[
+        'func (th *TunHandler) start(fd int, options t.Options) bool',
+        'func handleStartTun(callback unsafe.Pointer, fd int, options t.Options) bool',
+        'started := handleStartTun(callback, int(fd), options)',
+        'return started',
+        'TUN: refusing to start with fd=0',
+    ],
+    # The literal success that hid a dead data path.
+    absent=['\thandleStartTun(callback, int(fd), options)\n'],
+)
+
+check(
+    'core/mihomo/hub/executor/executor.go',
+    present=[
+        'loadRuleProviders(cfg.RuleProviders)',
+        'func loadRuleProviders[T P.Provider]',
+        'go loadProvider(providers)',
+        # Proxy providers must stay synchronous: groups reference them at once.
+        'loadProvider(cfg.Providers)',
+    ],
+    absent=['loadProvider(cfg.RuleProviders)'],
+)
+
+# The deferral is build-tagged so only the Network Extension changes behaviour.
+check(
+    'core/mihomo/hub/executor/rule_provider_defer_ios_lowmem.go',
+    present=[
+        '//go:build ios && with_low_memory',
+        'deferRuleProviderInitial = true',
+    ],
+)
+
+check(
+    'core/mihomo/hub/executor/rule_provider_defer_default.go',
+    present=[
+        '//go:build !(ios && with_low_memory)',
+        'deferRuleProviderInitial = false',
+    ],
+)
+
+check(
+    '.github/workflows/ios-five-protocol.yaml',
+    present=['go test ./ -run \'TestStartTunReportsRealResult|TestRuleProviderFirstFetch\''],
+)
+
 if failures:
     for f in failures:
         print('FAIL ' + f)

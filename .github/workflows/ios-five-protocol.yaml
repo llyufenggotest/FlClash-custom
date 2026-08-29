@@ -53,6 +53,12 @@ jobs:
           # fails. The real iOS compile happens in `setup.dart ios`, which builds
           # libclash.a and libclash_lowmem.a for ios/arm64.
           (cd core && CGO_ENABLED=0 go build ./... && CGO_ENABLED=0 go build -tags with_low_memory ./... && CGO_ENABLED=0 go vet ./... && CGO_ENABLED=0 go test ./...)
+          # The iOS data-path contracts are source-level, so they run under the
+          # host toolchain rather than the ios/arm64 cross build.
+          (cd core && CGO_ENABLED=0 go test ./ -run 'TestStartTunReportsRealResult|TestRuleProviderFirstFetch' -count=1)
+          # The rule-provider deferral is build-tagged: prove both variants
+          # type-check for the platforms that actually consume them.
+          (cd core/mihomo && GOOS=ios GOARCH=arm64 CGO_ENABLED=0 go build -tags with_low_memory ./hub/executor/ && GOOS=android GOARCH=arm64 CGO_ENABLED=0 go build -tags with_low_memory ./hub/executor/ && GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build ./hub/executor/)
           python3 scripts/verify_ios_contracts.py
           flutter test test/common/fastup_subscription_test.dart
           flutter test test/oppa_yaml_test.dart
