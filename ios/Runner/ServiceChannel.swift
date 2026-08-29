@@ -137,6 +137,8 @@ final class ServiceChannel {
       }
     case "getNativeLogs":
       result(NativeDiagnosticLog.shared.exportText())
+    case "clearNativeLogs":
+      result(NativeDiagnosticLog.shared.clearAll())
     default:
       result(FlutterMethodNotImplemented)
     }
@@ -226,6 +228,29 @@ final class NativeDiagnosticLog {
         else { return nil }
         return "--- \(name) ---\n\(text)"
       }.joined(separator: "\n")
+    }
+  }
+
+  /// Truncates both persisted native logs in place. Truncation rather than
+  /// deletion keeps the extension's open file handles valid, so a running
+  /// tunnel keeps logging into the same path after a clear.
+  @discardableResult
+  func clearAll() -> Bool {
+    queue.sync {
+      var cleared = true
+      for name in [runnerFile, neCoreFile] {
+        guard let url = fileURL(named: name) else {
+          cleared = false
+          continue
+        }
+        guard FileManager.default.fileExists(atPath: url.path) else { continue }
+        do {
+          try Data().write(to: url, options: .atomic)
+        } catch {
+          cleared = false
+        }
+      }
+      return cleared
     }
   }
 
