@@ -34,23 +34,23 @@ final class SharedStateStore {
 
   /// Committed copy of the exact shared-state payload. The extension reads this
   /// when the App Group suite returns nothing for its own launch.
+  ///
+  /// `Data.write(options: .atomic)` already writes to a unique temporary file in
+  /// the same directory and renames it into place, so a reader never observes a
+  /// partial payload and no separate replace step is needed.
   @discardableResult
   func commitSharedStateSnapshot(_ data: Data) -> Bool {
     guard let url = sharedStateSnapshotURL() else {
       return false
     }
-    let temporaryURL = url.deletingLastPathComponent()
-      .appendingPathComponent(".\(snapshotFileName).\(UUID().uuidString)")
     do {
-      try data.write(to: temporaryURL, options: .atomic)
-      try FileManager.default.replaceItemAtomically(at: url, with: temporaryURL)
+      try data.write(to: url, options: .atomic)
       try? (url as NSURL).setResourceValue(
         URLFileProtection.completeUntilFirstUserAuthentication,
         forKey: .fileProtectionKey
       )
       return true
     } catch {
-      try? FileManager.default.removeItem(at: temporaryURL)
       return false
     }
   }

@@ -156,7 +156,6 @@ check(
         'func commitSharedStateSnapshot',
         'func sharedStateSnapshotURL',
         'func makeTunnelStartOptions',
-        'replaceItemAtomically',
         'options: .atomic',
     ],
 )
