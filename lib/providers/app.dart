@@ -73,6 +73,17 @@ class Logs extends _$Logs with AutoDisposeNotifierMixin {
     res = await picker.saveFileWithPath(utils.logFile, tempFilePath) != null;
     return res;
   }
+
+  /// Drops the in-memory list and, on iOS, truncates the persisted Runner and
+  /// Network Extension native logs. Without the native half a "clear" would
+  /// leave the exported file full of the old records.
+  Future<bool> clearLogs() async {
+    value = FixedList(state.maxLength);
+    if (system.isIOS) {
+      return await service?.clearNativeLogs() ?? false;
+    }
+    return true;
+  }
 }
 
 @Riverpod(keepAlive: true)

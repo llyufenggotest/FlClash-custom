@@ -11,43 +11,178 @@ enum PacketTunnelEnvironment {
     "\(extensionBundleIdentifier).event"
 }
 
+/// Where the extension actually obtained its startup payload, and why a load
+/// failed. Recorded on device so a missing payload is never ambiguous again.
+enum SharedStateSource: String {
+  case options
+  case defaults
+  case snapshot
+}
+
+enum SharedStateFailure: String {
+  case suiteUnavailable = "suite_unavailable"
+  case noData = "no_data"
+  case decodeFailed = "decode_failed"
+}
+
+struct SharedStateLoadResult {
+  let options: PacketTunnelVPNOptions?
+  let source: SharedStateSource?
+  let failure: SharedStateFailure?
+  let byteCount: Int
+}
+
 final class PacketTunnelSharedStateStore {
   private static let emptySetupParams = Data("{}".utf8)
 
   private let sharedStateKey = "sharedState"
   private let setupParamsKey = "setupParams"
   private let runTimeKey = "runTime"
+  private let tunnelAttemptIDKey = "tunnelAttemptID"
+  private let snapshotFileName = "shared-state.json"
+
+  /// Startup payload delivered in memory by `startVPNTunnel(options:)`. Held for
+  /// the lifetime of this start so later reads never depend on cross-process
+  /// visibility of the App Group suite.
+  private var startOptionsData: Data?
+
+  func adoptStartOptions(_ options: [String: NSObject]?) {
+    guard let options else {
+      return
+    }
+    if let text = options[sharedStateKey] as? String,
+      let data = text.data(using: .utf8)
+    {
+      startOptionsData = data
+      // Repopulate the suite so every later reader agrees with this start.
+      userDefaults?.set(data, forKey: sharedStateKey)
+    }
+    if let attemptID = options[tunnelAttemptIDKey] as? String {
+      userDefaults?.set(attemptID, forKey: tunnelAttemptIDKey)
+    }
+  }
+
+  /// Ordered resolution: in-memory start options, then the App Group suite,
+  /// then the container snapshot committed by the app before starting.
+  func loadVPNOptionsResult() -> SharedStateLoadResult {
+    var lastFailure: SharedStateFailure?
+    var sawSuite = false
+
+    if let data = startOptionsData {
+      if let decoded = decodeVPNOptions(data) {
+        return SharedStateLoadResult(
+          options: decoded,
+          source: .options,
+          failure: nil,
+          byteCount: data.count
+        )
+      }
+      lastFailure = .decodeFailed
+    }
+
+    if let userDefaults {
+      sawSuite = true
+      if let data = userDefaults.data(forKey: sharedStateKey) {
+        if let decoded = decodeVPNOptions(data) {
+          return SharedStateLoadResult(
+            options: decoded,
+            source: .defaults,
+            failure: nil,
+            byteCount: data.count
+          )
+        }
+        lastFailure = .decodeFailed
+      }
+    }
+
+    if let data = snapshotData() {
+      if let decoded = decodeVPNOptions(data) {
+        // Repopulate the suite so setup params and later reads succeed.
+        userDefaults?.set(data, forKey: sharedStateKey)
+        return SharedStateLoadResult(
+          options: decoded,
+          source: .snapshot,
+          failure: nil,
+          byteCount: data.count
+        )
+      }
+      lastFailure = .decodeFailed
+    }
+
+    return SharedStateLoadResult(
+      options: nil,
+      source: nil,
+      failure: lastFailure ?? (sawSuite ? .noData : .suiteUnavailable),
+      byteCount: 0
+    )
+  }
 
   func loadVPNOptions() -> PacketTunnelVPNOptions? {
-    guard let data = userDefaults?.data(forKey: sharedStateKey),
-      let sharedState = try? JSONDecoder().decode(
-        PacketTunnelSharedState.self,
-        from: data
-      )
+    loadVPNOptionsResult().options
+  }
+
+  private func decodeVPNOptions(_ data: Data) -> PacketTunnelVPNOptions? {
+    guard let sharedState = try? JSONDecoder().decode(
+      PacketTunnelSharedState.self,
+      from: data
+    )
     else {
       return nil
     }
     return sharedState.vpnOptions
   }
 
+  private func snapshotData() -> Data? {
+    guard let url = appGroupDirectory()?
+      .appendingPathComponent(snapshotFileName)
+    else {
+      return nil
+    }
+    return try? Data(contentsOf: url)
+  }
+
   func loadSetupParams() -> Data {
+    if let data = startOptionsData,
+      let params = setupParams(from: data)
+    {
+      return params
+    }
     guard let userDefaults else {
+      if let data = snapshotData(),
+        let params = setupParams(from: data)
+      {
+        return params
+      }
       return Self.emptySetupParams
     }
     if let data = userDefaults.data(forKey: setupParamsKey) {
       return data
     }
-    guard let sharedStateData = userDefaults.data(forKey: sharedStateKey),
-      let json = try? JSONSerialization.jsonObject(with: sharedStateData)
-        as? [String: Any],
+    if let sharedStateData = userDefaults.data(forKey: sharedStateKey),
+      let params = setupParams(from: sharedStateData)
+    {
+      userDefaults.set(params, forKey: setupParamsKey)
+      return params
+    }
+    if let data = snapshotData(),
+      let params = setupParams(from: data)
+    {
+      userDefaults.set(params, forKey: setupParamsKey)
+      return params
+    }
+    return Self.emptySetupParams
+  }
+
+  private func setupParams(from sharedStateData: Data) -> Data? {
+    guard let json = try? JSONSerialization.jsonObject(with: sharedStateData)
+      as? [String: Any],
       let setupParams = json[setupParamsKey],
       !(setupParams is NSNull),
       JSONSerialization.isValidJSONObject(setupParams),
       let data = try? JSONSerialization.data(withJSONObject: setupParams)
     else {
-      return Self.emptySetupParams
+      return nil
     }
-    userDefaults.set(data, forKey: setupParamsKey)
     return data
   }
 
@@ -124,10 +259,18 @@ struct PacketTunnelVPNOptions: Decodable {
 
   init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
-    port = try container.decode(Int.self, forKey: .port)
-    ipv6 = try container.decode(Bool.self, forKey: .ipv6)
-    captureDns = try container.decode(Bool.self, forKey: .captureDns)
-    systemProxy = try container.decode(Bool.self, forKey: .systemProxy)
+    // Every field tolerates absence. A single renamed or dropped key must never
+    // turn into a total startup failure on device.
+    port = try container.decodeIfPresent(Int.self, forKey: .port) ?? 7890
+    ipv6 = try container.decodeIfPresent(Bool.self, forKey: .ipv6) ?? false
+    captureDns = try container.decodeIfPresent(
+      Bool.self,
+      forKey: .captureDns
+    ) ?? true
+    systemProxy = try container.decodeIfPresent(
+      Bool.self,
+      forKey: .systemProxy
+    ) ?? true
     suspendSupport = try container.decodeIfPresent(
       Bool.self,
       forKey: .suspendSupport
@@ -136,7 +279,7 @@ struct PacketTunnelVPNOptions: Decodable {
       [String].self,
       forKey: .bypassDomain
     ) ?? []
-    stack = try container.decode(String.self, forKey: .stack)
+    stack = try container.decodeIfPresent(String.self, forKey: .stack) ?? "gvisor"
     mtu = try container.decodeIfPresent(Int.self, forKey: .mtu) ?? 9000
     routeAddress = try container.decodeIfPresent(
       [String].self,

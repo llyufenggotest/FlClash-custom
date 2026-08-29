@@ -108,6 +108,11 @@ class Service {
     return await methodChannel.invokeMethod<String>('getNativeLogs') ?? '';
   }
 
+  Future<bool> clearNativeLogs() async {
+    if (!system.isIOS) return true;
+    return await methodChannel.invokeMethod<bool>('clearNativeLogs') ?? false;
+  }
+
   bool get hasListeners {
     return _listeners.isNotEmpty;
   }

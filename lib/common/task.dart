@@ -286,7 +286,14 @@ Future<VM2<String, String>> _makeRealProfileTask(
     rawConfig['proxy-groups'] = data.proxyGroups;
   }
   rawConfig['rules'] = rules;
-  final yaml = await _encodeYaml(Map<String, dynamic>.from(rawConfig));
+  Map<String, dynamic> finalConfig = Map<String, dynamic>.from(rawConfig);
+  if (system.isIOS) {
+    // Applied last so it also covers keys written above. The Network Extension
+    // budget and its lack of inbound consumers make these edits mandatory; see
+    // lib/common/ios_profile_budget.dart for the per-key rationale.
+    finalConfig = sanitizeProfileForIOS(finalConfig);
+  }
+  final yaml = await _encodeYaml(finalConfig);
   return VM2(yaml, yaml.toMd5());
 }
 

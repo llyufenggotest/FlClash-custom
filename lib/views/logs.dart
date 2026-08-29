@@ -81,6 +81,13 @@ class _LogsViewState extends ConsumerState<LogsView> {
         },
         icon: const Icon(Icons.save_outlined),
       ),
+      IconButton(
+        tooltip: appLocalizations.clear,
+        onPressed: () {
+          _handleClear();
+        },
+        icon: const Icon(Icons.delete_outline),
+      ),
     ];
   }
 
@@ -147,6 +154,24 @@ class _LogsViewState extends ConsumerState<LogsView> {
       title: appLocalizations.tip,
       message: TextSpan(text: appLocalizations.exportSuccess),
     );
+  }
+
+  /// Clears both the in-app list and the persisted iOS native logs. The filter
+  /// menu's "reset" only drops filters, which is why clearing appeared to do
+  /// nothing; this removes the records themselves.
+  Future<void> _handleClear() async {
+    final appLocalizations = context.appLocalizations;
+    final confirmed = await globalState.showMessage(
+      title: appLocalizations.clear,
+      message: TextSpan(text: appLocalizations.confirmClearAllData),
+    );
+    if (confirmed != true || !mounted) return;
+    await globalState.container.read(logsProvider.notifier).clearLogs();
+    if (!mounted) return;
+    setState(() {
+      _logs = [];
+      _logsStateNotifier.value = _logsStateNotifier.value.copyWith(logs: []);
+    });
   }
 
   void updateLogsThrottler() {

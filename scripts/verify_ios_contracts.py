@@ -138,7 +138,149 @@ check(
 
 check(
     'lib/plugins/service.dart',
-    present=["invokeMethod<String>('getNativeLogs')"],
+    present=[
+        "invokeMethod<String>('getNativeLogs')",
+        "invokeMethod<bool>('clearNativeLogs')",
+    ],
+)
+
+# --- vpnOptions cross-process startup transport -----------------------------
+# Device trace 2026-08-29 (x365): Runner logged saveSharedState bytes=868 with a
+# real attempt ID, then NECore failed four times with attempt=none and
+# startup_failure phase=vpn_options_missing. UserDefaults was not visible to the
+# freshly launched extension even though the container file was writable.
+
+check(
+    'ios/Runner/Storage/SharedStateStore.swift',
+    present=[
+        'func commitSharedStateSnapshot',
+        'func sharedStateSnapshotURL',
+        'func makeTunnelStartOptions',
+        'replaceItemAtomically',
+        'options: .atomic',
+    ],
+)
+
+check(
+    'ios/Runner/Tunnel/TunnelManagerStore.swift',
+    present=[
+        'func prepareTunnelStartPayload',
+        'TunnelStartPayload',
+        'snapshotCommitted',
+    ],
+)
+
+check(
+    'ios/Runner/Tunnel/TunnelCoordinator.swift',
+    present=[
+        'prepareTunnelStartPayload',
+        'startVPNTunnel(options:',
+        'snapshot=',
+    ],
+)
+
+check(
+    'ios/NECore/PacketTunnelSharedStateStore.swift',
+    present=[
+        'enum SharedStateSource',
+        'case options',
+        'case defaults',
+        'case snapshot',
+        'func adoptStartOptions',
+        'func loadVPNOptionsResult',
+        'suiteUnavailable = "suite_unavailable"',
+        'decodeIfPresent',
+    ],
+    absent=['try container.decode(Int.self, forKey: .port)'],
+)
+
+check(
+    'ios/NECore/PacketTunnelProvider.swift',
+    present=[
+        'adoptStartOptions(options)',
+        'loadVPNOptionsResult()',
+        'shared_state source=',
+        'startup_failure phase=vpn_options_missing reason=',
+    ],
+)
+
+# --- extension memory budget ------------------------------------------------
+# Same trace: footprint peaked at 47 MB against a ~50 MB packet-tunnel limit and
+# each crossing was followed by "tunnel stopped externally". FreeOSMemory on
+# reload alone was not enough, so the peak itself has to come down.
+
+check(
+    'core/memory_budget_ios_extension.go',
+    present=[
+        '//go:build ios && with_low_memory',
+        'delayBatchConcurrency = 8',
+    ],
+)
+
+check(
+    'core/memory_budget_default.go',
+    present=[
+        '//go:build !(ios && with_low_memory)',
+        'delayBatchConcurrency = 50',
+    ],
+)
+
+check(
+    'core/common.go',
+    present=['batch.WithConcurrencyNum[bool](delayBatchConcurrency)'],
+    absent=['batch.WithConcurrencyNum[bool](50)'],
+)
+
+check(
+    'ios/NECore/NativeResourceHeartbeat.swift',
+    present=[
+        'footprintWarningMB = 35',
+        'footprintReclaimMB = 42',
+        'memory_pressure_reclaim ',
+        'memory_pressure_reclaimed ',
+        'static func shouldReclaim',
+        'NECoreBridge.releaseMemory()',
+    ],
+)
+
+check('ios/NECore/NECoreBridge.h', present=['+ (void)releaseMemory;'])
+check('ios/NECore/NECoreBridge.m', present=['forceGC();'])
+
+# --- iOS profile sanitizer --------------------------------------------------
+# The shipped profiles carry full desktop global config: inbound ports iOS never
+# consumes, an external-controller HTTP API with a plaintext secret, a dns.listen
+# that fought the other process for port 1053, plus Oppa pre-connect=8 over 180
+# nodes and 60s url-test sweeps.
+
+check(
+    'lib/common/ios_profile_budget.dart',
+    present=[
+        'iosRemovedGlobalKeys',
+        'iosRemovedDnsKeys',
+        'iosPreConnectCap = 2',
+        'iosMinHealthCheckInterval = 300',
+        'iosMinRuleProviderInterval = 604800',
+        "config['find-process-mode'] = 'off'",
+        "config['tcp-concurrent'] = false",
+        'sanitizeProfileForIOS',
+    ],
+    # mixed-port must survive: NEProxySettings and checkIp both dial it.
+    absent=["'mixed-port',"],
+)
+
+check(
+    'lib/common/common.dart',
+    present=["export 'ios_profile_budget.dart';"],
+)
+
+check(
+    'lib/common/task.dart',
+    present=['sanitizeProfileForIOS(finalConfig)', 'if (system.isIOS)'],
+)
+
+check(
+    '.github/workflows/ios-five-protocol.yaml',
+    present=['flutter test test/ios_profile_budget_test.dart'],
 )
 
 if failures:
