@@ -22,6 +22,20 @@ final class TunnelController {
   private var tunnelStatusObserver: NSObjectProtocol?
   private var appActiveObserver: NSObjectProtocol?
   private let providerMessageTimeout: TimeInterval = 8
+
+  /// The extension answers these on a single Go-side handler, and each in-flight
+  /// request costs a live buffer inside a process that jetsam kills at roughly
+  /// 48 MB phys_footprint. The 2026-08-29 22:46 traces show the app issuing 56
+  /// requests in one second with 65 in flight; the queue behind them pushed p50
+  /// latency to 2719 ms and drove 51 timeouts plus 45 empty replies against an
+  /// 8 s budget. Admitting only a few at a time keeps the budget meaningful and
+  /// caps the extension's transient allocation.
+  ///
+  /// Matches `delayBatchConcurrency` in core/memory_budget_ios_extension.go and
+  /// `maxConcurrentDelayTests` in lib/common/constant.dart.
+  private let maxInFlightProviderMessages = 8
+  private var inFlightProviderMessages = 0
+  private var providerMessageWaiters: [CheckedContinuation<Void, Never>] = []
   private var nextProviderMessageSequence: UInt64 = 0
   private let logger = Logger(
     subsystem: Bundle.main.bundleIdentifier ?? "com.follow.clash",
@@ -104,7 +118,31 @@ final class TunnelController {
     try await coordinator.reloadOnDemandRules()
   }
 
+  /// Suspends until a provider-message slot frees up. `@MainActor` isolation is
+  /// what makes the counter safe: every mutation happens on the main actor.
+  private func acquireProviderMessageSlot() async {
+    while inFlightProviderMessages >= maxInFlightProviderMessages {
+      await withCheckedContinuation { continuation in
+        providerMessageWaiters.append(continuation)
+      }
+    }
+    inFlightProviderMessages += 1
+  }
+
+  private func releaseProviderMessageSlot() {
+    inFlightProviderMessages = max(0, inFlightProviderMessages - 1)
+    guard !providerMessageWaiters.isEmpty else { return }
+    // Resume one waiter per released slot; it re-checks the counter in its own
+    // loop iteration, so a spurious wake cannot over-admit.
+    providerMessageWaiters.removeFirst().resume()
+  }
+
   func sendProviderMessage(_ data: Data) async throws -> String {
+    // Admission control comes first: queueing here costs one suspended task in
+    // the app, whereas queueing inside the extension costs live memory in the
+    // process that gets killed for using it.
+    await acquireProviderMessageSlot()
+    defer { releaseProviderMessageSlot() }
     nextProviderMessageSequence &+= 1
     let sequence = nextProviderMessageSequence
     let startedAt = Date()

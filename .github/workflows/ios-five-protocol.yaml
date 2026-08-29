@@ -59,6 +59,7 @@ jobs:
           flutter test test/ios_network_extension_audit_test.dart
           flutter test test/ios_profile_budget_test.dart
           flutter test test/ios_redundant_reload_test.dart
+          flutter test test/ios_delay_concurrency_test.dart
           flutter test test/setup_test.dart
           ! git grep -n -E '#sl|MAGIC_SHANLIAN_TRIGGER|GenerateMagicSNI' -- 'core/mihomo/*.go' 'core/mihomo/**/*.go' ':!core/mihomo/**/*_test.go'
 

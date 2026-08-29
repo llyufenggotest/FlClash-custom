@@ -51,7 +51,24 @@ const httpTimeoutDuration = Duration(milliseconds: 5000);
 /// Keep at or below the Core's delay-test concurrency (`mBatch` in
 /// core/common.go). Surplus requests queue inside the Core behind a full wave
 /// of 5s timeouts, which no RPC timeout can cover.
-const maxConcurrentDelayTests = 50;
+///
+/// On iOS the Core lives in the Network Extension, which is built with
+/// `with_low_memory` and therefore caps `delayBatchConcurrency` at 8
+/// (core/memory_budget_ios_extension.go). Sending 50 from the app made 42
+/// probes queue inside a process that dies at ~48 MB phys_footprint: the
+/// 2026-08-29 22:46 traces show 56 provider messages issued in one second,
+/// 65 in flight at the peak, footprint climbing 32 -> 47 MB in three seconds
+/// and jetsam killing the extension on the next tick. Every one of the four
+/// tunnel lives in those traces died that way.
+const _maxConcurrentDelayTestsDefault = 50;
+
+/// Mirrors `delayBatchConcurrency` in core/memory_budget_ios_extension.go.
+/// These two numbers must move together.
+const _maxConcurrentDelayTestsIOS = 8;
+
+final maxConcurrentDelayTests = system.isIOS
+    ? _maxConcurrentDelayTestsIOS
+    : _maxConcurrentDelayTestsDefault;
 const moreDuration = Duration(milliseconds: 100);
 const animateDuration = Duration(milliseconds: 100);
 const midDuration = Duration(milliseconds: 200);

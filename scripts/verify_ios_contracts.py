@@ -233,8 +233,10 @@ check(
 check(
     'ios/NECore/NativeResourceHeartbeat.swift',
     present=[
-        'footprintWarningMB = 35',
-        'footprintReclaimMB = 42',
+        # Threshold values are asserted in the admission-control section below,
+        # which owns the current numbers.
+        'footprintWarningMB =',
+        'footprintReclaimMB =',
         'memory_pressure_reclaim ',
         'memory_pressure_reclaimed ',
         'static func shouldReclaim',
@@ -324,6 +326,74 @@ check(
     # The skip must never be unconditional: Android and desktop run the core in
     # process, where a forced apply is the only way to load config at all.
     absent=['matchesAppliedConfig && _isRunning', 'skipRedundantReload = true'],
+)
+
+# --- jetsam kill: delay-probe admission control ------------------------------
+# Device traces 2026-08-29 22:46 (two exports) pinned the death line. Four
+# consecutive tunnel lives logged a final heartbeat of 43, 48, 47 and 47 MB
+# phys_footprint and were killed on the next tick, so the ceiling is ~48 MB, not
+# the assumed 50. Cause: the app allowed 50 concurrent delay probes while the
+# extension's Go core caps delayBatchConcurrency at 8 under with_low_memory, so
+# 42 surplus probes queued inside the memory-constrained process. One trace shows
+# 56 provider messages issued in one second, 65 in flight at peak, footprint
+# 32 -> 47 MB in three seconds. Queue pressure pushed provider-message p50 to
+# 2719 ms against the 8 s budget: 51 timeouts and 45 empty replies.
+
+check(
+    'lib/common/constant.dart',
+    present=[
+        'const _maxConcurrentDelayTestsIOS = 8',
+        'const _maxConcurrentDelayTestsDefault = 50',
+        'final maxConcurrentDelayTests = system.isIOS',
+    ],
+    # A single flat const is what caused the mismatch in the first place.
+    absent=['const maxConcurrentDelayTests = 50', 'const maxConcurrentDelayTests = 8'],
+)
+
+check(
+    'lib/providers/actions/proxies.dart',
+    present=[
+        'static final _delayTestConcurrency = maxConcurrentDelayTests',
+        '_runningDelayTests < _delayTestConcurrency',
+    ],
+    # `static const` cannot hold a platform-resolved value.
+    absent=['static const _delayTestConcurrency'],
+)
+
+check(
+    'core/memory_budget_ios_extension.go',
+    present=['const delayBatchConcurrency = 8'],
+)
+
+check(
+    'ios/Runner/Tunnel/TunnelController.swift',
+    present=[
+        'private let maxInFlightProviderMessages = 8',
+        'private var inFlightProviderMessages = 0',
+        'func acquireProviderMessageSlot() async',
+        'func releaseProviderMessageSlot()',
+        'await acquireProviderMessageSlot()',
+        'defer { releaseProviderMessageSlot() }',
+        # Admission control is meant to make this budget hold, not be swapped
+        # for a longer one.
+        'providerMessageTimeout: TimeInterval = 8',
+    ],
+)
+
+check(
+    'ios/NECore/NativeResourceHeartbeat.swift',
+    present=[
+        'footprintWarningMB = 30',
+        'footprintReclaimMB = 38',
+        # A lower reclaim threshold must not become a per-second stall.
+        'reclaimCooldown: TimeInterval = 15',
+    ],
+    absent=['footprintWarningMB = 35', 'footprintReclaimMB = 42'],
+)
+
+check(
+    '.github/workflows/ios-five-protocol.yaml',
+    present=['flutter test test/ios_delay_concurrency_test.dart'],
 )
 
 if failures:

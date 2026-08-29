@@ -9,10 +9,21 @@ final class NativeResourceHeartbeat {
   private var lastReclaimUptime: TimeInterval = 0
 
   /// iOS terminates a packet-tunnel provider near a ~50 MB phys_footprint.
-  /// Device traces showed 47 MB peaks immediately before an external stop, so
-  /// warning alone is not enough: the extension must actively shed pages.
-  private static let footprintWarningMB = 35
-  private static let footprintReclaimMB = 42
+  /// The 2026-08-29 22:46 traces pinned the real death line: four consecutive
+  /// tunnel lives each logged a final heartbeat of 43, 48, 47 and 47 MB and were
+  /// killed on the very next tick, so the effective ceiling is around 48 MB, not
+  /// 50. Warning and reclaim thresholds sit low enough to leave a reaction
+  /// window before that line.
+  ///
+  /// Reclaiming is only a backstop. Those traces also showed
+  /// `memory_pressure_reclaimed` reporting the same or a higher footprint,
+  /// because the pages in question were live delay-probe buffers rather than
+  /// garbage. The primary fix is admission control (see
+  /// `maxInFlightProviderMessages` in TunnelController and
+  /// `maxConcurrentDelayTests` in lib/common/constant.dart), which stops the
+  /// footprint from climbing in the first place.
+  private static let footprintWarningMB = 30
+  private static let footprintReclaimMB = 38
   /// Reclaiming walks the whole Go heap. Throttle it so a sustained plateau
   /// above the threshold cannot turn into a per-second stall.
   private static let reclaimCooldown: TimeInterval = 15

@@ -5,7 +5,9 @@ typedef _DelayTestRequest = ({Completer<Delay> completer, _DelayTestKey key});
 
 @Riverpod(keepAlive: true)
 class ProxiesAction extends _$ProxiesAction {
-  static const _delayTestConcurrency = maxConcurrentDelayTests;
+  /// Not `const`: on iOS this resolves to the Network Extension's own
+  /// `delayBatchConcurrency` (8) instead of the desktop default (50).
+  static final _delayTestConcurrency = maxConcurrentDelayTests;
 
   final Queue<_DelayTestRequest> _delayTestQueue = Queue();
   final Map<_DelayTestKey, Future<Delay>> _pendingDelayTests = {};
