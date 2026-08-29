@@ -71,6 +71,10 @@ const profilesDirectoryName = 'profiles';
 const localhost = '127.0.0.1';
 const clashConfigKey = 'clash_config';
 const configKey = 'config';
+
+/// Survives app relaunches so a foreground return can tell whether the
+/// long-lived core already runs the config the app is about to apply.
+const appliedConfigMd5Key = 'applied_config_md5';
 const double dialogCommonWidth = 300;
 const repository = 'chenx-dust/FlClash-Patched';
 const defaultExternalControllerPort = 9090;

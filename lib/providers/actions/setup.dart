@@ -130,6 +130,14 @@ class SetupAction extends _$SetupAction {
     if (!_isCurrent(request)) {
       return;
     }
+    // The iOS core lives in the Network Extension, so stopping the tunnel tears
+    // down the process holding the config. Forget the applied fingerprint or
+    // the next start would skip the push and leave the fresh extension with no
+    // config at all.
+    if (system.isIOS) {
+      globalState.lastConfigMd5 = null;
+      await preferences.setAppliedConfigMd5(null);
+    }
     resetCoreTraffic();
     ref.read(trafficsProvider.notifier).clear();
     ref.read(totalTrafficProvider.notifier).value = const Traffic();
@@ -399,7 +407,36 @@ class SetupAction extends _$SetupAction {
     );
     final yamlString = vm2.a;
     final yamlMd5 = vm2.b;
-    if (yamlMd5 == globalState.lastConfigMd5 && force == false) {
+    // The long-lived core keeps running while the Flutter app is suspended or
+    // killed, so "already applied" has to be answered from durable storage
+    // rather than an in-memory field. Without this, every foreground return
+    // pushed the same YAML again and the iOS Network Extension went through a
+    // full config reload: geodata reload, 110k-record GeoSite rebuild, and all
+    // remote rule-providers re-fetched. During that window the extension stops
+    // answering provider messages, which surfaced as
+    // `network_extension_timeout` dialogs and an empty proxies page.
+    final appliedMd5 = globalState.lastConfigMd5 ??
+        await preferences.getAppliedConfigMd5();
+    // A restarted extension self-loads this file in `quickSetup`, so skipping
+    // the push is safe only while the file on disk still holds this exact YAML.
+    // Checking the content, not just existence, also covers the case where the
+    // extension came back as a fresh process after the app was killed.
+    final configFile = File(await appPath.configFilePath);
+    final diskMatches = await configFile.exists() &&
+        (await configFile.readAsString()).toMd5() == yamlMd5;
+    final matchesAppliedConfig = yamlMd5 == appliedMd5 && diskMatches;
+    // A forced apply is normally honoured because on Android and desktop the
+    // core may be a fresh process with no config loaded. On iOS the core lives
+    // in the Network Extension: while that extension is running it already
+    // holds this exact YAML, so re-pushing it only costs a full reload.
+    final skipRedundantReload =
+        matchesAppliedConfig && (!force || (system.isIOS && _isRunning));
+    if (skipRedundantReload) {
+      globalState.lastConfigMd5 = yamlMd5;
+      // `preloadInvoke` carries the "make the core running" side effect, which
+      // is independent of pushing config. Skipping the push must not skip it,
+      // otherwise a cold launch with an unchanged profile never starts.
+      await preloadInvoke?.call();
       return _SetupTaskResult.completed;
     }
     if (system.isAndroid) {
@@ -419,6 +456,7 @@ class SetupAction extends _$SetupAction {
           throw message;
         }
         globalState.lastConfigMd5 = yamlMd5;
+        await preferences.setAppliedConfigMd5(yamlMd5);
         ref.read(checkIpNumProvider.notifier).add();
         await onUpdated?.call();
       },

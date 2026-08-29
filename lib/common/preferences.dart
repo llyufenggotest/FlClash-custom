@@ -41,6 +41,28 @@ class Preferences {
     await preferences?.setString('sharedState', json.encode(shareState));
   }
 
+  /// MD5 of the profile YAML the long-lived core process is currently running.
+  ///
+  /// This has to outlive the Flutter process. On iOS the core lives in the
+  /// Network Extension, which keeps running while the app is suspended or
+  /// killed; when the app comes back it must be able to tell whether the
+  /// extension already holds the exact config it is about to push. An
+  /// in-memory field cannot answer that, so a relaunch always reapplied the
+  /// profile and forced the extension through a full reload.
+  Future<String?> getAppliedConfigMd5() async {
+    final preferences = await sharedPreferencesCompleter.future;
+    return preferences?.getString(appliedConfigMd5Key);
+  }
+
+  Future<void> setAppliedConfigMd5(String? md5) async {
+    final preferences = await sharedPreferencesCompleter.future;
+    if (md5 == null) {
+      await preferences?.remove(appliedConfigMd5Key);
+      return;
+    }
+    await preferences?.setString(appliedConfigMd5Key, md5);
+  }
+
   Future<Map<String, Object?>?> getConfigMap() async {
     try {
       final preferences = await sharedPreferencesCompleter.future;

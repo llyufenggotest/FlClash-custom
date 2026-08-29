@@ -279,7 +279,51 @@ check(
 
 check(
     '.github/workflows/ios-five-protocol.yaml',
-    present=['flutter test test/ios_profile_budget_test.dart'],
+    present=[
+        'flutter test test/ios_profile_budget_test.dart',
+        'flutter test test/ios_redundant_reload_test.dart',
+    ],
+)
+
+# --- redundant config reload on foreground return ---------------------------
+# Device trace 2026-08-29 15:18: the extension ran "Start initial configuration"
+# five times in four minutes (05:31:55, 05:32:53, 05:33:21, 05:34:25, 05:35:31),
+# each time reloading geodata, rebuilding the 111826-record GeoSite matcher and
+# re-fetching 20 remote rule-providers. Provider messages stalled during those
+# windows: 51 timeouts (p90 6627ms against an 8s budget) and 45 empty replies,
+# which is exactly the network_extension_timeout dialog and the empty proxies
+# page. Trigger: Runner emits start on every invalid -> connected transition and
+# _setupConfig honoured the forced apply because its applied-config fingerprint
+# lived only in memory, so it was always null after a relaunch.
+
+check(
+    'lib/common/constant.dart',
+    present=["const appliedConfigMd5Key = 'applied_config_md5'"],
+)
+
+check(
+    'lib/common/preferences.dart',
+    present=[
+        'Future<String?> getAppliedConfigMd5()',
+        'Future<void> setAppliedConfigMd5(',
+        'appliedConfigMd5Key',
+    ],
+)
+
+check(
+    'lib/providers/actions/setup.dart',
+    present=[
+        'await preferences.getAppliedConfigMd5()',
+        'await preferences.setAppliedConfigMd5(yamlMd5)',
+        'await preferences.setAppliedConfigMd5(null)',
+        'final diskMatches = await configFile.exists()',
+        'matchesAppliedConfig && (!force || (system.isIOS && _isRunning))',
+        'if (skipRedundantReload) {',
+        'await preloadInvoke?.call();',
+    ],
+    # The skip must never be unconditional: Android and desktop run the core in
+    # process, where a forced apply is the only way to load config at all.
+    absent=['matchesAppliedConfig && _isRunning', 'skipRedundantReload = true'],
 )
 
 if failures:
