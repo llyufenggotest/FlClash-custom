@@ -63,6 +63,8 @@ jobs:
           # ~20 MB of a ~50 MB budget for a feature low-memory builds disable.
           # Both variants must hold, so run the guards under each build tag.
           (cd core/mihomo && CGO_ENABLED=0 go test -tags with_low_memory ./component/mmdb/ ./rules/common/ -run ASN -count=1)
+          (cd core/mihomo && CGO_ENABLED=0 go test -tags with_low_memory ./config/ -run TestProxyServerBypass -count=1)
+          (cd core/mihomo && CGO_ENABLED=0 go test ./config/ -run TestProxyServerBypass -count=1)
           (cd core/mihomo && CGO_ENABLED=0 go test ./component/mmdb/ ./rules/common/ -run ASN -count=1)
           python3 scripts/verify_ios_contracts.py
           flutter test test/common/fastup_subscription_test.dart

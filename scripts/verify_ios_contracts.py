@@ -513,6 +513,55 @@ check(
     present=['go test -tags with_low_memory ./component/mmdb/ ./rules/common/ -run ASN'],
 )
 
+# --- Proxy server addresses must never re-enter the tunnel -----------------
+# The app process probes every node (delay tests, IP checks) with ordinary
+# sockets, so the TUN captures them and the extension's core routes them. With a
+# domain-only ruleset they fall through to MATCH and get dialled through a proxy:
+# "connect to node_X" tunneled into node_Y. One subscription with 137 distinct
+# server IPs turned that into a self-inflicted connection flood that killed the
+# extension in ~3s. Pinning server addresses to DIRECT breaks the loop.
+check(
+    'core/mihomo/config/config.go',
+    present=['config.Rules = prependProxyServerBypassRules(rules, proxies)'],
+    # The raw assignment would leave the loop open.
+    absent=['\tconfig.Rules = rules\n'],
+)
+
+check(
+    'core/mihomo/config/proxy_server_bypass.go',
+    present=[
+        'func prependProxyServerBypassRules(',
+        'if !proxyServerBypassEnabled {',
+        # Must win over whatever the subscription ships, hence prepend.
+        'return append(bypass, rules...)',
+        # A rule naming a missing adapter would be a silent black hole.
+        'if _, ok := proxies["DIRECT"]; !ok {',
+        # No DNS round trip while the tunnel is still coming up.
+        'RC.WithIPCIDRNoResolve(true)',
+    ],
+)
+
+check(
+    'core/mihomo/config/proxy_server_bypass_lowmem.go',
+    present=[
+        '//go:build with_low_memory',
+        'proxyServerBypassEnabled = true',
+    ],
+)
+
+check(
+    'core/mihomo/config/proxy_server_bypass_default.go',
+    present=[
+        '//go:build !with_low_memory',
+        'proxyServerBypassEnabled = false',
+    ],
+)
+
+check(
+    '.github/workflows/ios-five-protocol.yaml',
+    present=['go test -tags with_low_memory ./config/ -run TestProxyServerBypass'],
+)
+
 if failures:
     for f in failures:
         print('FAIL ' + f)
