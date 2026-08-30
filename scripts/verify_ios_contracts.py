@@ -562,6 +562,19 @@ check(
     present=['go test -tags with_low_memory ./config/ -run TestProxyServerBypass'],
 )
 
+# The end-to-end guard: parse each real subscription and assert no proxy server
+# would be dialled through a proxy. Lives in package main because only there is
+# hub/executor's temporaryUpdateGeneral linkname satisfied.
+check(
+    'core/ios_routing_loop_contract_test.go',
+    present=[
+        '//go:build with_low_memory',
+        'func TestProxyServersNeverReEnterTunnel(',
+        'func TestBypassRulesArePrepended(',
+        'func TestBypassDoesNotHijackOrdinaryTraffic(',
+    ],
+)
+
 if failures:
     for f in failures:
         print('FAIL ' + f)

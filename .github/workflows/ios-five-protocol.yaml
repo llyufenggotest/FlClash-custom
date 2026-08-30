@@ -52,7 +52,7 @@ jobs:
           # ios/android/linux files, so a darwin+cgo resolution finds none and
           # fails. The real iOS compile happens in `setup.dart ios`, which builds
           # libclash.a and libclash_lowmem.a for ios/arm64.
-          (cd core && CGO_ENABLED=0 go build ./... && CGO_ENABLED=0 go build -tags with_low_memory ./... && CGO_ENABLED=0 go vet ./... && CGO_ENABLED=0 go test ./...)
+          (cd core && CGO_ENABLED=0 go build ./... && CGO_ENABLED=0 go build -tags with_low_memory ./... && CGO_ENABLED=0 go vet ./... && CGO_ENABLED=0 go test ./... && CGO_ENABLED=0 go test -tags with_low_memory ./...)
           # The iOS data-path contracts are source-level, so they run under the
           # host toolchain rather than the ios/arm64 cross build.
           (cd core && CGO_ENABLED=0 go test ./ -run 'TestStartTunReportsRealResult|TestRuleProviderFirstFetch' -count=1)
