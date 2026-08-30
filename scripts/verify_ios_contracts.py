@@ -456,6 +456,63 @@ check(
     present=['go test ./ -run \'TestStartTunReportsRealResult|TestRuleProviderFirstFetch\''],
 )
 
+# --- ASN.mmdb must never be mmapped inside the extension -------------------
+# iOS charges file-backed mmap pages to phys_footprint. GeoLite2-ASN.mmdb is
+# ~20 MB of a ~50 MB budget, and low-memory builds disable ASN rules anyway
+# (geodata.InitASN stores asnEnable=false), so the mapping bought nothing and
+# cost the extension its life. Two independent guards, both pinned here.
+check(
+    'core/mihomo/component/mmdb/mmdb.go',
+    present=[
+        'if !asnMappingAllowed {',
+        'return ASNReader{}',
+    ],
+)
+
+check(
+    'core/mihomo/component/mmdb/asn_mapping_lowmem.go',
+    present=[
+        '//go:build with_low_memory',
+        'asnMappingAllowed = false',
+    ],
+)
+
+check(
+    'core/mihomo/component/mmdb/asn_mapping_default.go',
+    present=[
+        '//go:build !with_low_memory',
+        'asnMappingAllowed = true',
+    ],
+)
+
+check(
+    'core/mihomo/rules/common/ipasn.go',
+    present=[
+        # InitASN returns nil while disabling the feature; the rule must still
+        # be refused so its first Match cannot trigger the mapping.
+        'if !geodata.ASNEnable() {',
+        'ASN database is disabled on this build',
+    ],
+)
+
+check(
+    # Callers must tolerate the unmapped reader instead of dereferencing nil.
+    'core/mihomo/component/mmdb/reader.go',
+    present=['if r.Reader == nil {'],
+)
+
+check(
+    'core/mihomo/component/updater/update_geo.go',
+    present=['if reader := mmdb.ASNInstance().Reader; reader != nil {'],
+    # The unguarded close would panic once the reader can be nil.
+    absent=['mmdb.ASNInstance().Reader.Close()'],
+)
+
+check(
+    '.github/workflows/ios-five-protocol.yaml',
+    present=['go test -tags with_low_memory ./component/mmdb/ ./rules/common/ -run ASN'],
+)
+
 if failures:
     for f in failures:
         print('FAIL ' + f)

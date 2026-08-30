@@ -59,6 +59,11 @@ jobs:
           # The rule-provider deferral is build-tagged: prove both variants
           # type-check for the platforms that actually consume them.
           (cd core/mihomo && GOOS=ios GOARCH=arm64 CGO_ENABLED=0 go build -tags with_low_memory ./hub/executor/ && GOOS=android GOARCH=arm64 CGO_ENABLED=0 go build -tags with_low_memory ./hub/executor/ && GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build ./hub/executor/)
+          # ASN.mmdb is mmapped, and iOS charges mapped pages to phys_footprint:
+          # ~20 MB of a ~50 MB budget for a feature low-memory builds disable.
+          # Both variants must hold, so run the guards under each build tag.
+          (cd core/mihomo && CGO_ENABLED=0 go test -tags with_low_memory ./component/mmdb/ ./rules/common/ -run ASN -count=1)
+          (cd core/mihomo && CGO_ENABLED=0 go test ./component/mmdb/ ./rules/common/ -run ASN -count=1)
           python3 scripts/verify_ios_contracts.py
           flutter test test/common/fastup_subscription_test.dart
           flutter test test/oppa_yaml_test.dart
