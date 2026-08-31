@@ -575,6 +575,56 @@ check(
     ],
 )
 
+# Round 12: the extension must never build a matcher for a huge rule set.
+# NewDomainSet materialises and sorts every domain; measured on BanAD (187,945
+# rules) that peaks at ~190 MB inside a ~50 MB jetsam budget, and the peak is
+# independent of GOMEMLIMIT because that limit is soft. The MRS sidecar carries
+# the finished bitmap instead (~18 MB), so no rules have to be dropped.
+check(
+    'core/mihomo/rules/provider/lowmem_budget_lowmem.go',
+    present=['//go:build with_low_memory', 'maxLowMemoryRuleCount = 10000'],
+)
+check(
+    'core/mihomo/rules/provider/lowmem_budget_default.go',
+    present=['//go:build !with_low_memory', 'maxLowMemoryRuleCount = 0'],
+)
+check(
+    'core/mihomo/rules/provider/mrs_sidecar.go',
+    present=[
+        'func sidecarUsable(',
+        'func loadFromSidecar(',
+        'func writeSidecar(',
+        'sc.ModTime().Before(src.ModTime())',
+    ],
+)
+# The sidecar must be tried BEFORE the raw parse on the capped build, and
+# written only on an uncapped one.
+check(
+    'core/mihomo/rules/provider/provider.go',
+    present=[
+        'if maxLowMemoryRuleCount > 0 && format != P.MrsRule {',
+        'sidecarUsable(vehicle.Path())',
+        'if maxLowMemoryRuleCount == 0 && format != P.MrsRule {',
+        'writeSidecar(vehicle.Path(), behavior, strategy)',
+    ],
+)
+# The rule-count cap must gate the TRIE path only. Capping the MRS reader would
+# reject exactly the artifact that makes the big lists affordable, which is a
+# silent regression to the rules-dropped behaviour.
+check(
+    'core/mihomo/rules/provider/mrs_reader.go',
+    absent=['ErrRuleSetTooLarge'],
+)
+check(
+    'core/mihomo/rules/provider/mrs_sidecar_test.go',
+    present=[
+        'func TestSidecarRoundTripsEveryRule(',
+        'func TestCappedBuildLoadsOversizedListFromSidecar(',
+        'func TestStaleSidecarIsRefused(',
+        'func TestCorruptSidecarErrors(',
+    ],
+)
+
 if failures:
     for f in failures:
         print('FAIL ' + f)

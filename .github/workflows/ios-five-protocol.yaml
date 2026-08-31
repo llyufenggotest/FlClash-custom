@@ -66,6 +66,11 @@ jobs:
           (cd core/mihomo && CGO_ENABLED=0 go test -tags with_low_memory ./config/ -run TestProxyServerBypass -count=1)
           (cd core/mihomo && CGO_ENABLED=0 go test ./config/ -run TestProxyServerBypass -count=1)
           (cd core/mihomo && CGO_ENABLED=0 go test ./component/mmdb/ ./rules/common/ -run ASN -count=1)
+          # The rule-set budget and the MRS sidecar are a matched pair: the capped
+          # build must refuse to BUILD a huge matcher yet still LOAD one from a
+          # sidecar, so both build variants have to pass the same suite.
+          (cd core/mihomo && CGO_ENABLED=0 go test -tags with_low_memory ./rules/provider/ -count=1)
+          (cd core/mihomo && CGO_ENABLED=0 go test ./rules/provider/ -count=1)
           python3 scripts/verify_ios_contracts.py
           flutter test test/common/fastup_subscription_test.dart
           flutter test test/oppa_yaml_test.dart
