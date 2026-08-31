@@ -96,3 +96,63 @@ jobs:
           name: FlClash-five-protocol-ios-arm64
           path: dist/*.ipa
           if-no-files-found: error
+
+  android:
+    name: Build Android APK (arm64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.5'
+          cache-dependency-path: core/go.sum
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: master
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup NDK
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r29
+          add-to-path: true
+          link-to-sdk: true
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      # No signing secrets on this isolated CI account: the Gradle config falls
+      # back to the debug key with a .dev applicationId suffix (hasReleaseSigning
+      # == false), which is exactly what we want for a test build. The APK is
+      # installable and MT-signable, matching the accepted Android acceptance
+      # flow for these forks.
+      - name: Build unsigned arm64 APK
+        run: dart setup.dart android --arch arm64 -v
+
+      - name: Verify APK exists
+        shell: bash
+        run: |
+          find dist -maxdepth 2 -type f -print
+          test -n "$(find dist -type f -name '*.apk' -print -quit)"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: FlClash-five-protocol-android-arm64
+          path: dist/*.apk
+          if-no-files-found: error

@@ -184,7 +184,7 @@ final class TunnelController {
         execute: timeoutWork
       )
       do {
-        try session.sendProviderMessage(data) { response in
+        try session.sendProviderMessage(data) { [weak self] response in
           Task { @MainActor in
             waiter.finish {
               timeoutWork.cancel()
@@ -192,16 +192,36 @@ final class TunnelController {
               guard let response,
                 let message = String(data: response, encoding: .utf8)
               else {
-                self.log("provider message empty seq=\(sequence) duration_ms=\(duration)")
-                continuation.resume(
-                  throwing: ProviderMessageError(
-                    code: "empty_response",
-                    message: "empty network extension response"
+                // A nil reply is normal when the tunnel is being torn down: the
+                // system drops in-flight provider messages the moment we stop
+                // the extension (e.g. switching subscriptions issues stop, and
+                // the delay-test / changeProxy calls still in flight all come
+                // back nil). Those are not failures — surfacing them as
+                // `empty_response` produced the CoreMethodException(empty
+                // network extension response) toast the user saw. Only report a
+                // hard error when the tunnel is still supposed to be running.
+                let stillRunning =
+                  manager.connection.status.tunnelState == .running
+                if stillRunning {
+                  self?.log("provider message empty seq=\(sequence) duration_ms=\(duration)")
+                  continuation.resume(
+                    throwing: ProviderMessageError(
+                      code: "empty_response",
+                      message: "empty network extension response"
+                    )
                   )
-                )
+                } else {
+                  self?.log("provider message dropped-on-stop seq=\(sequence) duration_ms=\(duration)")
+                  continuation.resume(
+                    throwing: ProviderMessageError(
+                      code: "network_extension_unavailable",
+                      message: "tunnel stopped before response"
+                    )
+                  )
+                }
                 return
               }
-              self.log("provider message end seq=\(sequence) duration_ms=\(duration) bytes=\(response.count)")
+              self?.log("provider message end seq=\(sequence) duration_ms=\(duration) bytes=\(response.count)")
               continuation.resume(returning: message)
             }
           }

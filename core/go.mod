@@ -4,9 +4,17 @@ go 1.25
 
 replace github.com/metacubex/mihomo => ./mihomo
 
+// ViewTurbo (`#VT`) lives in this local fork. The replace MUST be in the main
+// module (core) that actually compiles into libclash.a/.so, not only in
+// core/mihomo/go.mod -- otherwise the shipped library links pristine upstream
+// v0.2.7 and every VT node silently does a plain Shadowsocks handshake.
+replace github.com/metacubex/sing-shadowsocks2 => ./sing-shadowsocks2
+
 require (
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/metacubex/mihomo v0.0.0-00010101000000-000000000000
+	github.com/metacubex/sing-shadowsocks2 v0.2.7
+	github.com/metacubex/tailscale v0.0.0-20260807072706-a4fb5feabcbb
 	golang.org/x/exp v0.0.0-20240904232852-e7e105dedf7e
 	golang.org/x/sync v0.11.0
 )
@@ -85,13 +93,11 @@ require (
 	github.com/metacubex/sing-mux v0.3.10 // indirect
 	github.com/metacubex/sing-quic v0.0.0-20260726014900-38b0e9295f51 // indirect
 	github.com/metacubex/sing-shadowsocks v0.2.12 // indirect
-	github.com/metacubex/sing-shadowsocks2 v0.2.7 // indirect
 	github.com/metacubex/sing-tun v0.4.22 // indirect
 	github.com/metacubex/sing-vmess v0.2.5 // indirect
 	github.com/metacubex/sing-wireguard v0.0.0-20260810013230-110eac03c3f0 // indirect
 	github.com/metacubex/smux v0.0.0-20260105030934-d0c8756d3141 // indirect
 	github.com/metacubex/ssh v0.1.0 // indirect
-	github.com/metacubex/tailscale v0.0.0-20260807072706-a4fb5feabcbb // indirect
 	github.com/metacubex/tailscale-wireguard-go v0.0.0-20260725073821-e61ab99cede2 // indirect
 	github.com/metacubex/tfo-go v0.0.0-20260623020846-376a77860b8c // indirect
 	github.com/metacubex/tls v0.1.8 // indirect
