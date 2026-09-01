@@ -319,7 +319,16 @@ check(
         'await preferences.setAppliedConfigMd5(yamlMd5)',
         'await preferences.setAppliedConfigMd5(null)',
         'final diskMatches = await configFile.exists()',
-        'matchesAppliedConfig && (!force || (system.isIOS && _isRunning))',
+        # Asserted as separate conditions rather than one literal line: the
+        # earlier single-string form broke as soon as a new guard joined the
+        # expression, which fails the build without anything being wrong.
+        'final skipRedundantReload =',
+        'matchesAppliedConfig',
+        '(!force || (system.isIOS && _isRunning))',
+        # A subscription switch must never take the fast path: two profiles can
+        # render identical YAML, and the core still has to rebuild so the stale
+        # providers are closed (core/mihomo tunnel.UpdateProxies).
+        '!profileSwitched',
         'if (skipRedundantReload) {',
         'await preloadInvoke?.call();',
     ],
