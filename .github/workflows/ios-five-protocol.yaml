@@ -9,6 +9,7 @@ on:
         options:
           - all
           - ios
+          - all-with-macos
   push:
     branches:
       - five-protocol-ios
@@ -21,19 +22,9 @@ env:
 
 jobs:
   ios:
-    name: Build unsigned iOS IPA (${{ matrix.pool }})
-    runs-on: ${{ matrix.pool }}
+    name: Build unsigned iOS IPA
+    runs-on: macos-26
     timeout-minutes: 90
-    strategy:
-      # macos-26 is the scarcest hosted pool: four separate attempts sat in its
-      # queue for 15 minutes without ever being assigned a machine, while
-      # macos-latest handed one over in seconds. Queue in both pools and take
-      # whichever frees up first -- the IPA is identical either way.
-      matrix:
-        pool:
-          - macos-latest
-          - macos-26
-      fail-fast: false
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -116,7 +107,7 @@ jobs:
       - name: Upload IPA
         uses: actions/upload-artifact@v7
         with:
-          name: FlClash-five-protocol-ios-arm64-${{ matrix.pool }}
+          name: FlClash-five-protocol-ios-arm64
           path: dist/*.ipa
           if-no-files-found: error
 
@@ -232,7 +223,10 @@ jobs:
 
   macos:
     name: Build macOS
-    if: github.event.inputs.platforms != 'ios'
+    # Off by default: these two jobs compete with the iOS job for the same
+    # scarce macOS machines, and their artifacts are already built and
+    # verified. Ask for them explicitly with platforms=all-with-macos.
+    if: github.event.inputs.platforms == 'all-with-macos'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     strategy:
