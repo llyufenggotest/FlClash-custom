@@ -1,5 +1,4 @@
-name: iOS Five Protocol Build
-
+name: Five Protocol Multi-Platform Build
 on:
   workflow_dispatch:
   push:
@@ -79,6 +78,7 @@ jobs:
           flutter test test/ios_redundant_reload_test.dart
           flutter test test/ios_switch_and_foreground_test.dart
           flutter test test/ios_reclaim_battery_test.dart
+          flutter test test/ios_profile_switch_test.dart
           flutter test test/ios_delay_concurrency_test.dart
           flutter test test/setup_test.dart
           ! git grep -n -E '#sl|MAGIC_SHANLIAN_TRIGGER|GenerateMagicSNI' -- 'core/mihomo/*.go' 'core/mihomo/**/*.go' ':!core/mihomo/**/*_test.go'
@@ -157,4 +157,101 @@ jobs:
         with:
           name: FlClash-five-protocol-android-arm64
           path: dist/*.apk
+          if-no-files-found: error
+
+  windows:
+    name: Build Windows (x64)
+    runs-on: windows-2022
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.5'
+          cache-dependency-path: core/go.sum
+
+      - name: Enable git long paths
+        run: git config --global core.longpaths true
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: master
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      # The portable zip is the target that needs no installer toolchain on the
+      # runner, so a packaging dependency cannot mask a real build failure. The
+      # tagged release workflow still produces the exe installer.
+      - name: Build Windows x64 portable
+        run: dart setup.dart windows --targets zip -v
+
+      - name: Verify archive exists
+        shell: bash
+        run: |
+          find dist -maxdepth 2 -type f -print
+          test -n "$(find dist -type f -name '*.zip' -print -quit)"
+
+      - name: Upload Windows build
+        uses: actions/upload-artifact@v7
+        with:
+          name: FlClash-five-protocol-windows-x64
+          path: dist/*.zip
+          if-no-files-found: error
+
+  macos:
+    name: Build macOS (arm64)
+    runs-on: macos-26
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.5'
+          cache-dependency-path: core/go.sum
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: master
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Setup Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode_26.3.app || sudo xcode-select -s /Applications/Xcode_26.2.app
+          xcodebuild -version
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      # `setup.dart` installs appdmg itself (_ensureMacosDependencies), so dmg is
+      # the supported packaging path here.
+      - name: Build macOS arm64
+        run: dart setup.dart macos -v
+
+      - name: Verify package exists
+        shell: bash
+        run: |
+          find dist -maxdepth 2 -type f -print
+          test -n "$(find dist -type f -name '*.dmg' -print -quit)"
+
+      - name: Upload macOS build
+        uses: actions/upload-artifact@v7
+        with:
+          name: FlClash-five-protocol-macos-arm64
+          path: dist/*.dmg
           if-no-files-found: error

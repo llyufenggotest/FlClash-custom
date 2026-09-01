@@ -31,12 +31,36 @@ class SetupAction extends _$SetupAction {
     return SetupParams(selectedMap: selectedMap, testUrl: testUrl);
   }
 
-  void fullSetup() {
+  void fullSetup({bool profileSwitched = false}) {
     if (!ref.read(initProvider)) return;
     ref.read(delayDataSourceProvider.notifier).value = {};
-    unawaited(_runSetup(force: true));
+    unawaited(_runSetup(force: true, profileSwitched: profileSwitched));
     ref.read(logsProvider.notifier).value = FixedList(500);
     ref.read(requestsProvider.notifier).value = FixedList(500);
+  }
+
+  /// Tears down everything the previous subscription owned before the new one
+  /// is applied ("single core" switch).
+  ///
+  /// Keeping the old connections alive across a switch is not just untidy: the
+  /// trackers, socket buffers and the outgoing sockets themselves stay charged
+  /// to the process, and on iOS that lands straight in the jetsam budget at the
+  /// exact moment the new profile is being parsed -- the peak that showed up as
+  /// footprint 42-48MB in the tester trace. Dropping them first also makes the
+  /// switch behave the way it reads to the user: tapping another subscription
+  /// stops using the old nodes immediately instead of draining in the
+  /// background.
+  Future<void> _releasePreviousProfile() async {
+    try {
+      await coreController.closeConnections();
+    } catch (error) {
+      // A core that is not up yet has nothing to release; never let this block
+      // the switch itself.
+      commonPrint.log(
+        'release previous profile ===> $error',
+        logLevel: coreFailureLogLevel(error),
+      );
+    }
   }
 
   void _setLocalRunning(bool running) {
@@ -241,12 +265,17 @@ class SetupAction extends _$SetupAction {
   Future<void> _runSetup({
     bool silence = false,
     bool force = false,
+    bool profileSwitched = false,
     Future<void> Function()? preloadInvoke,
   }) async {
+    if (profileSwitched) {
+      await _releasePreviousProfile();
+    }
     final result = await _setupScheduler.run(() {
       return _setupConfig(
         force: force,
         silence: silence,
+        profileSwitched: profileSwitched,
         preloadInvoke: preloadInvoke,
         onUpdated: () async {
           await ref.read(proxiesActionProvider.notifier).updateGroups();
@@ -381,6 +410,7 @@ class SetupAction extends _$SetupAction {
   Future<_SetupTaskResult> _setupConfig({
     bool force = false,
     bool silence = false,
+    bool profileSwitched = false,
     Future<void> Function()? preloadInvoke,
     FutureOr Function()? onUpdated,
   }) async {
@@ -429,8 +459,12 @@ class SetupAction extends _$SetupAction {
     // core may be a fresh process with no config loaded. On iOS the core lives
     // in the Network Extension: while that extension is running it already
     // holds this exact YAML, so re-pushing it only costs a full reload.
-    final skipRedundantReload =
-        matchesAppliedConfig && (!force || (system.isIOS && _isRunning));
+    // A subscription switch is never skipped: the YAML is expected to differ,
+    // and if two profiles happen to render identical YAML the core still has to
+    // rebuild so the stale providers get closed.
+    final skipRedundantReload = !profileSwitched &&
+        matchesAppliedConfig &&
+        (!force || (system.isIOS && _isRunning));
     if (skipRedundantReload) {
       globalState.lastConfigMd5 = yamlMd5;
       // `preloadInvoke` carries the "make the core running" side effect, which

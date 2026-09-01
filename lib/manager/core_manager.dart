@@ -35,7 +35,12 @@ class _CoreContainerState extends ConsumerState<CoreManager>
     ref.listenManual(currentProfileIdProvider, (prev, next) {
       if (prev != next) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          ref.read(setupActionProvider.notifier).fullSetup();
+          // `prev != null` distinguishes a real subscription switch from the
+          // first profile being selected at startup: only the former has a
+          // previous core state that must be torn down first.
+          ref
+              .read(setupActionProvider.notifier)
+              .fullSetup(profileSwitched: prev != null);
         });
       }
     });

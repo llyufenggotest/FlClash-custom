@@ -157,10 +157,85 @@ func patchSelectGroup(mapping map[string]string) {
 
 		selected, exist := mapping[name]
 		if !exist {
+			seedUnselectedGroup(name, outbound.ProxyAdapter)
 			continue
 		}
 
 		selector.ForceSet(selected)
+	}
+}
+
+// selectorSeed is the slice of a selector group this seeding needs. Declared
+// inline so no exported surface changes in mihomo: Selector already provides
+// all three methods.
+type selectorSeed interface {
+	Now() string
+	Proxies() []constant.Proxy
+	ForceSet(name string)
+}
+
+// seedUnselectedGroup gives a group with no persisted choice a usable node.
+//
+// Switching to a subscription the user has never opened leaves every selector
+// unpinned, and Selector.selectedProxy falls back to proxies[0] -- which
+// config.go prepends with DIRECT/REJECT, so a fresh subscription silently
+// routes through DIRECT until the user taps a node. Seeding the lowest-latency
+// alive node instead makes the switch usable immediately; delay history
+// survives in the profile cache, so a subscription used before starts on the
+// node that was actually fast for it.
+func seedUnselectedGroup(group string, adapter any) {
+	seed, ok := adapter.(selectorSeed)
+	if !ok {
+		return
+	}
+	candidates := seed.Proxies()
+	if len(candidates) == 0 {
+		return
+	}
+	// A selection that already points at a real outbound is left alone: it may
+	// come from the group's own `default` option in the profile.
+	if current := seed.Now(); current != "" && !isPlaceholderOutbound(current) {
+		return
+	}
+
+	const noDelaySentinel uint16 = 0xffff
+	var (
+		bestName  string
+		bestDelay = noDelaySentinel
+		fallback  string
+	)
+	for _, candidate := range candidates {
+		name := candidate.Name()
+		if isPlaceholderOutbound(name) {
+			continue
+		}
+		if fallback == "" {
+			fallback = name
+		}
+		if delay := candidate.LastDelayForTestUrl(constant.DefaultTestURL); delay < bestDelay {
+			bestDelay = delay
+			bestName = name
+		}
+	}
+
+	switch {
+	case bestName != "":
+		seed.ForceSet(bestName)
+		log.Infoln("[Group] %s seeded with fastest node %s (%dms)", group, bestName, bestDelay)
+	case fallback != "":
+		seed.ForceSet(fallback)
+		log.Infoln("[Group] %s seeded with %s (no delay history yet)", group, fallback)
+	}
+}
+
+// isPlaceholderOutbound reports whether name is one of the built-in outbounds
+// mihomo prepends to every proxy list, which must never be treated as a node.
+func isPlaceholderOutbound(name string) bool {
+	switch name {
+	case "DIRECT", "REJECT", "REJECT-DROP", "PASS", "COMPATIBLE", "GLOBAL":
+		return true
+	default:
+		return false
 	}
 }
 
