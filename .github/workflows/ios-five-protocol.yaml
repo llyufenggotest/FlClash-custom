@@ -1,6 +1,14 @@
 name: Five Protocol Multi-Platform Build
 on:
   workflow_dispatch:
+    inputs:
+      platforms:
+        description: 'Which platforms to build'
+        default: all
+        type: choice
+        options:
+          - all
+          - ios
   push:
     branches:
       - five-protocol-ios
@@ -101,6 +109,7 @@ jobs:
 
   android:
     name: Build Android APK (arm64)
+    if: github.event.inputs.platforms != 'ios'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -161,6 +170,7 @@ jobs:
 
   windows:
     name: Build Windows (x64)
+    if: github.event.inputs.platforms != 'ios'
     runs-on: windows-2022
     timeout-minutes: 90
     steps:
@@ -209,6 +219,7 @@ jobs:
 
   macos:
     name: Build macOS
+    if: github.event.inputs.platforms != 'ios'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     strategy:
