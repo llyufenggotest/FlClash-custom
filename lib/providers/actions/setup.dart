@@ -437,6 +437,13 @@ class SetupAction extends _$SetupAction {
       // is independent of pushing config. Skipping the push must not skip it,
       // otherwise a cold launch with an unchanged profile never starts.
       await preloadInvoke?.call();
+      // The UI still has to be refilled. `groups` lives in memory only, so a
+      // foreground return after the app was suspended/killed starts with an
+      // empty list while the extension keeps running with the same config.
+      // Skipping `onUpdated` here left the proxies tab missing even though the
+      // tunnel carried traffic. Reading the groups back is cheap (one
+      // getProxies round trip) and does not reload anything in the core.
+      await onUpdated?.call();
       return _SetupTaskResult.completed;
     }
     if (system.isAndroid) {

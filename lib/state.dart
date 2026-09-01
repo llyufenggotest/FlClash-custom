@@ -17,6 +17,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'common/common.dart';
 import 'common/migration.dart';
+import 'core/core.dart';
 import 'database/database.dart';
 import 'enum/enum.dart';
 import 'l10n/l10n.dart';
@@ -176,6 +177,12 @@ class GlobalState {
       return await futureFunction();
     } catch (e, s) {
       commonPrint.log('$title ===> $e, $s', logLevel: LogLevel.warning);
+      // A momentarily unavailable core is not something to interrupt the user
+      // with: it happens on every stop, subscription switch, and extension
+      // reload. Log it and move on — the caller's next refresh recovers.
+      if (isCoreUnavailableError(e)) {
+        return null;
+      }
       if (silence) {
         showNotifier(e.toString(), allowCopy: true);
       } else {

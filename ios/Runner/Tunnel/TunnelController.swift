@@ -137,16 +137,74 @@ final class TunnelController {
     providerMessageWaiters.removeFirst().resume()
   }
 
+  /// A `nil` reply from a *running* extension is a busy signal, not a failure.
+  /// Reloading a profile makes the extension rebuild GeoSite (110k+ records) and
+  /// run memory reclaim; during that window the system drops in-flight provider
+  /// messages. Retrying a few times with a short backoff turns what used to be a
+  /// user-visible `empty_response` toast into a slightly slower success.
+  private let emptyReplyRetryLimit = 3
+  private let emptyReplyRetryBackoff: [UInt64] = [
+    150_000_000, 400_000_000,
+  ]
+
   func sendProviderMessage(_ data: Data) async throws -> String {
     // Admission control comes first: queueing here costs one suspended task in
     // the app, whereas queueing inside the extension costs live memory in the
-    // process that gets killed for using it.
+    // process that gets killed for using it. The slot is held across retries so
+    // a busy extension cannot be stampeded by every caller retrying at once.
     await acquireProviderMessageSlot()
     defer { releaseProviderMessageSlot() }
     nextProviderMessageSequence &+= 1
     let sequence = nextProviderMessageSequence
+
+    for attempt in 1...emptyReplyRetryLimit {
+      do {
+        return try await sendProviderMessageAttempt(
+          data,
+          sequence: sequence,
+          attempt: attempt
+        )
+      } catch let error as ProviderMessageError
+        where error.code == emptyReplyRetryCode
+      {
+        guard attempt < emptyReplyRetryLimit else {
+          // Out of retries: report the terminal code the app layer knows.
+          log("provider message empty seq=\(sequence) attempts=\(attempt)")
+          throw ProviderMessageError(
+            code: "empty_response",
+            message: "empty network extension response"
+          )
+        }
+        let backoff = emptyReplyRetryBackoff[
+          min(attempt - 1, emptyReplyRetryBackoff.count - 1)
+        ]
+        log(
+          "provider message retry seq=\(sequence) attempt=\(attempt) backoff_ms=\(backoff / 1_000_000)"
+        )
+        try? await Task.sleep(nanoseconds: backoff)
+      }
+    }
+    // Unreachable: the final attempt either returns or throws above.
+    throw ProviderMessageError(
+      code: "empty_response",
+      message: "empty network extension response"
+    )
+  }
+
+  /// Internal marker distinguishing "extension was busy, worth retrying" from
+  /// the terminal `empty_response` reported to the app layer.
+  private let emptyReplyRetryCode = "empty_response_retryable"
+
+  private func sendProviderMessageAttempt(
+    _ data: Data,
+    sequence: UInt64,
+    attempt: Int
+  ) async throws -> String {
     let startedAt = Date()
-    log("provider message begin seq=\(sequence) bytes=\(data.count)")
+    // Captured locally: the closure below runs with a weak `self`, and the
+    // marker must survive even if the controller is torn down mid-flight.
+    let retryCode = emptyReplyRetryCode
+    log("provider message begin seq=\(sequence) attempt=\(attempt) bytes=\(data.count)")
     let manager: NETunnelProviderManager?
     do {
       manager = try await managerStore.loadManager(createIfNeeded: false)
@@ -192,22 +250,24 @@ final class TunnelController {
               guard let response,
                 let message = String(data: response, encoding: .utf8)
               else {
-                // A nil reply is normal when the tunnel is being torn down: the
-                // system drops in-flight provider messages the moment we stop
-                // the extension (e.g. switching subscriptions issues stop, and
-                // the delay-test / changeProxy calls still in flight all come
-                // back nil). Those are not failures — surfacing them as
-                // `empty_response` produced the CoreMethodException(empty
-                // network extension response) toast the user saw. Only report a
-                // hard error when the tunnel is still supposed to be running.
+                // A nil reply has two very different causes:
+                //  * the tunnel is going away (stop / subscription switch): the
+                //    system drops every in-flight message. Benign.
+                //  * the tunnel is running but the extension is mid-reload
+                //    (GeoSite rebuild, memory reclaim) and cannot answer in
+                //    time. Also benign — it just needs another try. Reporting
+                //    this as a hard error is what produced the user-visible
+                //    `empty_response` toast when switching subscriptions.
                 let stillRunning =
                   manager.connection.status.tunnelState == .running
                 if stillRunning {
-                  self?.log("provider message empty seq=\(sequence) duration_ms=\(duration)")
+                  self?.log(
+                    "provider message empty-busy seq=\(sequence) attempt=\(attempt) duration_ms=\(duration)"
+                  )
                   continuation.resume(
                     throwing: ProviderMessageError(
-                      code: "empty_response",
-                      message: "empty network extension response"
+                      code: retryCode,
+                      message: "network extension busy"
                     )
                   )
                 } else {

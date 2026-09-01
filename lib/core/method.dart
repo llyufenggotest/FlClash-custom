@@ -170,3 +170,16 @@ LogLevel coreFailureLogLevel(Object? error) {
   }
   return error.isCoreUnavailable ? LogLevel.debug : LogLevel.warning;
 }
+
+/// True when the failure only means "the core could not answer right now".
+/// These are expected during stop, subscription switches, and extension
+/// reloads, so they must not be surfaced to the user as an error dialog.
+bool isCoreUnavailableError(Object? error) {
+  if (error is TimeoutException) {
+    return true;
+  }
+  if (error is CoreMethodException) {
+    return error.isCoreUnavailable;
+  }
+  return false;
+}
