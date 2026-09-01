@@ -23,7 +23,11 @@ env:
 jobs:
   ios:
     name: Build unsigned iOS IPA
-    runs-on: macos-26
+    # macos-15 is a different image generation, not an alias of macos-26.
+    # Five consecutive macos-26 requests were never assigned a machine
+    # (each cancelled at exactly 902s), including one with no competing
+    # macOS job at all, so the macos-26 capacity itself is the blocker.
+    runs-on: macos-15
     timeout-minutes: 90
     steps:
       - name: Checkout
