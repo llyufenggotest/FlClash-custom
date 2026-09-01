@@ -21,9 +21,19 @@ env:
 
 jobs:
   ios:
-    name: Build unsigned iOS IPA
-    runs-on: macos-26
+    name: Build unsigned iOS IPA (${{ matrix.pool }})
+    runs-on: ${{ matrix.pool }}
     timeout-minutes: 90
+    strategy:
+      # macos-26 is the scarcest hosted pool: four separate attempts sat in its
+      # queue for 15 minutes without ever being assigned a machine, while
+      # macos-latest handed one over in seconds. Queue in both pools and take
+      # whichever frees up first -- the IPA is identical either way.
+      matrix:
+        pool:
+          - macos-latest
+          - macos-26
+      fail-fast: false
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -45,7 +55,10 @@ jobs:
 
       - name: Setup Xcode
         run: |
-          sudo xcode-select -s /Applications/Xcode_26.3.app || sudo xcode-select -s /Applications/Xcode_26.2.app
+          # macos-latest and macos-26 ship different Xcode sets, so pick the
+          # newest installed rather than pinning a version that may be absent.
+          latest="$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)"
+          if [ -n "$latest" ]; then sudo xcode-select -s "$latest"; fi
           xcodebuild -version
 
       - name: Get dependencies
@@ -103,7 +116,7 @@ jobs:
       - name: Upload IPA
         uses: actions/upload-artifact@v7
         with:
-          name: FlClash-five-protocol-ios-arm64
+          name: FlClash-five-protocol-ios-arm64-${{ matrix.pool }}
           path: dist/*.ipa
           if-no-files-found: error
 
