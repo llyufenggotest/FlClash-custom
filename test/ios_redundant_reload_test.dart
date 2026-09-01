@@ -60,12 +60,15 @@ void main() {
       expect(setup, contains(".readAsString()).toMd5() == yamlMd5"));
     });
 
-    test('skipping the push still runs the core-start side effect', () {
+    test('skipping the push still starts the core and refills UI state', () {
       final setup = source('lib/providers/actions/setup.dart');
       final skipStart = setup.indexOf('if (skipRedundantReload) {');
+      final skipEnd = setup.indexOf('if (system.isAndroid)', skipStart);
       expect(skipStart, greaterThan(-1));
-      final skipBody = setup.substring(skipStart, skipStart + 700);
+      expect(skipEnd, greaterThan(skipStart));
+      final skipBody = setup.substring(skipStart, skipEnd);
       expect(skipBody, contains('await preloadInvoke?.call()'));
+      expect(skipBody, contains('await onUpdated?.call()'));
       expect(skipBody, contains('return _SetupTaskResult.completed'));
     });
 
