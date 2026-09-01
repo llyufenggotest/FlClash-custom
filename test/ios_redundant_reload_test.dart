@@ -48,10 +48,20 @@ void main() {
   group('redundant reloads are skipped, real ones are not', () {
     test('iOS skips a forced apply only while the tunnel is running', () {
       final setup = source('lib/providers/actions/setup.dart');
-      expect(
-        setup,
-        contains('matchesAppliedConfig && (!force || (system.isIOS && _isRunning))'),
-      );
+      final start = setup.indexOf('final skipRedundantReload =');
+      expect(start, greaterThan(-1),
+          reason: 'the skip decision must still exist');
+      final condition = setup.substring(start, setup.indexOf(';', start));
+
+      // Asserted per condition, not as one literal line: the expression grows
+      // as guards are added (the switch guard already wrapped it across three
+      // lines), and pinning the whole line fails the build without anything
+      // being wrong.
+      expect(condition, contains('matchesAppliedConfig'));
+      expect(condition, contains('(!force || (system.isIOS && _isRunning))'));
+      // A subscription switch must always rebuild: two profiles can render
+      // identical YAML, and the core still has to close the stale providers.
+      expect(condition, contains('!profileSwitched'));
     });
 
     test('the skip is gated on the on-disk config actually matching', () {
