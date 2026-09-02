@@ -105,15 +105,22 @@ final class NativeResourceHeartbeat {
   // moved the footprint materially — which preserves every ramp into danger.
   private static let logIntervalSeconds: TimeInterval = 10
   private static let logDeltaMB = 3
-  private var lastLoggedUptime: TimeInterval = -.greatestFiniteMagnitude
-  private var lastLoggedFootprintMB = Int.min
+  /// "Nothing logged yet" is modelled as absence, never as an extreme
+  /// magnitude. A sentinel like `Int.min` looks harmless until it reaches
+  /// arithmetic: `footprintMB - Int.min` exceeds `Int.max` on the very first
+  /// tick, and Swift traps on signed overflow in release builds too (only
+  /// `-Ounchecked` elides the check). Trapping here kills the whole Network
+  /// Extension process one second after `startTun` succeeds, which the user
+  /// experiences as "it connects and immediately drops".
+  private var lastLoggedUptime: TimeInterval?
+  private var lastLoggedFootprintMB: Int?
 
   /// Pure decision so the throttle can be tested without a timer.
   static func shouldLogHeartbeat(
     uptimeSeconds: TimeInterval,
     footprintMB: Int,
-    lastLoggedUptime: TimeInterval,
-    lastLoggedFootprintMB: Int
+    lastLoggedUptime: TimeInterval?,
+    lastLoggedFootprintMB: Int?
   ) -> Bool {
     // Never throttle inside the reaction window. That window is keyed off the
     // *escalated* threshold, not the warning one: the trace put the steady-state
@@ -121,6 +128,9 @@ final class NativeResourceHeartbeat {
     // exempted 96.5% of samples and threw the throttle away. p90 was 42 and p99
     // 43, so 44 MB and up is genuinely the run-up to the 48 MB kill.
     if footprintMB >= escalatedReclaimMB { return true }
+    // The first sample of a tunnel life is always logged: there is no baseline
+    // to compare against, and inventing one via a sentinel is what overflowed.
+    guard let lastLoggedFootprintMB, let lastLoggedUptime else { return true }
     if abs(footprintMB - lastLoggedFootprintMB) >= logDeltaMB { return true }
     return uptimeSeconds - lastLoggedUptime >= logIntervalSeconds
   }
@@ -138,8 +148,8 @@ final class NativeResourceHeartbeat {
     warnReported = false
     lastReclaimUptime = 0
     reclaimPolicy = Self.baseReclaimPolicy
-    lastLoggedUptime = -.greatestFiniteMagnitude
-    lastLoggedFootprintMB = Int.min
+    lastLoggedUptime = nil
+    lastLoggedFootprintMB = nil
     let timer = DispatchSource.makeTimerSource(
       queue: DispatchQueue(label: "com.follow.clash.necore-heartbeat")
     )

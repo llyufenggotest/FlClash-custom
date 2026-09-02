@@ -162,8 +162,47 @@ void main() {
       final start = heartbeat.indexOf('func start() {');
       final end = heartbeat.indexOf('let timer = DispatchSource', start);
       final body = heartbeat.substring(start, end);
-      expect(body, contains('lastLoggedUptime = -.greatestFiniteMagnitude'));
-      expect(body, contains('lastLoggedFootprintMB = Int.min'));
+      expect(body, contains('lastLoggedUptime = nil'));
+      expect(body, contains('lastLoggedFootprintMB = nil'));
+    });
+
+    test('no sentinel magnitude ever reaches arithmetic', () {
+      // Regression guard for the crash that made the tunnel drop about one
+      // second after connecting. `lastLoggedFootprintMB` used to start at the
+      // minimum Int value, so the very first sample evaluated
+      // `footprintMB - <that sentinel>`, which overflows. Swift traps on
+      // signed overflow in release builds as well, and a trap inside the
+      // Network Extension kills the tunnel process outright.
+      final heartbeat = source('ios/NECore/NativeResourceHeartbeat.swift');
+      // The doc comment on the fixed declarations deliberately names the old
+      // sentinels so nobody reintroduces them, so the guard is applied to
+      // code lines only rather than to the whole file.
+      final code = heartbeat
+          .split('\n')
+          .where((line) => !line.trimLeft().startsWith('//'))
+          .join('\n');
+      expect(code, isNot(contains('Int.min')));
+      expect(code, isNot(contains('Int.max')));
+      expect(code, isNot(contains('greatestFiniteMagnitude')));
+      // Absence, not an extreme value, is how "nothing logged yet" is modelled.
+      expect(heartbeat, contains('private var lastLoggedUptime: TimeInterval?'));
+      expect(heartbeat, contains('private var lastLoggedFootprintMB: Int?'));
+    });
+
+    test('the first sample of a tunnel life is always logged', () {
+      final heartbeat = source('ios/NECore/NativeResourceHeartbeat.swift');
+      final start = heartbeat.indexOf('static func shouldLogHeartbeat(');
+      final end = heartbeat.indexOf('/// Injected so the heartbeat', start);
+      expect(start, greaterThan(-1));
+      expect(end, greaterThan(start));
+      final body = heartbeat.substring(start, end);
+      // The optional unwrap must come before any subtraction that uses the
+      // previous sample, so there is no baseline to invent.
+      final unwrap = body.indexOf('guard let lastLoggedFootprintMB');
+      final delta = body.indexOf('abs(footprintMB - lastLoggedFootprintMB)');
+      expect(unwrap, greaterThan(-1));
+      expect(delta, greaterThan(unwrap));
+      expect(body, contains('else { return true }'));
     });
   });
 
