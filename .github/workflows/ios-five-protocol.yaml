@@ -57,7 +57,15 @@ jobs:
           xcodebuild -version
 
       - name: Get dependencies
-        run: flutter pub get
+        run: |
+          # The fork force-moved `main` on 2026-09-06 and the old locked commit
+          # became unreachable; refresh only this git dependency when that exact
+          # failure is observed, while keeping every other lockfile pin intact.
+          if ! flutter pub get; then
+            echo "pub get failed; retrying window_manager from its current main"
+            rm -rf "$PUB_CACHE/git/cache/window_manager"* "$PUB_CACHE/git/window_manager"*
+            flutter pub update window_manager
+          fi
 
       - name: Verify five-protocol and iOS contracts
         shell: bash
