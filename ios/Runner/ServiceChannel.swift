@@ -19,6 +19,8 @@ final class ServiceChannel {
   private let tunnelController: TunnelController
   private let coreMessageRouter: CoreMessageRouter
   private let coreEventRelay: CoreEventRelay
+  private var rpcTasks: [UUID: Task<Void, Never>] = [:]
+  private var rpcResponses: [UUID: ServiceRPCResponse] = [:]
   private let logger = Logger(
     subsystem: Bundle.main.bundleIdentifier ?? "com.follow.clash",
     category: "ServiceChannel"
@@ -109,8 +111,28 @@ final class ServiceChannel {
         result(invalidMethodCallResponse)
         return
       }
-      Task {
-        result(await coreMessageRouter.invoke(data))
+      guard rpcTasks.count < 72 else {
+        result(rpcError(data, code: "network_extension_busy"))
+        return
+      }
+      let token = UUID()
+      let response = ServiceRPCResponse { result($0) }
+      rpcResponses[token] = response
+      let deadline = Task { @MainActor [weak self] in
+        do { try await Task.sleep(nanoseconds: 16_000_000_000) }
+        catch { return }
+        guard let self else { return }
+        self.rpcTasks.removeValue(forKey: token)?.cancel()
+        self.rpcResponses.removeValue(forKey: token)?.finish(
+          self.rpcError(data, code: "rpc_timeout"))
+      }
+      response.onFinish = { deadline.cancel() }
+      response.cancellationResponse = rpcError(data, code: "rpc_cancelled")
+      rpcTasks[token] = Task {
+        let value = await coreMessageRouter.invoke(data)
+        rpcTasks.removeValue(forKey: token)
+        rpcResponses.removeValue(forKey: token)
+        response.finish(value)
       }
     case "start":
       guard saveSharedState(call) else {
@@ -120,6 +142,12 @@ final class ServiceChannel {
       tunnelController.start()
       result(true)
     case "stop":
+      let tasks = Array(rpcTasks.values)
+      let responses = Array(rpcResponses.values)
+      rpcTasks.removeAll()
+      rpcResponses.removeAll()
+      tasks.forEach { $0.cancel() }
+      responses.forEach { $0.finish($0.cancellationResponse) }
       tunnelController.stop()
       result(true)
     case "init":
@@ -177,6 +205,15 @@ final class ServiceChannel {
     return true
   }
 
+  private func rpcError(_ data: Data, code: String) -> String {
+    let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+    let response: [String: Any] = ["id": object?["id"] ?? NSNull(), "result": NSNull(),
+      "error": ["code": code, "message": code, "details": NSNull()]]
+    guard let encoded = try? JSONSerialization.data(withJSONObject: response),
+      let text = String(data: encoded, encoding: .utf8) else { return invalidMethodCallResponse }
+    return text
+  }
+
   private var invalidMethodCallResponse: String {
     #"{"result":null,"error":{"code":"invalid_method_call","message":"invalid method call","details":null}}"#
   }
@@ -186,6 +223,24 @@ final class ServiceChannel {
     NativeDiagnosticLog.shared.append(source: "Runner.ServiceChannel", message: message)
   }
 }
+
+// BEGIN RPC LIFECYCLE UNIT
+@MainActor
+final class ServiceRPCResponse {
+  private var completion: ((String) -> Void)?
+  var onFinish: (() -> Void)?
+  var cancellationResponse = ""
+  init(_ completion: @escaping (String) -> Void) { self.completion = completion }
+  func finish(_ value: String) {
+    guard let completion else { return }
+    self.completion = nil
+    let cleanup = onFinish
+    onFinish = nil
+    cleanup?()
+    completion(value)
+  }
+}
+// END RPC LIFECYCLE UNIT
 
 /// Failure-tolerant, bounded lifecycle diagnostics shared with the export UI.
 /// Callers must never pass full configurations, credentials, or node secrets.

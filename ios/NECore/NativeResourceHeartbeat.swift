@@ -8,14 +8,132 @@ final class NativeResourceHeartbeat {
   private var warnReported = false
   private var lastReclaimUptime: TimeInterval = 0
 
-  /// iOS terminates a packet-tunnel provider near a ~50 MB phys_footprint.
-  /// Device traces showed 47 MB peaks immediately before an external stop, so
-  /// warning alone is not enough: the extension must actively shed pages.
-  private static let footprintWarningMB = 35
-  private static let footprintReclaimMB = 42
+  /// Historical traces ended with samples at 43–48 MB. Missing subsequent
+  /// samples alone do not establish jetsam or a universal process memory limit.
+  /// These thresholds are operational tuning, not OS guarantees; correlate
+  /// device JetsamEvent reports and pressure tests before adjusting them.
+  ///
+  /// Reclaiming is only a backstop. Those traces also showed
+  /// `memory_pressure_reclaimed` reporting the same or a higher footprint,
+  /// because the pages in question were live delay-probe buffers rather than
+  /// garbage. The primary fix is admission control (see
+  /// `maxInFlightProviderMessages` in TunnelController and
+  /// `maxConcurrentDelayTests` in lib/common/constant.dart), which stops the
+  /// footprint from climbing in the first place.
+  private static let footprintWarningMB = 30
+  private static let footprintReclaimMB = 38
   /// Reclaiming walks the whole Go heap. Throttle it so a sustained plateau
   /// above the threshold cannot turn into a per-second stall.
   private static let reclaimCooldown: TimeInterval = 15
+
+  // MARK: - Adaptive reclaim
+  //
+  // The 2026-09-01 tester trace (759 s of tunnel uptime) measured the cost of
+  // treating `footprintReclaimMB` as an unconditional trigger: footprint sat at
+  // a p50 of exactly 38 MB, so 50.9% of samples were at or above the threshold
+  // and the cooldown fired 32 whole-heap `FreeOSMemory()` passes. Only 2 of
+  // those recovered anything (42->35 MB and a life-saving 48->23 MB); the other
+  // 30 logged an unchanged footprint because the pages were live. That is a
+  // periodic full-heap walk, forever, for nothing — the battery cost the user
+  // asked about.
+  //
+  // So the trigger adapts. A reclaim that frees real memory keeps the base
+  // threshold and cooldown. A reclaim that frees nothing counts towards a
+  // streak, and after `ineffectiveStreakLimit` consecutive misses the effective
+  // threshold increases and the cooldown backs off exponentially. A separate
+  // emergency watermark bypasses that adaptive delay, with its own short rate
+  // limit. GC cannot free live objects or guarantee prevention of termination.
+  private static let minEffectiveYieldMB = 2
+  private static let ineffectiveStreakLimit = 3
+  private static let escalatedReclaimMB = 44
+  private static let maxReclaimCooldown: TimeInterval = 120
+  // Tunable pressure trigger, explicitly NOT an iOS hard memory limit.
+  private static let emergencyReclaimMB = 48
+  private static let emergencyReclaimCooldown: TimeInterval = 2
+
+  /// Live reclaim tuning. Kept as a value type so the escalation rule is a pure
+  /// function that can be unit-tested without a running extension.
+  struct ReclaimPolicy: Equatable {
+    var thresholdMB: Int
+    var cooldown: TimeInterval
+    var ineffectiveStreak: Int
+  }
+
+  static let baseReclaimPolicy = ReclaimPolicy(
+    thresholdMB: footprintReclaimMB,
+    cooldown: reclaimCooldown,
+    ineffectiveStreak: 0
+  )
+
+  private var reclaimPolicy = NativeResourceHeartbeat.baseReclaimPolicy
+
+  /// Escalation rule. `yieldMB` is `before - after`, so a negative value (the
+  /// footprint grew across the reclaim) counts as ineffective just like zero.
+  static func nextReclaimPolicy(
+    current: ReclaimPolicy,
+    yieldMB: Int
+  ) -> ReclaimPolicy {
+    guard yieldMB < minEffectiveYieldMB else {
+      // Real memory came back: this plateau is collectable, stay aggressive.
+      return baseReclaimPolicy
+    }
+    let streak = current.ineffectiveStreak + 1
+    guard streak >= ineffectiveStreakLimit else {
+      return ReclaimPolicy(
+        thresholdMB: current.thresholdMB,
+        cooldown: current.cooldown,
+        ineffectiveStreak: streak
+      )
+    }
+    return ReclaimPolicy(
+      thresholdMB: max(current.thresholdMB, escalatedReclaimMB),
+      cooldown: min(current.cooldown * 2, maxReclaimCooldown),
+      ineffectiveStreak: streak
+    )
+  }
+
+  // MARK: - Log throttling
+  //
+  // The same trace wrote 763 heartbeat lines in 759 s: one App Group file
+  // append per second, for the whole life of the tunnel. The two `task_info`
+  // calls that produce a sample are microseconds of pure counter reads and are
+  // not worth touching, but the file write behind every sample is real I/O.
+  //
+  // Detail only matters near the death line, so that is where the per-second
+  // cadence is kept. In a healthy steady state one line every
+  // `logIntervalSeconds` is enough to prove liveness, plus any sample that
+  // moved the footprint materially — which preserves every ramp into danger.
+  private static let logIntervalSeconds: TimeInterval = 10
+  private static let logDeltaMB = 3
+  /// "Nothing logged yet" is modelled as absence, never as an extreme
+  /// magnitude. A sentinel like `Int.min` looks harmless until it reaches
+  /// arithmetic: `footprintMB - Int.min` exceeds `Int.max` on the very first
+  /// tick, and Swift traps on signed overflow in release builds too (only
+  /// `-Ounchecked` elides the check). Trapping here kills the whole Network
+  /// Extension process one second after `startTun` succeeds, which the user
+  /// experiences as "it connects and immediately drops".
+  private var lastLoggedUptime: TimeInterval?
+  private var lastLoggedFootprintMB: Int?
+
+  /// Pure decision so the throttle can be tested without a timer.
+  static func shouldLogHeartbeat(
+    uptimeSeconds: TimeInterval,
+    footprintMB: Int,
+    lastLoggedUptime: TimeInterval?,
+    lastLoggedFootprintMB: Int?
+  ) -> Bool {
+    // Never throttle inside the reaction window. That window is keyed off the
+    // *escalated* threshold, not the warning one: the trace put the steady-state
+    // median at 38 MB, so exempting everything above the 30 MB warning line
+    // exempted 96.5% of samples and threw the throttle away. p90 was 42 and p99
+    // 43. Treat 44 MB and up as elevated pressure, not proof of imminent jetsam.
+    if footprintMB >= escalatedReclaimMB { return true }
+    // The first sample of a tunnel life is always logged: there is no baseline
+    // to compare against, and inventing one via a sentinel is what overflowed.
+    guard let lastLoggedFootprintMB, let lastLoggedUptime else { return true }
+    if abs(footprintMB - lastLoggedFootprintMB) >= logDeltaMB { return true }
+    return uptimeSeconds - lastLoggedUptime >= logIntervalSeconds
+  }
 
   /// Injected so the heartbeat stays unit-testable and never hard-depends on
   /// the ObjC bridge being linked into a test target.
@@ -29,6 +147,9 @@ final class NativeResourceHeartbeat {
     stop()
     warnReported = false
     lastReclaimUptime = 0
+    reclaimPolicy = Self.baseReclaimPolicy
+    lastLoggedUptime = nil
+    lastLoggedFootprintMB = nil
     let timer = DispatchSource.makeTimerSource(
       queue: DispatchQueue(label: "com.follow.clash.necore-heartbeat")
     )
@@ -38,41 +159,77 @@ final class NativeResourceHeartbeat {
       let usage = Self.resourceUsage()
       let uptimeSeconds = ProcessInfo.processInfo.systemUptime - self.startedAt
       let uptime = Int(uptimeSeconds * 1000)
-      NativeDiagnosticLog.shared.append(
-        "heartbeat uptime_ms=\(uptime) resident_mb=\(usage.residentMB) footprint_mb=\(usage.footprintMB) virtual_mb=\(usage.virtualMB)"
-      )
+      if Self.shouldLogHeartbeat(
+        uptimeSeconds: uptimeSeconds,
+        footprintMB: usage.footprintMB,
+        lastLoggedUptime: self.lastLoggedUptime,
+        lastLoggedFootprintMB: self.lastLoggedFootprintMB
+      ) {
+        self.lastLoggedUptime = uptimeSeconds
+        self.lastLoggedFootprintMB = usage.footprintMB
+        NativeDiagnosticLog.shared.append(
+          "heartbeat uptime_ms=\(uptime) resident_mb=\(usage.residentMB) footprint_mb=\(usage.footprintMB) virtual_mb=\(usage.virtualMB)"
+        )
+      }
       if usage.footprintMB >= Self.footprintWarningMB, !self.warnReported {
         self.warnReported = true
         NativeDiagnosticLog.shared.append(
           "memory_pressure_warning footprint_mb=\(usage.footprintMB) threshold_mb=\(Self.footprintWarningMB)"
         )
       }
-      guard usage.footprintMB >= Self.footprintReclaimMB else { return }
       guard Self.shouldReclaim(
+        footprintMB: usage.footprintMB,
         uptimeSeconds: uptimeSeconds,
-        lastReclaimUptime: self.lastReclaimUptime
+        lastReclaimUptime: self.lastReclaimUptime,
+        policy: self.reclaimPolicy
       ) else { return }
       self.lastReclaimUptime = uptimeSeconds
       NativeDiagnosticLog.shared.append(
-        "memory_pressure_reclaim footprint_mb=\(usage.footprintMB) threshold_mb=\(Self.footprintReclaimMB)"
+        "memory_pressure_reclaim footprint_mb=\(usage.footprintMB) threshold_mb=\(self.reclaimPolicy.thresholdMB)"
       )
       self.reclaim()
       let after = Self.resourceUsage()
+      let yieldMB = usage.footprintMB - after.footprintMB
+      self.reclaimPolicy = Self.nextReclaimPolicy(
+        current: self.reclaimPolicy,
+        yieldMB: yieldMB
+      )
       NativeDiagnosticLog.shared.append(
-        "memory_pressure_reclaimed footprint_mb=\(after.footprintMB)"
+        "memory_pressure_reclaimed footprint_mb=\(after.footprintMB) yield_mb=\(yieldMB) streak=\(self.reclaimPolicy.ineffectiveStreak) next_threshold_mb=\(self.reclaimPolicy.thresholdMB) next_cooldown_s=\(Int(self.reclaimPolicy.cooldown))"
       )
     }
     self.timer = timer
     timer.resume()
   }
 
-  /// First crossing always reclaims; later crossings wait out the cooldown.
+  /// Emergency pressure is independent of the ineffective-GC backoff, but
+  /// remains rate limited to avoid a per-tick heap walk on a live-object plateau.
+  static func shouldReclaim(
+    footprintMB: Int,
+    uptimeSeconds: TimeInterval,
+    lastReclaimUptime: TimeInterval,
+    policy: ReclaimPolicy
+  ) -> Bool {
+    if footprintMB >= emergencyReclaimMB {
+      return shouldReclaim(uptimeSeconds: uptimeSeconds,
+                           lastReclaimUptime: lastReclaimUptime,
+                           cooldown: emergencyReclaimCooldown)
+    }
+    guard footprintMB >= policy.thresholdMB else { return false }
+    return shouldReclaim(uptimeSeconds: uptimeSeconds,
+                         lastReclaimUptime: lastReclaimUptime,
+                         cooldown: policy.cooldown)
+  }
+
+  /// First crossing always reclaims; later crossings wait out the cooldown,
+  /// which the escalation rule can widen when reclaiming stops paying off.
   static func shouldReclaim(
     uptimeSeconds: TimeInterval,
-    lastReclaimUptime: TimeInterval
+    lastReclaimUptime: TimeInterval,
+    cooldown: TimeInterval = reclaimCooldown
   ) -> Bool {
     if lastReclaimUptime == 0 { return true }
-    return uptimeSeconds - lastReclaimUptime >= reclaimCooldown
+    return uptimeSeconds - lastReclaimUptime >= cooldown
   }
 
   func stop() {

@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import NetworkExtension
 import UIKit
 import os
@@ -7,10 +8,12 @@ import os
 final class TunnelController {
   private final class ProviderMessageWaiter {
     private var resumed = false
+    var cancel: (() -> Void)?
 
     func finish(_ action: () -> Void) {
       guard !resumed else { return }
       resumed = true
+      cancel = nil
       action()
     }
   }
@@ -35,7 +38,7 @@ final class TunnelController {
   /// `maxConcurrentDelayTests` in lib/common/constant.dart.
   private let maxInFlightProviderMessages = 8
   private var inFlightProviderMessages = 0
-  private var providerMessageWaiters: [CheckedContinuation<Void, Never>] = []
+  private var providerMessageWaiters: [(UUID, CheckedContinuation<Void, Error>)] = []
   private var nextProviderMessageSequence: UInt64 = 0
   private let logger = Logger(
     subsystem: Bundle.main.bundleIdentifier ?? "com.follow.clash",
@@ -120,11 +123,25 @@ final class TunnelController {
 
   /// Suspends until a provider-message slot frees up. `@MainActor` isolation is
   /// what makes the counter safe: every mutation happens on the main actor.
-  private func acquireProviderMessageSlot() async {
+  private func acquireProviderMessageSlot() async throws {
+    try Task.checkCancellation()
     while inFlightProviderMessages >= maxInFlightProviderMessages {
-      await withCheckedContinuation { continuation in
-        providerMessageWaiters.append(continuation)
+      guard providerMessageWaiters.count < 64 else {
+        throw ProviderMessageError(code: "network_extension_busy", message: "RPC queue is full")
       }
+      let id = UUID()
+      try await withTaskCancellationHandler(operation: {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+          providerMessageWaiters.append((id, continuation))
+        }
+      }, onCancel: {
+        Task { @MainActor in
+          if let index = self.providerMessageWaiters.firstIndex(where: { $0.0 == id }) {
+            self.providerMessageWaiters.remove(at: index).1.resume(throwing: CancellationError())
+          }
+        }
+      })
+      try Task.checkCancellation()
     }
     inFlightProviderMessages += 1
   }
@@ -134,81 +151,46 @@ final class TunnelController {
     guard !providerMessageWaiters.isEmpty else { return }
     // Resume one waiter per released slot; it re-checks the counter in its own
     // loop iteration, so a spurious wake cannot over-admit.
-    providerMessageWaiters.removeFirst().resume()
+    providerMessageWaiters.removeFirst().1.resume()
   }
 
-  /// A `nil` reply from a *running* extension is a busy signal, not a failure.
-  /// Reloading a profile makes the extension rebuild GeoSite (110k+ records) and
-  /// run memory reclaim; during that window the system drops in-flight provider
-  /// messages. Retrying a few times with a short backoff turns what used to be a
-  /// user-visible `empty_response` toast into a slightly slower success.
-  private let emptyReplyRetryLimit = 3
-  private let emptyReplyRetryBackoff: [UInt64] = [
-    150_000_000, 400_000_000,
-  ]
+  // A nil reply is ambiguous, not proof of non-execution. Both transports
+  // carry the exact same session/request/deadline and use one receiver cache.
+  private let emptyReplyRetryCode = "empty_response_retryable"
 
   func sendProviderMessage(_ data: Data) async throws -> String {
-    // Admission control comes first: queueing here costs one suspended task in
-    // the app, whereas queueing inside the extension costs live memory in the
-    // process that gets killed for using it. The slot is held across retries so
-    // a busy extension cannot be stampeded by every caller retrying at once.
-    await acquireProviderMessageSlot()
+    try await acquireProviderMessageSlot()
     defer { releaseProviderMessageSlot() }
-    nextProviderMessageSequence &+= 1
-    let sequence = nextProviderMessageSequence
-
-    for attempt in 1...emptyReplyRetryLimit {
-      do {
-        return try await sendProviderMessageAttempt(
-          data,
-          sequence: sequence,
-          attempt: attempt
-        )
-      } catch let error as ProviderMessageError
-        where error.code == emptyReplyRetryCode
-      {
-        // Ordinary re-signing can leave the Packet Tunnel fully running while
-        // iOS returns nil for every native Provider Message reply. The App Group
-        // startup payload and event queue still work in that environment, so use
-        // the same container as a bounded request/response fallback before
-        // retrying the native channel.
-        do {
-          let message = try await sendProviderMessageViaMailbox(
-            data,
-            sequence: sequence
-          )
-          log("provider message mailbox fallback success seq=\(sequence)")
-          return message
-        } catch {
-          log("provider message mailbox fallback failed seq=\(sequence)")
-        }
-        guard attempt < emptyReplyRetryLimit else {
-          // Out of retries: report the terminal code the app layer knows.
-          log("provider message empty seq=\(sequence) attempts=\(attempt)")
-          throw ProviderMessageError(
-            code: "empty_response",
-            message: "empty network extension response"
-          )
-        }
-        let backoff = emptyReplyRetryBackoff[
-          min(attempt - 1, emptyReplyRetryBackoff.count - 1)
-        ]
-        log(
-          "provider message retry seq=\(sequence) attempt=\(attempt) backoff_ms=\(backoff / 1_000_000)"
-        )
-        try? await Task.sleep(nanoseconds: backoff)
+    try Task.checkCancellation()
+    guard let root = sharedStateStore.providerMessageMailboxDirectory(),
+      let session = try? String(contentsOf: root.appendingPathComponent("current-session"), encoding: .utf8),
+      UUID(uuidString: session) != nil else {
+      throw ProviderMessageError(code: "network_extension_unavailable", message: "RPC session is not ready")
+    }
+    let directory = root.appendingPathComponent(session)
+    let id = UUID().uuidString
+    let lease = directory.appendingPathComponent(id + ".lease")
+    let deadline = Date().addingTimeInterval(16)
+    let envelope = try JSONSerialization.data(withJSONObject: [
+      "rpcVersion": 1, "session": session, "requestID": id,
+      "deadline": deadline.timeIntervalSince1970, "payload": data.base64EncodedString(),
+    ])
+    try Data().write(to: lease, options: .atomic)
+    defer {
+      for ext in ["lease", "request", "processing", "response"] {
+        try? FileManager.default.removeItem(at: directory.appendingPathComponent(id + "." + ext))
       }
     }
-    // Unreachable: the final attempt either returns or throws above.
-    throw ProviderMessageError(
-      code: "empty_response",
-      message: "empty network extension response"
-    )
+    nextProviderMessageSequence &+= 1
+    let sequence = nextProviderMessageSequence
+    do {
+      return try await sendProviderMessageAttempt(envelope, sequence: sequence, attempt: 1)
+    } catch let error as ProviderMessageError
+      where error.code == emptyReplyRetryCode || error.code == "network_extension_timeout" {
+      try Task.checkCancellation()
+      return try await sendProviderMessageViaMailbox(envelope, directory: directory, id: id, deadline: deadline)
+    }
   }
-
-  /// Internal marker distinguishing "extension was busy, worth retrying" from
-  /// the terminal `empty_response` reported to the app layer.
-  private let emptyReplyRetryCode = "empty_response_retryable"
 
   private func sendProviderMessageAttempt(
     _ data: Data,
@@ -239,8 +221,10 @@ final class TunnelController {
       )
     }
 
-    return try await withCheckedThrowingContinuation { continuation in
-      let waiter = ProviderMessageWaiter()
+    try Task.checkCancellation()
+    let waiter = ProviderMessageWaiter()
+    return try await withTaskCancellationHandler(operation: {
+      try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<String, Error>) in
       let timeoutWork = DispatchWorkItem { [weak self] in
         waiter.finish {
           self?.log("provider message timeout seq=\(sequence)")
@@ -252,11 +236,18 @@ final class TunnelController {
           )
         }
       }
+      waiter.cancel = {
+        waiter.finish {
+          timeoutWork.cancel()
+          continuation.resume(throwing: CancellationError())
+        }
+      }
       DispatchQueue.main.asyncAfter(
         deadline: .now() + providerMessageTimeout,
         execute: timeoutWork
       )
       do {
+        try Task.checkCancellation()
         try session.sendProviderMessage(data) { [weak self] response in
           Task { @MainActor in
             waiter.finish {
@@ -265,14 +256,8 @@ final class TunnelController {
               guard let response,
                 let message = String(data: response, encoding: .utf8)
               else {
-                // A nil reply has two very different causes:
-                //  * the tunnel is going away (stop / subscription switch): the
-                //    system drops every in-flight message. Benign.
-                //  * the tunnel is running but the extension is mid-reload
-                //    (GeoSite rebuild, memory reclaim) and cannot answer in
-                //    time. Also benign — it just needs another try. Reporting
-                //    this as a hard error is what produced the user-visible
-                //    `empty_response` toast when switching subscriptions.
+                // Delivery is ambiguous. A running session can use the same
+                // deduplicated envelope over the mailbox, never replay raw Go RPC.
                 let stillRunning =
                   manager.connection.status.tunnelState == .running
                 if stillRunning {
@@ -313,46 +298,64 @@ final class TunnelController {
           )
         }
       }
-    }
+      }
+    }, onCancel: {
+      Task { @MainActor in waiter.cancel?() }
+    })
   }
 
   private func sendProviderMessageViaMailbox(
-    _ data: Data,
-    sequence: UInt64
+    _ data: Data, directory: URL, id: String, deadline: Date
   ) async throws -> String {
-    guard let directory = sharedStateStore.providerMessageMailboxDirectory()
-    else {
-      throw ProviderMessageError(
-        code: "mailbox_unavailable",
-        message: "provider message mailbox is unavailable"
-      )
+    try Task.checkCancellation()
+    let responseURL = directory.appendingPathComponent(id + ".response")
+    let fd = open(directory.path, O_EVTONLY)
+    guard fd >= 0 else {
+      throw ProviderMessageError(code: "mailbox_unavailable", message: "RPC session ended")
     }
-    try FileManager.default.createDirectory(
-      at: directory,
-      withIntermediateDirectories: true
-    )
-    let id = UUID().uuidString.lowercased()
-    let requestURL = directory.appendingPathComponent("\(id).request")
-    let responseURL = directory.appendingPathComponent("\(id).response")
-    try data.write(to: requestURL, options: .atomic)
-    defer {
-      try? FileManager.default.removeItem(at: requestURL)
-      try? FileManager.default.removeItem(at: responseURL)
-    }
-    let deadline = Date().addingTimeInterval(providerMessageTimeout)
-    while Date() < deadline {
-      if let response = try? Data(contentsOf: responseURL),
-        let message = String(data: response, encoding: .utf8)
-      {
-        return message
+    let source = DispatchSource.makeFileSystemObjectSource(
+      fileDescriptor: fd, eventMask: [.write, .delete, .rename], queue: .main)
+    source.setCancelHandler { close(fd) }
+    let waiter = ProviderMessageWaiter()
+    return try await withTaskCancellationHandler(operation: {
+      try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<String, Error>) in
+        let timeout = DispatchWorkItem {
+          waiter.finish {
+            source.cancel()
+            continuation.resume(throwing: ProviderMessageError(code: "network_extension_timeout", message: "RPC deadline expired"))
+          }
+        }
+        waiter.cancel = {
+          waiter.finish {
+            timeout.cancel(); source.cancel()
+            continuation.resume(throwing: CancellationError())
+          }
+        }
+        let readResponse = {
+          guard let response = try? Data(contentsOf: responseURL),
+            let message = String(data: response, encoding: .utf8) else { return }
+          waiter.finish {
+            timeout.cancel(); source.cancel()
+            continuation.resume(returning: message)
+          }
+        }
+        source.setEventHandler(handler: readResponse)
+        source.resume()
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(0, deadline.timeIntervalSinceNow), execute: timeout)
+        do {
+          try Task.checkCancellation()
+          try data.write(to: directory.appendingPathComponent(id + ".request"), options: .atomic)
+          readResponse()
+        } catch {
+          waiter.finish {
+            timeout.cancel(); source.cancel()
+            continuation.resume(throwing: error)
+          }
+        }
       }
-      try await Task.sleep(nanoseconds: 20_000_000)
-    }
-    log("provider message mailbox timeout seq=\(sequence)")
-    throw ProviderMessageError(
-      code: "network_extension_timeout",
-      message: "provider message mailbox timed out"
-    )
+    }, onCancel: {
+      Task { @MainActor in waiter.cancel?() }
+    })
   }
 
   func isCoreActive() async -> Bool {

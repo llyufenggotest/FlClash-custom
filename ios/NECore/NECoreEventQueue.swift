@@ -10,14 +10,21 @@ final class NECoreEventQueue {
     category: "NECoreEventQueue"
   )
 
+  private let lock = NSRecursiveLock()
   private var eventsSincePrune = 0
   private var coreActive = true
+  private var started = false
 
   init(sharedStateStore: PacketTunnelSharedStateStore) {
     self.sharedStateStore = sharedStateStore
   }
 
   func start() {
+    lock.lock()
+    coreActive = true
+    started = true
+    eventsSincePrune = 0
+    lock.unlock()
     NECoreBridge.setEventListener { [weak self] event in
       guard let self,
         let event,
@@ -30,14 +37,20 @@ final class NECoreEventQueue {
   }
 
   func stop() {
+    lock.lock(); defer { lock.unlock() }
+    coreActive = false
+    started = false
     NECoreBridge.setEventListener(nil)
   }
 
   func markCoreResponsive() {
+    lock.lock(); defer { lock.unlock() }
+    guard started else { return }
     coreActive = true
   }
 
   private func enqueue(_ event: Data) {
+    lock.lock(); defer { lock.unlock() }
     guard coreActive else {
       logger.warning("enqueue skipped: core is not active")
       return
