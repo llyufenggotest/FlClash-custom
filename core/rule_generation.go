@@ -76,7 +76,8 @@ func handlePublishRuleGeneration(params *PublishRuleGenerationParams) (RuleGener
 	if params.ProfileID <= 0 || !isSHA256(params.Fingerprint) || !isSHA256(params.Generation) {
 		return RuleGenerationResult{}, errors.New("invalid rule generation identity")
 	}
-	profileRoot := filepath.Join(rulePrewarmRoot(), fmt.Sprint(params.ProfileID))
+	prewarmRoot := rulePrewarmRoot()
+	profileRoot := filepath.Join(prewarmRoot, fmt.Sprint(params.ProfileID))
 	lockValue, _ := ruleGenerationPublishLocks.LoadOrStore(profileRoot, &sync.Mutex{})
 	lock := lockValue.(*sync.Mutex)
 	lock.Lock()
@@ -87,10 +88,10 @@ func handlePublishRuleGeneration(params *PublishRuleGenerationParams) (RuleGener
 	if !pathWithin(params.StagingPath, stagingRoot) || !pathWithin(params.ConfigPath, params.StagingPath) {
 		return RuleGenerationResult{}, errors.New("unsafe rule generation staging path")
 	}
-	if err := rejectLinkedComponents(profileRoot, true); err != nil {
+	if err := rejectLinkedComponentsWithinRoot(profileRoot, prewarmRoot, true); err != nil {
 		return RuleGenerationResult{}, fmt.Errorf("unsafe rule generation root: %w", err)
 	}
-	if err := rejectLinkedComponents(params.StagingPath, true); err != nil && !os.IsNotExist(err) {
+	if err := rejectLinkedComponentsWithinRoot(params.StagingPath, prewarmRoot, true); err != nil && !os.IsNotExist(err) {
 		return RuleGenerationResult{}, fmt.Errorf("unsafe rule generation staging path: %w", err)
 	}
 
@@ -101,7 +102,7 @@ func handlePublishRuleGeneration(params *PublishRuleGenerationParams) (RuleGener
 		} else if linked || !info.IsDir() {
 			return RuleGenerationResult{}, errors.New("unsafe existing generation")
 		}
-		if err := rejectLinkedComponents(finalRoot, false); err != nil {
+		if err := rejectLinkedComponentsWithinRoot(finalRoot, prewarmRoot, false); err != nil {
 			return RuleGenerationResult{}, fmt.Errorf("unsafe existing generation: %w", err)
 		}
 		finalExists = true
@@ -115,10 +116,10 @@ func handlePublishRuleGeneration(params *PublishRuleGenerationParams) (RuleGener
 			return RuleGenerationResult{}, fmt.Errorf("invalid rule artifact %q", artifact.Name)
 		}
 		if !finalExists {
-			if err := rejectLinkedComponents(artifact.RawPath, false); err != nil {
+			if err := rejectLinkedComponentsWithinRoot(artifact.RawPath, prewarmRoot, false); err != nil {
 				return RuleGenerationResult{}, fmt.Errorf("rule artifact %q raw path: %w", artifact.Name, err)
 			}
-			if err := validateRegularDigest(artifact.RawPath, artifact.RawSHA256); err != nil {
+			if err := validateRegularDigest(artifact.RawPath, artifact.RawSHA256, prewarmRoot); err != nil {
 				return RuleGenerationResult{}, fmt.Errorf("rule artifact %q raw: %w", artifact.Name, err)
 			}
 		}
@@ -127,10 +128,10 @@ func handlePublishRuleGeneration(params *PublishRuleGenerationParams) (RuleGener
 				return RuleGenerationResult{}, fmt.Errorf("unsafe MRS path for %q", artifact.Name)
 			}
 			if !finalExists {
-				if err := rejectLinkedComponents(artifact.MRSPath, false); err != nil {
+				if err := rejectLinkedComponentsWithinRoot(artifact.MRSPath, prewarmRoot, false); err != nil {
 					return RuleGenerationResult{}, fmt.Errorf("rule artifact %q MRS path: %w", artifact.Name, err)
 				}
-				if err := validateRegularDigest(artifact.MRSPath, artifact.MRSSHA256); err != nil {
+				if err := validateRegularDigest(artifact.MRSPath, artifact.MRSSHA256, prewarmRoot); err != nil {
 					return RuleGenerationResult{}, fmt.Errorf("rule artifact %q MRS: %w", artifact.Name, err)
 				}
 			}
@@ -146,7 +147,7 @@ func handlePublishRuleGeneration(params *PublishRuleGenerationParams) (RuleGener
 	if finalExists {
 		configPath = rebase(configPath)
 	}
-	if err := rejectLinkedComponents(configPath, false); err != nil {
+	if err := rejectLinkedComponentsWithinRoot(configPath, prewarmRoot, false); err != nil {
 		return RuleGenerationResult{}, fmt.Errorf("prepared config path: %w", err)
 	}
 	configSHA, err := regularFileSHA256(configPath)
@@ -173,7 +174,7 @@ func handlePublishRuleGeneration(params *PublishRuleGenerationParams) (RuleGener
 		if err := os.MkdirAll(generationsRoot, 0755); err != nil {
 			return RuleGenerationResult{}, err
 		}
-		if err := rejectLinkedComponents(generationsRoot, false); err != nil {
+		if err := rejectLinkedComponentsWithinRoot(generationsRoot, prewarmRoot, false); err != nil {
 			return RuleGenerationResult{}, fmt.Errorf("unsafe generations root: %w", err)
 		}
 		if err := os.Rename(params.StagingPath, finalRoot); err != nil {
@@ -211,11 +212,11 @@ func handlePublishRuleGeneration(params *PublishRuleGenerationParams) (RuleGener
 	// The manifest is authoritative after its atomic rename. Cleanup is best
 	// effort: failures must not roll back or obscure the published generation,
 	// and a later publish will retry the same unreferenced directories.
-	_ = garbageCollectRuleGenerations(generationsRoot, manifest)
+	_ = garbageCollectRuleGenerations(generationsRoot, prewarmRoot, manifest)
 	return RuleGenerationResult{Generation: params.Generation, ConfigPath: entry.ConfigPath}, nil
 }
 
-func garbageCollectRuleGenerations(root string, manifest ruleGenerationManifest) error {
+func garbageCollectRuleGenerations(root, trustedRoot string, manifest ruleGenerationManifest) error {
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -241,7 +242,7 @@ func garbageCollectRuleGenerations(root string, manifest ruleGenerationManifest)
 		if linked || !info.IsDir() || info.ModTime().After(cutoff) {
 			continue
 		}
-		if err := rejectLinkedComponents(path, false); err != nil {
+		if err := rejectLinkedComponentsWithinRoot(path, trustedRoot, false); err != nil {
 			return err
 		}
 		if ruleGenerationTestHook != nil {
@@ -281,25 +282,26 @@ func handleGetPreparedRuleGeneration(profileID int64, fingerprint string) (RuleG
 }
 
 func validateRuleGenerationEntry(id string, entry ruleGenerationEntry) error {
-	root := filepath.Join(rulePrewarmRoot(), fmt.Sprint(entry.ProfileID), "generations", id)
+	prewarmRoot := rulePrewarmRoot()
+	root := filepath.Join(prewarmRoot, fmt.Sprint(entry.ProfileID), "generations", id)
 	if !pathWithin(entry.ConfigPath, root) {
 		return errors.New("unsafe config path")
 	}
-	if err := validateRegularDigest(entry.ConfigPath, entry.ConfigSHA256); err != nil {
+	if err := validateRegularDigest(entry.ConfigPath, entry.ConfigSHA256, prewarmRoot); err != nil {
 		return err
 	}
 	for _, artifact := range entry.Artifacts {
 		if !pathWithin(artifact.RawPath, root) {
 			return errors.New("unsafe raw path")
 		}
-		if err := validateRegularDigest(artifact.RawPath, artifact.RawSHA256); err != nil {
+		if err := validateRegularDigest(artifact.RawPath, artifact.RawSHA256, prewarmRoot); err != nil {
 			return err
 		}
 		if artifact.MRSPath != "" {
 			if !pathWithin(artifact.MRSPath, root) {
 				return errors.New("unsafe MRS path")
 			}
-			if err := validateRegularDigest(artifact.MRSPath, artifact.MRSSHA256); err != nil {
+			if err := validateRegularDigest(artifact.MRSPath, artifact.MRSSHA256, prewarmRoot); err != nil {
 				return err
 			}
 		}
@@ -405,8 +407,8 @@ func regularFileSHA256(path string) (string, error) {
 	}
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
-func validateRegularDigest(path, want string) error {
-	if err := rejectLinkedComponents(path, false); err != nil {
+func validateRegularDigest(path, want, trustedRoot string) error {
+	if err := rejectLinkedComponentsWithinRoot(path, trustedRoot, false); err != nil {
 		return err
 	}
 	got, err := regularFileSHA256(path)
@@ -419,19 +421,51 @@ func validateRegularDigest(path, want string) error {
 	return nil
 }
 
-func rejectLinkedComponents(path string, allowMissing bool) error {
+func rejectLinkedComponentsWithinRoot(path, trustedRoot string, allowMissing bool) error {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
 		return err
 	}
-	volume := filepath.VolumeName(absolute)
-	remainder := strings.TrimPrefix(absolute, volume)
-	current := volume + string(filepath.Separator)
-	for _, component := range strings.Split(strings.Trim(remainder, string(filepath.Separator)), string(filepath.Separator)) {
-		if component == "" {
-			continue
+	root, err := filepath.Abs(trustedRoot)
+	if err != nil {
+		return err
+	}
+	if absolute != root && !pathWithin(absolute, root) {
+		return errors.New("path is outside trusted root")
+	}
+
+	current := root
+	if runtime.GOOS == "windows" {
+		volume := filepath.VolumeName(root)
+		current = volume + string(filepath.Separator)
+	} else {
+		parent, err := filepath.EvalSymlinks(filepath.Dir(root))
+		if err != nil {
+			return err
 		}
-		current = filepath.Join(current, component)
+		current = filepath.Join(parent, filepath.Base(root))
+	}
+
+	rootRelative, err := filepath.Rel(root, absolute)
+	if err != nil {
+		return err
+	}
+	components := []string{"."}
+	if rootRelative != "." {
+		components = append(components, strings.Split(rootRelative, string(filepath.Separator))...)
+	}
+	if runtime.GOOS == "windows" {
+		remainder := strings.TrimPrefix(root, filepath.VolumeName(root))
+		components = strings.Split(strings.Trim(remainder, string(filepath.Separator)), string(filepath.Separator))
+		if rootRelative != "." {
+			components = append(components, strings.Split(rootRelative, string(filepath.Separator))...)
+		}
+	}
+
+	for _, component := range components {
+		if component != "." && component != "" {
+			current = filepath.Join(current, component)
+		}
 		info, err := os.Lstat(current)
 		if err != nil {
 			if allowMissing && os.IsNotExist(err) {
