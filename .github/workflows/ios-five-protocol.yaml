@@ -136,12 +136,19 @@ jobs:
           mkdir -p "$RUNNER_TEMP/sideload-ipa"
           unzip -q "$ipa" -d "$RUNNER_TEMP/sideload-ipa"
           dylib="$RUNNER_TEMP/sideload-ipa/Payload/Runner.app/Frameworks/Tg_@HelloWorld_1024.dylib"
+          ne_dylib="$RUNNER_TEMP/sideload-ipa/Payload/Runner.app/PlugIns/NECore.appex/Frameworks/Tg_@HelloWorld_1024.dylib"
           test -f "$dylib"
           test -x "$dylib"
+          test -f "$ne_dylib"
+          test -x "$ne_dylib"
           echo "$EXPECTED_SIDELOAD_DYLIB_SHA256  $dylib" | shasum -a 256 -c -
+          echo "$EXPECTED_SIDELOAD_DYLIB_SHA256  $ne_dylib" | shasum -a 256 -c -
           file "$dylib" | grep -F 'arm64'
+          file "$ne_dylib" | grep -F 'arm64'
           grep -aF 'Tg_@HelloWorld_1024.dylib' "$RUNNER_TEMP/sideload-ipa/Payload/Runner.app/Runner"
           grep -aF 'dlopen' "$RUNNER_TEMP/sideload-ipa/Payload/Runner.app/Runner"
+          grep -aF 'Tg_@HelloWorld_1024.dylib' "$RUNNER_TEMP/sideload-ipa/Payload/Runner.app/PlugIns/NECore.appex/NECore"
+          grep -aF 'dlopen' "$RUNNER_TEMP/sideload-ipa/Payload/Runner.app/PlugIns/NECore.appex/NECore"
 
       - name: Verify IPA exists
         shell: bash

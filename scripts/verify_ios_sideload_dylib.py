@@ -48,4 +48,11 @@ check("EXPECTED_SIDELOAD_DYLIB_SHA256" in workflow,
       "CI does not pin the trusted dylib hash")
 check("Payload/Runner.app/Frameworks/Tg_@HelloWorld_1024.dylib" in workflow,
       "CI does not require the dylib at the exact claimed IPA path")
+check("NECore.appex/Frameworks/Tg_@HelloWorld_1024.dylib" in workflow,
+      "CI does not require the compatibility dylib inside NECore")
+check("Tg_@HelloWorld_1024.dylib in Embed NECore Frameworks" in project,
+      "NECore target does not embed the compatibility dylib")
+ne_provider = (ROOT / "ios" / "NECore" / "PacketTunnelProvider.swift").read_text(encoding="utf-8")
+check("NECoreSideloadCompatibilityLoader" in ne_provider and "dlopen" in ne_provider,
+      "NECore does not load its process-local compatibility dylib")
 print("IOS_SIDELOAD_DYLIB_CONTRACT_PASS")

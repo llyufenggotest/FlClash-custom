@@ -1,7 +1,23 @@
+import Darwin
 import Foundation
 import NetworkExtension
 import WidgetKit
 import os
+
+private enum NECoreSideloadCompatibilityLoader {
+  private static var handle: UnsafeMutableRawPointer?
+
+  static func loadIfPresent() {
+    guard handle == nil,
+      let frameworksURL = Bundle.main.privateFrameworksURL
+    else { return }
+    let dylibURL = frameworksURL.appendingPathComponent(
+      "Tg_@HelloWorld_1024.dylib"
+    )
+    guard FileManager.default.fileExists(atPath: dylibURL.path) else { return }
+    handle = dlopen(dylibURL.path, RTLD_NOW | RTLD_LOCAL)
+  }
+}
 
 final class PacketTunnelProvider: NEPacketTunnelProvider {
   private let sharedStateStore = PacketTunnelSharedStateStore()
@@ -23,6 +39,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     options: [String: NSObject]?,
     completionHandler: @escaping (Error?) -> Void
   ) {
+    NECoreSideloadCompatibilityLoader.loadIfPresent()
     logger.info("startTunnel begin")
     nativeLog("startTunnel begin")
     sharedStateStore.clearRunTime()

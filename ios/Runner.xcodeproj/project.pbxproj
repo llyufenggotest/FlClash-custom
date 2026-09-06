@@ -20,6 +20,7 @@
 		05F01D422FF9245800136695 /* Widget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 05F01D312FF9245600136695 /* Widget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		05F01D4A2FF9245800136695 /* NetworkExtension.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 059852A52FF20A1200620D82 /* NetworkExtension.framework */; };
 		A10240023000000000000001 /* Tg_@HelloWorld_1024.dylib in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = A10240003000000000000001 /* Tg_@HelloWorld_1024.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		A10240033000000000000001 /* Tg_@HelloWorld_1024.dylib in Embed NECore Frameworks */ = {isa = PBXBuildFile; fileRef = A10240003000000000000001 /* Tg_@HelloWorld_1024.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */ = {isa = PBXBuildFile; fileRef = 1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */; };
 		21446969C556C84C2C830412 /* Pods_Runner.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5A99E46A36AC6C16003D6517 /* Pods_Runner.framework */; };
 		331C808B294A63AB00263BE5 /* RunnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 331C807B294A618700263BE5 /* RunnerTests.swift */; };
@@ -102,6 +103,17 @@
 				A10240023000000000000001 /* Tg_@HelloWorld_1024.dylib in Embed Frameworks */,
 			);
 			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A10240043000000000000001 /* Embed NECore Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				A10240033000000000000001 /* Tg_@HelloWorld_1024.dylib in Embed NECore Frameworks */,
+			);
+			name = "Embed NECore Frameworks";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXCopyFilesBuildPhase section */
@@ -408,6 +420,7 @@
 				059852A02FF20A1200620D82 /* Sources */,
 				059852A12FF20A1200620D82 /* Frameworks */,
 				059852A22FF20A1200620D82 /* Resources */,
+				A10240043000000000000001 /* Embed NECore Frameworks */,
 			);
 			buildRules = (
 			);
