@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:fl_clash/core/controller.dart';
 import 'package:fl_clash/core/desktop/model.dart';
 import 'package:fl_clash/core/interface.dart';
+import 'package:fl_clash/core/rule_generation_preparer.dart';
+import 'package:fl_clash/core/rule_preparation_scheduler.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:mocktail/mocktail.dart';
@@ -47,6 +49,7 @@ void main() {
   setUp(() {
     mock = MockCoreHandlerInterface();
     CoreController.resetInstance();
+    rulePreparationScheduler.reset();
     controller = CoreController.test(mock);
   });
 
@@ -130,27 +133,200 @@ void main() {
       expect(result, 'ok');
     });
 
-    test('iOS setup prepares rule artifacts before starting the extension', () async {
+    test('isolated preparation admits its published candidate path', () async {
+      const params = SetupParams(selectedMap: {}, testUrl: 'http://x.com');
+      const candidatePath = '/app-group/prewarm/7/generations/id/config.yaml';
+      final events = <String>[];
+      when(
+        () => mock.validateCandidateConfigAtPath(candidatePath),
+      ).thenAnswer((_) async {
+        events.add('admit');
+        return '';
+      });
+
+      final result = await controller.setupConfig(
+        params: params,
+        preparationConfig: 'rules: []',
+        preparationProfileId: 7,
+        prepareBeforePreload: true,
+        prepareRuleGenerationOverride:
+            ({required String config, required int profileId}) async {
+              events.add('prepare');
+              return const RuleGenerationPreparation(
+                fingerprint: 'fingerprint',
+                config: 'mode: direct',
+                generation: 'generation',
+                configPath: candidatePath,
+              );
+            },
+        persistPreparedConfig: (_) async => events.add('stage'),
+        preloadInvoke: () async => events.add('preload'),
+      );
+
+      expect(result, '');
+      expect(events, ['prepare', 'stage', 'admit', 'preload']);
+      verify(
+        () => mock.validateCandidateConfigAtPath(candidatePath),
+      ).called(1);
+      verifyNever(() => mock.setupConfig(params));
+    });
+
+    test('connect reuses an in-flight subscription prewarm', () async {
       const params = SetupParams(selectedMap: {}, testUrl: 'http://x.com');
       final setupCompleter = Completer<String>();
-      final events = <String>[];
+      var setupInvocations = 0;
+      var preloadInvocations = 0;
       when(() => mock.setupConfig(params)).thenAnswer((_) {
-        events.add('setup');
+        setupInvocations++;
         return setupCompleter.future;
       });
 
-      final setupFuture = controller.setupConfig(
+      final prewarm = controller.setupConfig(
         params: params,
         prepareBeforePreload: true,
-        preloadInvoke: () async => events.add('preload'),
+      );
+      final connect = controller.setupConfig(
+        params: params,
+        prepareBeforePreload: true,
+        preloadInvoke: () async => preloadInvocations++,
       );
       await Future<void>.delayed(Duration.zero);
-      expect(events, ['setup']);
 
+      expect(setupInvocations, 2);
+      expect(preloadInvocations, 0);
       setupCompleter.complete('');
-      expect(await setupFuture, '');
-      expect(events, ['setup', 'preload']);
+      expect(await prewarm, '');
+      expect(await connect, '');
+      expect(preloadInvocations, 1);
     });
+
+    test('ready subscription prewarm lets connect skip Runner setup', () async {
+      const params = SetupParams(selectedMap: {}, testUrl: 'http://x.com');
+      var setupInvocations = 0;
+      var preloadInvocations = 0;
+      when(() => mock.setupConfig(params)).thenAnswer((_) async {
+        setupInvocations++;
+        return '';
+      });
+
+      expect(
+        await controller.setupConfig(
+          params: params,
+          prepareBeforePreload: true,
+        ),
+        '',
+      );
+      expect(
+        await controller.setupConfig(
+          params: params,
+          prepareBeforePreload: true,
+          preloadInvoke: () async => preloadInvocations++,
+        ),
+        '',
+      );
+
+      expect(setupInvocations, 2);
+      expect(preloadInvocations, 1);
+    });
+
+    test('failed prewarm preserves a ready older fingerprint', () async {
+      const params = SetupParams(selectedMap: {}, testUrl: 'http://x.com');
+      final results = ['', 'download failed', ''];
+      var setupInvocations = 0;
+      when(() => mock.setupConfig(params)).thenAnswer((_) async {
+        return results[setupInvocations++];
+      });
+
+      expect(
+        await controller.setupConfig(
+          params: params,
+          prepareBeforePreload: true,
+        ),
+        '',
+      );
+      expect(
+        await controller.setupConfig(
+          params: params,
+          prepareBeforePreload: true,
+        ),
+        'download failed',
+      );
+      expect(
+        await controller.setupConfig(
+          params: params,
+          prepareBeforePreload: true,
+        ),
+        '',
+      );
+
+      expect(setupInvocations, 3);
+    });
+
+    test('prewarm without a start callback still has a bounded wait', () async {
+      const params = SetupParams(selectedMap: {}, testUrl: 'http://x.com');
+      final setupCompleter = Completer<String>();
+      when(
+        () => mock.setupConfig(params),
+      ).thenAnswer((_) => setupCompleter.future);
+
+      final result = await controller.setupConfig(
+        params: params,
+        prepareBeforePreload: true,
+        rulePreparationTimeout: const Duration(milliseconds: 10),
+      );
+
+      expect(result, contains('rule preparation timed out'));
+      setupCompleter.complete('');
+    });
+
+    test(
+      'same YAML with different setup params is prepared separately',
+      () async {
+        const first = SetupParams(
+          selectedMap: {'group': 'a'},
+          testUrl: 'http://a.com',
+        );
+        const second = SetupParams(
+          selectedMap: {'group': 'b'},
+          testUrl: 'http://b.com',
+        );
+        when(() => mock.setupConfig(any())).thenAnswer((_) async => '');
+
+        await controller.setupConfig(params: first, prepareBeforePreload: true);
+        await controller.setupConfig(
+          params: second,
+          prepareBeforePreload: true,
+        );
+
+        verify(() => mock.setupConfig(first)).called(1);
+        verify(() => mock.setupConfig(second)).called(1);
+      },
+    );
+
+    test(
+      'iOS setup prepares rule artifacts before starting the extension',
+      () async {
+        const params = SetupParams(selectedMap: {}, testUrl: 'http://x.com');
+        final setupCompleter = Completer<String>();
+        final events = <String>[];
+        when(() => mock.setupConfig(params)).thenAnswer((_) {
+          events.add('setup');
+          return setupCompleter.future;
+        });
+
+        final setupFuture = controller.setupConfig(
+          params: params,
+          prepareBeforePreload: true,
+          preloadInvoke: () async => events.add('preload'),
+        );
+        await Future<void>.delayed(Duration.zero);
+        expect(events, ['setup']);
+
+        setupCompleter.complete('');
+        expect(await setupFuture, '');
+        expect(events, ['setup', 'preload']);
+      },
+    );
 
     test('iOS setup failure does not start an unprepared extension', () async {
       const params = SetupParams(selectedMap: {}, testUrl: 'http://x.com');
@@ -194,24 +370,27 @@ void main() {
       expect(events, ['setup']);
     });
 
-    test('iOS setup exception is preserved and does not start the extension', () async {
-      const params = SetupParams(selectedMap: {}, testUrl: 'http://x.com');
-      final providerError = StateError('BanAD provider file is missing');
-      var preloadStarted = false;
-      when(
-        () => mock.setupConfig(params),
-      ).thenAnswer((_) => Future<String>.error(providerError));
+    test(
+      'iOS setup exception is preserved and does not start the extension',
+      () async {
+        const params = SetupParams(selectedMap: {}, testUrl: 'http://x.com');
+        final providerError = StateError('BanAD provider file is missing');
+        var preloadStarted = false;
+        when(
+          () => mock.setupConfig(params),
+        ).thenAnswer((_) => Future<String>.error(providerError));
 
-      await expectLater(
-        controller.setupConfig(
-          params: params,
-          prepareBeforePreload: true,
-          preloadInvoke: () async => preloadStarted = true,
-        ),
-        throwsA(same(providerError)),
-      );
-      expect(preloadStarted, isFalse);
-    });
+        await expectLater(
+          controller.setupConfig(
+            params: params,
+            prepareBeforePreload: true,
+            preloadInvoke: () async => preloadStarted = true,
+          ),
+          throwsA(same(providerError)),
+        );
+        expect(preloadStarted, isFalse);
+      },
+    );
 
     test('non-iOS setup keeps setup and preload parallel', () async {
       const params = SetupParams(selectedMap: {}, testUrl: 'http://x.com');

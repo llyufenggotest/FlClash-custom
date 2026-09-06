@@ -33,9 +33,24 @@ type DeleteManagedPathParams struct {
 	RelativePath string           `json:"relative-path"`
 }
 
+type PrewarmRuleProviderParams struct {
+	Name       string         `json:"name"`
+	Definition map[string]any `json:"definition"`
+	TargetPath string         `json:"target-path"`
+}
+
+type GetPreparedRuleGenerationParams struct {
+	ProfileID   int64  `json:"profile-id"`
+	Fingerprint string `json:"fingerprint"`
+}
+
 type SetupParams struct {
 	SelectedMap map[string]string `json:"selected-map"`
 	TestURL     string            `json:"test-url"`
+}
+
+type ValidateCandidateConfigParams struct {
+	CandidateConfigPath string `json:"candidate-config-path"`
 }
 
 type UpdateParams struct {
@@ -229,6 +244,10 @@ const (
 	stopListenerMethod                   CoreMethod = "stopListener"
 	updateDnsMethod                      CoreMethod = "updateDns"
 	crashMethod                          CoreMethod = "crash"
+	prewarmRuleProviderMethod            CoreMethod = "prewarmRuleProvider"
+	publishRuleGenerationMethod          CoreMethod = "publishRuleGeneration"
+	getPreparedRuleGenerationMethod      CoreMethod = "getPreparedRuleGeneration"
+	validateCandidateConfigAtPathMethod  CoreMethod = "validateCandidateConfigAtPath"
 	setupConfigMethod                    CoreMethod = "setupConfig"
 	getProfileConfigMethod               CoreMethod = "getProfileConfig"
 	clearEffectMethod                    CoreMethod = "clearEffect"

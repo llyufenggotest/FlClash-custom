@@ -37,8 +37,9 @@ func TestSetupConfigPropagatesRuleAdmissionFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	result := handleSetupConfig(defaultSetupParams())
-	if !strings.Contains(result, "required") || !strings.Contains(result, "10000-rule budget") {
-		t.Fatalf("setup falsely succeeded/lost cause: %q", result)
+	if !strings.Contains(result, "required") ||
+		(!strings.Contains(result, "rule ready manifest") && !strings.Contains(result, "10000-rule budget")) {
+		t.Fatalf("unprepared setup did not fail closed or lost its cause: %q", result)
 	}
 	if currentConfig != oldConfig || tunnel.RuleProviders()["required"] != oldRules["required"] {
 		t.Fatal("rejected setup mutated active configuration")
