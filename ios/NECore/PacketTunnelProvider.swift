@@ -114,7 +114,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
           self.logger.error(
             "quickSetup failed: \(message, privacy: .public)"
           )
-          self.nativeLog("quickSetup failed")
+          self.nativeLog("quickSetup failed message=\(self.safeCoreMessage(message))")
           self.nativeLog("startup_failure phase=quick_setup_failed response_bytes=\(result.count)")
           self.rollbackPartialStart(reason: "quick_setup_failed")
           completionHandler(PacketTunnelProviderError.couldNotStartCoreTun)
@@ -280,6 +280,18 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
   private func safeError(_ error: Error) -> String {
     let value = error as NSError
     return "domain=\(value.domain) code=\(value.code)"
+  }
+
+  private func safeCoreMessage(_ message: String) -> String {
+    var value = message
+    for key in ["password", "token", "authorization", "private-key", "uuid"] {
+      value = value.replacingOccurrences(
+        of: "(?i)(\(key)\\s*[:=]\\s*)[^,\\s}]+",
+        with: "$1[REDACTED]",
+        options: .regularExpression
+      )
+    }
+    return String(value.prefix(1024))
   }
 }
 
