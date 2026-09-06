@@ -33,20 +33,41 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
   private let lifecycleQueue = DispatchQueue(label: "com.follow.clash.ne.lifecycle")
   private var generation: UInt64 = 0
   private var pendingStart: ((Error?) -> Void)?
-  private lazy var setupBarrier = CoreSetupStopBarrier { [weak self] completion in
-    guard let self else { return }
-    // shutdown closes ordinary listeners too; stopTun alone only closes TUN.
-    let request = Data(#"{"method":"shutdown","arguments":null}"#.utf8)
-    NECoreBridge.invokeMethod(request) { data in
-      self.lifecycleQueue.async {
-        let object = data.flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]
-        let success = object?["result"] as? Bool == true
-          && (object?["error"] == nil || object?["error"] is NSNull)
-        if success { NECoreBridge.stopTun() }
-        completion(success)
-      }
-    }
+  private let setupBarrierLock = NSLock()
+  private var setupBarrier: CoreSetupStopBarrier {
+    setupBarrierLock.lock()
+    defer { setupBarrierLock.unlock() }
+    return setupBarrierStorage
   }
+  private lazy var setupBarrierStorage: CoreSetupStopBarrier = {
+    let queue = lifecycleQueue
+    return CoreSetupStopBarrier(
+      cleanup: { completion in
+        queue.async {
+          // This barrier is the sole owner of core retirement. Do not stop TUN
+          // before an outstanding quickSetup returns: late setup may recreate it.
+          let request = Data(#"{"method":"shutdown","arguments":null}"#.utf8)
+          let cleanupGate = CoreShutdownCleanupGate(completion: completion)
+          NECoreBridge.invokeMethod(request) { data in
+            let object = data.flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]
+            let success = object?["result"] as? Bool == true
+              && (object?["error"] == nil || object?["error"] is NSNull)
+            cleanupGate.receiveShutdownResult(success)
+          }
+          // invokeMethod may call back inline. Record local retirement only after
+          // stopTun returns so barrier completion can never overtake it.
+          NECoreBridge.stopTun()
+          cleanupGate.didStopTun()
+        }
+      },
+      cleanupTimeout: CoreSetupStopBarrier.providerStopDeadline,
+      scheduleTimeout: CoreSetupStopBarrier.scheduleStopDeadline,
+      diagnostic: { [weak self] reason in
+        self?.logger.error("stopTunnel \(reason, privacy: .public)")
+        self?.nativeLog("stopTunnel \(reason)")
+      }
+    )
+  }()
   private let logger = Logger(
     subsystem: PacketTunnelEnvironment.extensionBundleIdentifier,
     category: "PacketTunnelProvider"
@@ -215,12 +236,15 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     with reason: NEProviderStopReason,
     completionHandler: @escaping () -> Void
   ) {
+    // Register the system completion and its deadline before entering the
+    // lifecycle queue. The queue may be blocked by an extension callback.
+    setupBarrier.stop(completionHandler)
     lifecycleQueue.async {
-      self.finishStop(reason: reason, completionHandler: completionHandler)
+      self.finishStop(reason: reason)
     }
   }
 
-  private func finishStop(reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
+  private func finishStop(reason: NEProviderStopReason) {
     generation &+= 1
     let pending = pendingStart
     pendingStart = nil
@@ -233,11 +257,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     mailbox.stop()
     didStartEventQueue = false
     resourceHeartbeat.stop()
-    NECoreBridge.stopTun()
     didStartTun = false
-    // If quickSetup is still applying configuration, wait for its callback,
-    // then shutdown and confirm resource retirement before acknowledging stop.
-    setupBarrier.stop(completionHandler)
   }
 
   override func handleAppMessage(
@@ -324,8 +344,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
       mailbox.stop()
       didStartEventQueue = false
     }
-    NECoreBridge.stopTun()
     didStartTun = false
+    // The barrier owns core cleanup so rollback and external stop cannot issue
+    // duplicate shutdown/stopTun pairs.
     setupBarrier.stop {}
   }
 
@@ -348,47 +369,179 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
 }
 
 // BEGIN RPC LIFECYCLE UNIT
-// Confined to the provider lifecycle queue. Failed/missing cleanup deliberately
-// keeps the barrier closed: only process teardown is safe in that condition.
+// Joins the shutdown bridge reply with completion of local TUN retirement.
+// Either signal may arrive first; duplicate bridge replies and stop signals are
+// ignored, while a missing bridge reply deliberately leaves the system deadline
+// as the only completion path.
+final class CoreShutdownCleanupGate {
+  private let lock = NSLock()
+  private var shutdownResult: Bool?
+  private var stopTunFinished = false
+  private var resolved = false
+  private let completion: (Bool) -> Void
+
+  init(completion: @escaping (Bool) -> Void) {
+    self.completion = completion
+  }
+
+  func receiveShutdownResult(_ success: Bool) {
+    resolveIfReady(shutdownResult: success, didStopTun: false)
+  }
+
+  func didStopTun() {
+    resolveIfReady(shutdownResult: nil, didStopTun: true)
+  }
+
+  private func resolveIfReady(shutdownResult result: Bool?, didStopTun: Bool) {
+    let resolvedResult: Bool? = withLock {
+      guard !resolved else { return nil }
+      if shutdownResult == nil, let result { shutdownResult = result }
+      if didStopTun { stopTunFinished = true }
+      guard stopTunFinished, let shutdownResult else { return nil }
+      resolved = true
+      return shutdownResult
+    }
+    if let resolvedResult { completion(resolvedResult) }
+  }
+
+  private func withLock<T>(_ body: () -> T) -> T {
+    lock.lock()
+    defer { lock.unlock() }
+    return body()
+  }
+}
+
+// Thread-safe, one-way retirement gate. The first stop permanently prevents
+// setup; system completions have a deadline independent of provider queues.
 final class CoreSetupStopBarrier {
+  typealias TimeoutScheduler = (TimeInterval, @escaping () -> Void) -> Void
+
+  static let providerStopDeadline: TimeInterval = 4
+  private static let stopCompletionQueue = DispatchQueue(
+    label: "com.follow.clash.ne.stop-completion",
+    qos: .utility
+  )
+
+  static func scheduleStopDeadline(
+    _ delay: TimeInterval,
+    _ completion: @escaping () -> Void
+  ) {
+    stopCompletionQueue.asyncAfter(deadline: .now() + delay, execute: completion)
+  }
+
+  private let lock = NSLock()
   private var setupOutstanding = false
-  private var stopping = false
-  private var cleanupOutstanding = false
-  private var cleanupFailed = false
-  private var cleanupGeneration: UInt64 = 0
+  private var retired = false
+  private var cleanupStarted = false
+  private var cleanupFinished = false
+  private var completionResolved = false
   private var completions: [() -> Void] = []
   private let cleanup: (@escaping (Bool) -> Void) -> Void
-  init(cleanup: @escaping (@escaping (Bool) -> Void) -> Void) { self.cleanup = cleanup }
-  var canStart: Bool { !setupOutstanding && !stopping }
+  private let cleanupTimeout: TimeInterval
+  private let scheduleTimeout: TimeoutScheduler
+  private let diagnostic: (String) -> Void
+
+  init(
+    cleanup: @escaping (@escaping (Bool) -> Void) -> Void,
+    cleanupTimeout: TimeInterval,
+    scheduleTimeout: @escaping TimeoutScheduler,
+    diagnostic: @escaping (String) -> Void
+  ) {
+    self.cleanup = cleanup
+    self.cleanupTimeout = cleanupTimeout
+    self.scheduleTimeout = scheduleTimeout
+    self.diagnostic = diagnostic
+  }
+
+  var canStart: Bool {
+    withLock { !retired && !setupOutstanding }
+  }
+
   func beginSetup() -> Bool {
-    guard canStart else { return false }
-    setupOutstanding = true
+    withLock {
+      guard !retired, !setupOutstanding else { return false }
+      setupOutstanding = true
+      return true
+    }
+  }
+
+  func finishSetup() {
+    let shouldCleanup = withLock {
+      guard setupOutstanding else { return false }
+      setupOutstanding = false
+      return claimCleanupIfReady()
+    }
+    if shouldCleanup { runCleanup() }
+  }
+
+  func stop(_ completion: @escaping () -> Void) {
+    var completeImmediately = false
+    var scheduleDeadline = false
+    let shouldCleanup = withLock {
+      if completionResolved {
+        completeImmediately = true
+      } else {
+        completions.append(completion)
+      }
+      if !retired {
+        retired = true
+        scheduleDeadline = true
+      }
+      return claimCleanupIfReady()
+    }
+
+    if completeImmediately { completion() }
+    if scheduleDeadline {
+      scheduleTimeout(cleanupTimeout) { [self] in reachStopDeadline() }
+    }
+    if shouldCleanup { runCleanup() }
+  }
+
+  // Must be called with lock held.
+  private func claimCleanupIfReady() -> Bool {
+    guard retired, !setupOutstanding, !cleanupStarted else { return false }
+    cleanupStarted = true
     return true
   }
-  func finishSetup() {
-    guard setupOutstanding else { return }
-    setupOutstanding = false
-    driveCleanup()
+
+  private func runCleanup() {
+    cleanup { [weak self] success in self?.finishCleanup(success: success) }
   }
-  func stop(_ completion: @escaping () -> Void) {
-    stopping = true
-    completions.append(completion)
-    driveCleanup()
+
+  private func reachStopDeadline() {
+    let pending = resolveCompletions()
+    guard let pending else { return }
+    pending.forEach { $0() }
+    diagnostic("cleanup_timeout")
   }
-  private func driveCleanup() {
-    guard stopping, !setupOutstanding, !cleanupOutstanding, !cleanupFailed else { return }
-    cleanupOutstanding = true
-    cleanupGeneration &+= 1
-    let attempt = cleanupGeneration
-    cleanup { success in
-      guard self.cleanupOutstanding, self.cleanupGeneration == attempt else { return }
-      self.cleanupOutstanding = false
-      guard success else { self.cleanupFailed = true; return }
-      self.stopping = false
-      let pending = self.completions
-      self.completions.removeAll()
-      pending.forEach { $0() }
+
+  private func finishCleanup(success: Bool) {
+    let pending: [() -> Void]? = withLock {
+      guard cleanupStarted, !cleanupFinished else { return nil }
+      cleanupFinished = true
+      return takeCompletionsIfUnresolved()
     }
+    if !success { diagnostic("cleanup_failed") }
+    pending?.forEach { $0() }
+  }
+
+  private func resolveCompletions() -> [() -> Void]? {
+    withLock { takeCompletionsIfUnresolved() }
+  }
+
+  private func withLock<T>(_ body: () -> T) -> T {
+    lock.lock()
+    defer { lock.unlock() }
+    return body()
+  }
+
+  // Must be called with lock held.
+  private func takeCompletionsIfUnresolved() -> [() -> Void]? {
+    guard !completionResolved else { return nil }
+    completionResolved = true
+    let pending = completions
+    completions.removeAll()
+    return pending
   }
 }
 // END RPC LIFECYCLE UNIT

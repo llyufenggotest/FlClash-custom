@@ -35,6 +35,28 @@ mixin CoreInterface {
 
   Future<String> updateConfig(UpdateParams updateParams);
 
+  Future<Map<String, dynamic>> prewarmRuleProvider({
+    required String name,
+    required Map<String, dynamic> definition,
+    required String targetPath,
+  });
+
+  Future<Map<String, dynamic>> publishRuleGeneration({
+    required int profileId,
+    required String fingerprint,
+    required String generation,
+    required String stagingPath,
+    required String configPath,
+    required List<Map<String, dynamic>> artifacts,
+  });
+
+  Future<Map<String, dynamic>> getPreparedRuleGeneration({
+    required int profileId,
+    required String fingerprint,
+  });
+
+  Future<String> validateCandidateConfigAtPath(String candidateConfigPath);
+
   Future<String> setupConfig(SetupParams setupParams);
 
   Future<ProxiesData> getProxies();
@@ -228,6 +250,69 @@ abstract class CoreHandlerInterface with CoreInterface {
       method: CoreMethod.convertAgeSecretKeyToPublicKey,
       arguments: secretKey,
     );
+  }
+
+  @override
+  Future<Map<String, dynamic>> prewarmRuleProvider({
+    required String name,
+    required Map<String, dynamic> definition,
+    required String targetPath,
+  }) async {
+    return await _invokeMethod<Map<String, dynamic>>(
+          method: CoreMethod.prewarmRuleProvider,
+          arguments: {
+            'name': name,
+            'definition': definition,
+            'target-path': targetPath,
+          },
+        ) ??
+        {};
+  }
+
+  @override
+  Future<Map<String, dynamic>> publishRuleGeneration({
+    required int profileId,
+    required String fingerprint,
+    required String generation,
+    required String stagingPath,
+    required String configPath,
+    required List<Map<String, dynamic>> artifacts,
+  }) async {
+    return await _invokeMethod<Map<String, dynamic>>(
+          method: CoreMethod.publishRuleGeneration,
+          arguments: {
+            'profile-id': profileId,
+            'fingerprint': fingerprint,
+            'generation': generation,
+            'staging-path': stagingPath,
+            'config-path': configPath,
+            'artifacts': artifacts,
+          },
+        ) ??
+        {};
+  }
+
+  @override
+  Future<Map<String, dynamic>> getPreparedRuleGeneration({
+    required int profileId,
+    required String fingerprint,
+  }) async {
+    return await _invokeMethod<Map<String, dynamic>>(
+          method: CoreMethod.getPreparedRuleGeneration,
+          arguments: {'profile-id': profileId, 'fingerprint': fingerprint},
+        ) ??
+        {};
+  }
+
+  @override
+  Future<String> validateCandidateConfigAtPath(
+    String candidateConfigPath,
+  ) async {
+    return await _invokeMethod<String>(
+          method: CoreMethod.validateCandidateConfigAtPath,
+          arguments: {'candidate-config-path': candidateConfigPath},
+        ) ??
+        '';
   }
 
   @override

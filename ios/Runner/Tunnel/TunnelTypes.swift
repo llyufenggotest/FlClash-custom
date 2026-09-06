@@ -16,6 +16,10 @@ enum TunnelTarget {
 }
 
 extension NEVPNStatus {
+  var isStableConnected: Bool {
+    self == .connected
+  }
+
   var tunnelState: TunnelTarget? {
     switch self {
     case .connected, .reasserting:
@@ -43,6 +47,7 @@ final class TunnelRequest {
   let target: TunnelTarget
   var preferenceRetryCount = 0
   var notifyExternalOnCompletion: Bool
+  var completions: [(TunnelTarget?) -> Void] = []
 
   init(
     generation: UInt64,
