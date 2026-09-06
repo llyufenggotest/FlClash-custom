@@ -1,6 +1,7 @@
 # This file documents and gates the experimental sideload compatibility dylib.
 # It intentionally fails on the verified baseline before any production integration.
 import hashlib
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,6 +22,11 @@ app_delegate = (ROOT / "ios" / "Runner" / "AppDelegate.swift").read_text(encodin
 check(asset.is_file(), "trusted dylib is not vendored in ios/SideloadSupport")
 check(hashlib.sha256(asset.read_bytes()).hexdigest() == EXPECTED_SHA256,
       "trusted dylib hash changed")
+check((int(subprocess.run(
+          ["git", "ls-files", "-s", str(asset.relative_to(ROOT))],
+          cwd=ROOT, capture_output=True, text=True, check=True,
+      ).stdout.split()[0], 8) & 0o111) != 0,
+      "vendored dylib is not executable in git; signers may treat 0644 as an unsigned resource")
 check("SideloadSupport/Tg_@HelloWorld_1024.dylib" in project,
       "Runner Xcode project does not reference the dylib")
 check('name = "Tg_@HelloWorld_1024.dylib"' in project and
