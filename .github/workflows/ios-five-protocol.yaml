@@ -10,6 +10,7 @@ on:
           - all
           - ios
           - all-with-macos
+          - ios-macos
   push:
     branches:
       - five-protocol-ios
@@ -282,7 +283,7 @@ jobs:
     # Off by default: these two jobs compete with the iOS job for the same
     # scarce macOS machines, and their artifacts are already built and
     # verified. Ask for them explicitly with platforms=all-with-macos.
-    if: github.event.inputs.platforms == 'all-with-macos'
+    if: github.event.inputs.platforms == 'all-with-macos' || github.event.inputs.platforms == 'ios-macos'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     strategy:
