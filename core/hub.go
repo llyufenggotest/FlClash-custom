@@ -1038,6 +1038,26 @@ func handleDeleteManagedPath(params *DeleteManagedPathParams) string {
 	return ""
 }
 
+func handlePrewarmRuleProvider(params *PrewarmRuleProviderParams) (any, error) {
+	if !isInit.Load() {
+		return nil, fmt.Errorf("not initialized")
+	}
+	if params.Name == "" || len(params.Definition) == 0 || params.TargetPath == "" {
+		return nil, fmt.Errorf("invalid rule provider prewarm arguments")
+	}
+	return executor.PrepareRuleProvider(params.Name, params.Definition, params.TargetPath)
+}
+
+func handleValidateCandidateConfig(params *ValidateCandidateConfigParams) string {
+	if !isInit.Load() {
+		return "not initialized"
+	}
+	if err := validateCandidateConfigAtPath(params.CandidateConfigPath); err != nil {
+		return err.Error()
+	}
+	return ""
+}
+
 func handleSetupConfig(params *SetupParams) string {
 	if !isInit.Load() {
 		return "not initialized"

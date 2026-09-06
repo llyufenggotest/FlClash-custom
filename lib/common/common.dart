@@ -15,6 +15,8 @@ export 'http.dart';
 export 'icons.dart';
 export 'indexing.dart';
 export 'input_limits.dart';
+export 'ios_config_activation.dart';
+export 'single_value_sink.dart';
 export 'ios_profile_budget.dart';
 export 'iterable.dart';
 export 'javascript.dart';

@@ -18,6 +18,8 @@ import 'package:riverpod/riverpod.dart';
 class _MockCoreHandlerInterface extends Mock implements CoreHandlerInterface {}
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   group('ProfilesAction', () {
     test('keeps edited profile data when remote update fails', () async {
       final original = Profile.normal(label: 'old label', url: 'bad-url');
@@ -105,6 +107,57 @@ void main() {
         expect(container.read(profilesProvider), profiles);
       },
     );
+
+    test('iOS first imported profile schedules rule prewarm', () async {
+      final profile = Profile.normal(label: 'Imported');
+      final container = ProviderContainer(
+        overrides: [
+          profilesProvider.overrideWith(() => _TestProfiles([])),
+          profilesActionProvider.overrideWith(_IOSProfilesAction.new),
+          setupActionProvider.overrideWith(_PrewarmRecordingSetupAction.new),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      final subscription = container.listen(
+        currentProfileIdProvider,
+        (_, _) {},
+        fireImmediately: true,
+      );
+      addTearDown(subscription.close);
+
+      container.read(profilesActionProvider.notifier).putProfile(profile);
+      await Future<void>.delayed(Duration.zero);
+
+      final setup =
+          container.read(setupActionProvider.notifier)
+              as _PrewarmRecordingSetupAction;
+      expect(container.read(currentProfileIdProvider), profile.id);
+      expect(setup.prewarmedProfileIds, [profile.id]);
+    });
+
+    test('iOS imported profiles keep their own prewarm identity', () async {
+      final current = Profile.normal(label: 'Current');
+      final imported = Profile.normal(label: 'Imported');
+      final container = ProviderContainer(
+        overrides: [
+          currentProfileIdProvider.overrideWithBuild((_, _) => current.id),
+          profilesProvider.overrideWith(() => _TestProfiles([current])),
+          profilesActionProvider.overrideWith(_IOSProfilesAction.new),
+          setupActionProvider.overrideWith(_PrewarmRecordingSetupAction.new),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      container.read(profilesActionProvider.notifier).putProfile(imported);
+      await Future<void>.delayed(Duration.zero);
+
+      final setup =
+          container.read(setupActionProvider.notifier)
+              as _PrewarmRecordingSetupAction;
+      expect(container.read(currentProfileIdProvider), current.id);
+      expect(setup.prewarmedProfileIds, [imported.id]);
+    });
 
     test('setProfileAndAutoApply stores a non-current profile', () {
       final current = Profile.normal(label: 'Current');
@@ -364,6 +417,22 @@ void main() {
   });
 
   group('SetupAction', () {
+    test('iOS prewarm does not enter the full apply path', () async {
+      final profile = Profile.normal(label: 'Current');
+      final container = ProviderContainer(
+        overrides: [
+          setupActionProvider.overrideWith(_SafeIOSPrewarmSetupAction.new),
+        ],
+      );
+      addTearDown(container.dispose);
+      final setup =
+          container.read(setupActionProvider.notifier)
+              as _SafeIOSPrewarmSetupAction;
+
+      expect(await setup.prewarmProfile(profile), isFalse);
+      expect(setup.applyProfileCount, 0);
+    });
+
     group('rapid status changes', () {
       test('updates runtime and traffic while core start is pending', () async {
         final startCompleter = Completer<bool>();
@@ -1236,6 +1305,40 @@ const _restartResult = CoreLifecycleResult(
   revision: 1,
   outcome: CoreLifecycleOutcome.applied,
 );
+
+class _IOSProfilesAction extends ProfilesAction {
+  @override
+  bool get rulePrewarmEnabled => true;
+}
+
+class _SafeIOSPrewarmSetupAction extends SetupAction {
+  int applyProfileCount = 0;
+
+  @override
+  bool get rulePrewarmEnabled => true;
+
+  @override
+  Future<bool> prewarmProfile(Profile profile) async => false;
+
+  @override
+  Future<void> applyProfile({
+    bool silence = false,
+    bool force = false,
+    Future<void> Function()? preloadInvoke,
+  }) async {
+    applyProfileCount++;
+  }
+}
+
+class _PrewarmRecordingSetupAction extends SetupAction {
+  final List<int> prewarmedProfileIds = [];
+
+  @override
+  Future<bool> prewarmProfile(Profile profile) async {
+    prewarmedProfileIds.add(profile.id);
+    return false;
+  }
+}
 
 class _RecordingSetupAction extends SetupAction {
   final List<String> events;

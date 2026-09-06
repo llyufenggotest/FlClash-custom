@@ -16,7 +16,8 @@ import 'package:flutter_test/flutter_test.dart';
 /// forced apply because its "already applied" fingerprint lived only in memory
 /// and was therefore always null after a relaunch.
 void main() {
-  String source(String path) => File(path).readAsStringSync();
+  String source(String path) =>
+      File(path).readAsStringSync().replaceAll('\r\n', '\n');
 
   group('applied-config fingerprint is durable', () {
     test('preferences expose a persisted applied-config md5', () {
@@ -28,20 +29,28 @@ void main() {
 
     test('the storage key is a real constant, not an inline literal', () {
       final constant = source('lib/common/constant.dart');
-      expect(constant, contains("const appliedConfigMd5Key = 'applied_config_md5'"));
+      expect(
+        constant,
+        contains("const appliedConfigMd5Key = 'applied_config_md5'"),
+      );
     });
 
     test('setup falls back to the persisted md5 when memory has none', () {
       final setup = source('lib/providers/actions/setup.dart');
-      expect(
-        setup,
-        contains('globalState.lastConfigMd5 ??\n        await preferences.getAppliedConfigMd5()'),
-      );
+      final start = setup.indexOf('final appliedMd5 =');
+      expect(start, greaterThan(-1));
+      final expression = setup.substring(start, setup.indexOf(';', start));
+      expect(expression, contains('globalState.lastConfigMd5'));
+      expect(expression, contains('preferences.getAppliedConfigMd5()'));
+      expect(expression, contains('??'));
     });
 
     test('a successful push records the fingerprint durably', () {
       final setup = source('lib/providers/actions/setup.dart');
-      expect(setup, contains('await preferences.setAppliedConfigMd5(yamlMd5)'));
+      expect(
+        setup,
+        contains('await preferences.setAppliedConfigMd5(appliedYamlMd5)'),
+      );
     });
   });
 
@@ -49,8 +58,11 @@ void main() {
     test('iOS skips a forced apply only while the tunnel is running', () {
       final setup = source('lib/providers/actions/setup.dart');
       final start = setup.indexOf('final skipRedundantReload =');
-      expect(start, greaterThan(-1),
-          reason: 'the skip decision must still exist');
+      expect(
+        start,
+        greaterThan(-1),
+        reason: 'the skip decision must still exist',
+      );
       final condition = setup.substring(start, setup.indexOf(';', start));
 
       // Asserted per condition, not as one literal line: the expression grows
@@ -66,8 +78,11 @@ void main() {
 
     test('the skip is gated on the on-disk config actually matching', () {
       final setup = source('lib/providers/actions/setup.dart');
-      expect(setup, contains('final diskMatches = await configFile.exists()'));
-      expect(setup, contains(".readAsString()).toMd5() == yamlMd5"));
+      final start = setup.indexOf('final diskMatches =');
+      expect(start, greaterThan(-1));
+      final condition = setup.substring(start, setup.indexOf(';', start));
+      expect(condition, contains('await configFile.exists()'));
+      expect(condition, contains('.readAsString()).toMd5() == yamlMd5'));
     });
 
     test('skipping the push still starts the core and refills UI state', () {
@@ -84,7 +99,9 @@ void main() {
 
     test('stopping the tunnel forgets the fingerprint on iOS', () {
       final setup = source('lib/providers/actions/setup.dart');
-      final stopStart = setup.indexOf('Future<void> _stop(_RunRequest request)');
+      final stopStart = setup.indexOf(
+        'Future<void> _stop(_RunRequest request)',
+      );
       final stopEnd = setup.indexOf('Future<void> _setCoreRunning');
       expect(stopStart, greaterThan(-1));
       expect(stopEnd, greaterThan(stopStart));

@@ -115,7 +115,26 @@ check(
         'rollbackPartialStart',
         'resourceHeartbeat.start()',
         'resourceHeartbeat.stop()',
+        'final class CoreShutdownCleanupGate',
+        'static let providerStopDeadline: TimeInterval = 4',
     ],
+)
+# Cleanup is a two-signal join: even an inline shutdown callback cannot resolve
+# the barrier until stopTun has returned. The gate also retains the callback for
+# asynchronous delivery and deduplicates repeated callback/stop signals.
+check_order(
+    'ios/NECore/PacketTunnelProvider.swift',
+    'let cleanupGate = CoreShutdownCleanupGate(completion: completion)',
+    'NECoreBridge.invokeMethod(request)',
+    'cleanupGate.receiveShutdownResult(success)',
+    'NECoreBridge.stopTun()',
+    'cleanupGate.didStopTun()',
+)
+check_order(
+    'ios/NECore/PacketTunnelProvider.swift',
+    'guard stopTunFinished, let shutdownResult else { return nil }',
+    'resolved = true',
+    'if let resolvedResult { completion(resolvedResult) }',
 )
 
 check(
@@ -345,7 +364,7 @@ check(
 
 check(
     'lib/common/task.dart',
-    present=['sanitizeProfileForIOS(finalConfig)', 'if (system.isIOS)'],
+    present=['sanitizeProfileForIOS(finalConfig)', 'isIOS: system.isIOS', 'required bool isIOS'],
 )
 
 check(
@@ -385,9 +404,10 @@ check(
     'lib/providers/actions/setup.dart',
     present=[
         'await preferences.getAppliedConfigMd5()',
-        'await preferences.setAppliedConfigMd5(yamlMd5)',
+        'await preferences.setAppliedConfigMd5(appliedYamlMd5)',
         'await preferences.setAppliedConfigMd5(null)',
-        'final diskMatches = await configFile.exists()',
+        'final diskMatches =',
+        'await configFile.exists()',
         # Asserted as separate conditions rather than one literal line: the
         # earlier single-string form broke as soon as a new guard joined the
         # expression, which fails the build without anything being wrong.
@@ -694,7 +714,7 @@ check(
     'core/mihomo/rules/provider/provider.go',
     present=[
         'if maxLowMemoryRuleCount > 0 && format != P.MrsRule {',
-        'loadFromSidecar(sidecarPath(vehicle.Path()), bytes, behavior)',
+        'loadFromSidecarBytes(sidecarSnapshot, bytes, behavior)',
         'if maxLowMemoryRuleCount == 0 && format != P.MrsRule {',
         'writeSidecar(vehicle.Path(), bytes, behavior, strategy)',
     ],
@@ -746,9 +766,10 @@ check_order(
 check_order(
     'core/mihomo/rules/provider/provider.go',
     'if maxLowMemoryRuleCount > 0 && format != P.MrsRule {',
-    'loadFromSidecar(sidecarPath(vehicle.Path()), bytes, behavior)',
-    'if err == nil {', 'return strategy, nil',
-    'strategy, err := rulesParse(bytes,', 'if err != nil {', 'return nil, err',
+    'sidecarSnapshot, sidecarErr = os.ReadFile(sidecarPath(vehicle.Path()))',
+    'loadFromSidecarBytes(sidecarSnapshot, bytes, behavior)',
+    'if err == nil {', 'return loadedRuleStrategy{',
+    'strategy, err := rulesParse(bytes,', 'if err != nil {', 'return loadedRuleStrategy{}, err',
     'if maxLowMemoryRuleCount == 0 && format != P.MrsRule {',
     'writeSidecar(vehicle.Path(), bytes, behavior, strategy)',
 )

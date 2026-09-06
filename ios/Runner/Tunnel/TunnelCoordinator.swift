@@ -47,23 +47,37 @@ final class TunnelCoordinator {
 
   func submitTunnelRequest(
     target: TunnelTarget,
-    notifyExternalOnCompletion: Bool = false
+    notifyExternalOnCompletion: Bool = false,
+    completion: ((TunnelTarget?) -> Void)? = nil
   ) {
     if let request = tunnelRequest,
       request.target == target
     {
       request.notifyExternalOnCompletion =
         request.notifyExternalOnCompletion || notifyExternalOnCompletion
+      if let completion {
+        request.completions.append(completion)
+      }
       log("merge \(target.description) request")
       return
     }
 
+    if let superseded = tunnelRequest {
+      let completions = superseded.completions
+      superseded.completions.removeAll()
+      for completion in completions {
+        completion(nil)
+      }
+    }
     requestGeneration &+= 1
     let request = TunnelRequest(
       generation: requestGeneration,
       target: target,
       notifyExternalOnCompletion: notifyExternalOnCompletion
     )
+    if let completion {
+      request.completions.append(completion)
+    }
     tunnelRequest = request
     publishedTunnelState = target
     cancelTunnelWait()
@@ -200,7 +214,9 @@ final class TunnelCoordinator {
         )
         finishTunnelRequest(
           request,
-          actualState: stableFailureState(status)
+          actualState: request.target == .running
+            ? runningFailureState(status)
+            : stableFailureState(status)
         )
         return
       }
@@ -222,8 +238,20 @@ final class TunnelCoordinator {
 
       let status = manager.connection.status
       recordObservedTunnelStatus(status, notifyExternal: false)
-      if status.tunnelState == .running {
+      if status.isStableConnected {
         finishTunnelRequest(request, actualState: .running)
+        return
+      }
+      if status == .reasserting {
+        let result = await waitForTunnelStatus(
+          manager: manager,
+          request: request,
+          purpose: .starting
+        )
+        guard isCurrent(request) else {
+          return
+        }
+        finishRunningRequest(request, result: result)
         return
       }
       if status.tunnelState == nil {
@@ -273,8 +301,20 @@ final class TunnelCoordinator {
 
       let preparedStatus = manager.connection.status
       recordObservedTunnelStatus(preparedStatus, notifyExternal: false)
-      if preparedStatus.tunnelState == .running {
+      if preparedStatus.isStableConnected {
         finishTunnelRequest(request, actualState: .running)
+        return
+      }
+      if preparedStatus == .reasserting {
+        let result = await waitForTunnelStatus(
+          manager: manager,
+          request: request,
+          purpose: .starting
+        )
+        guard isCurrent(request) else {
+          return
+        }
+        finishRunningRequest(request, result: result)
         return
       }
       if preparedStatus.tunnelState == nil {
@@ -309,24 +349,31 @@ final class TunnelCoordinator {
       guard isCurrent(request) else {
         return
       }
-      switch result {
-      case .status(let status):
-        finishTunnelRequest(
-          request,
-          actualState: status.tunnelState
+      finishRunningRequest(request, result: result)
+      return
+    }
+  }
+
+  private func finishRunningRequest(
+    _ request: TunnelRequest,
+    result: TunnelWaitResult
+  ) {
+    switch result {
+    case .status(let status):
+      finishTunnelRequest(
+        request,
+        actualState: status.isStableConnected ? .running : .stopped
+      )
+    case .timeout(let status):
+      if status.isLifecycleActive {
+        log(
+          "startup still pending after timeout status=\(statusDescription(status)); leaving Network Extension alive"
         )
-      case .timeout(let status):
-        if status.isLifecycleActive {
-          log(
-            "startup still pending after timeout status=\(statusDescription(status)); leaving Network Extension alive"
-          )
-          finishTunnelRequest(request, actualState: nil)
-        } else {
-          finishTunnelRequest(request, actualState: .stopped)
-        }
-      case .superseded:
-        return
+        finishTunnelRequest(request, actualState: nil)
+      } else {
+        finishTunnelRequest(request, actualState: .stopped)
       }
+    case .superseded:
       return
     }
   }
@@ -345,8 +392,20 @@ final class TunnelCoordinator {
     }
     switch result {
     case .status(let status):
-      if status.tunnelState == .running {
+      if status.isStableConnected {
         finishTunnelRequest(request, actualState: .running)
+        return false
+      }
+      if status == .reasserting {
+        let startResult = await waitForTunnelStatus(
+          manager: manager,
+          request: request,
+          purpose: .starting
+        )
+        guard isCurrent(request) else {
+          return false
+        }
+        finishRunningRequest(request, result: startResult)
         return false
       }
       return true
@@ -474,7 +533,7 @@ final class TunnelCoordinator {
     }
     switch wait.purpose {
     case .starting:
-      if status.tunnelState == .running {
+      if status.isStableConnected {
         resolveTunnelWait(wait, result: .status(status))
         return
       }
@@ -521,7 +580,7 @@ final class TunnelCoordinator {
   ) -> Bool {
     let status = manager.connection.status
     recordObservedTunnelStatus(status, notifyExternal: false)
-    guard status.tunnelState == .running else {
+    guard status.isStableConnected else {
       return false
     }
     finishTunnelRequest(request, actualState: .running)
@@ -536,6 +595,11 @@ final class TunnelCoordinator {
       return
     }
     tunnelRequest = nil
+    let completions = request.completions
+    request.completions.removeAll()
+    for completion in completions {
+      completion(actualState)
+    }
     guard let actualState else {
       log(
         "\(request.target.description) completed actual=unknown generation=\(request.generation)"
@@ -681,6 +745,21 @@ final class TunnelCoordinator {
         }
       }
     }
+  }
+
+  private func runningFailureState(
+    _ status: NEVPNStatus?
+  ) -> TunnelTarget? {
+    guard let status else {
+      return nil
+    }
+    if status.isStableConnected {
+      return .running
+    }
+    if status.isTerminal {
+      return .stopped
+    }
+    return nil
   }
 
   private func stableFailureState(

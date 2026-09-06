@@ -53,10 +53,37 @@ class ProfilesAction extends _$ProfilesAction {
     }
   }
 
+  @protected
+  bool get rulePrewarmEnabled => system.isIOS;
+
+  void _scheduleRulePrewarm(Profile profile) {
+    final setupAction = ref.read(setupActionProvider.notifier);
+    if (!rulePrewarmEnabled) {
+      if (profile.id == ref.read(currentProfileIdProvider)) {
+        setupAction.applyProfileDebounce(silence: true);
+      }
+      return;
+    }
+    unawaited(
+      setupAction.prewarmProfile(profile).catchError((
+        Object error,
+        StackTrace stackTrace,
+      ) {
+        commonPrint.log(
+          'rule prewarm failed ===> $error',
+          logLevel: LogLevel.warning,
+        );
+        return false;
+      }),
+    );
+  }
+
   void putProfile(Profile profile) {
     ref.read(profilesProvider.notifier).put(profile);
-    if (ref.read(currentProfileIdProvider) != null) return;
-    ref.read(currentProfileIdProvider.notifier).value = profile.id;
+    if (ref.read(currentProfileIdProvider) == null) {
+      ref.read(currentProfileIdProvider.notifier).value = profile.id;
+    }
+    _scheduleRulePrewarm(profile);
   }
 
   Future<void> updateProfiles() async {
@@ -77,11 +104,7 @@ class ProfilesAction extends _$ProfilesAction {
       ref.read(profilesProvider.notifier).put(profile);
       final newProfile = await profile.update();
       ref.read(profilesProvider.notifier).put(newProfile);
-      if (profile.id == ref.read(currentProfileIdProvider)) {
-        ref
-            .read(setupActionProvider.notifier)
-            .applyProfileDebounce(silence: true);
-      }
+      _scheduleRulePrewarm(newProfile);
     } finally {
       ref.read(isUpdatingProvider(profile.updatingKey).notifier).value = false;
     }

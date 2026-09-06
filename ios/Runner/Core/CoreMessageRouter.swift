@@ -29,6 +29,10 @@ final class CoreCallbackResponse<Value>: @unchecked Sendable {
 
 private enum AppCoreMethod: String {
   case initClash
+  case prewarmRuleProvider
+  case publishRuleGeneration
+  case getPreparedRuleGeneration
+  case validateCandidateConfigAtPath
   case getIsInit
   case validateConfig
   case getProfileConfig
@@ -299,7 +303,12 @@ final class CoreMessageRouter {
       guard outstandingAppCalls.count < 72 else {
         throw CoreRoutingError(code: "app_core_busy", message: "app core capacity exhausted")
       }
-      let isSetup = methodCallName(data) == ConfigurationCoreMethod.setupConfig.rawValue
+      let isSetup = {
+        let name = methodCallName(data)
+        return name == ConfigurationCoreMethod.setupConfig.rawValue ||
+          name == AppCoreMethod.prewarmRuleProvider.rawValue ||
+          name == AppCoreMethod.publishRuleGeneration.rawValue
+      }()
       guard !isSetup || !appSetupOutstanding else {
         throw CoreRoutingError(code: "app_core_busy", message: "iOS rule preparation is still running")
       }

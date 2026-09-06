@@ -146,16 +146,18 @@ final class ServiceChannel {
         result(false)
         return
       }
-      tunnelController.start()
-      result(true)
+      tunnelController.start { success in
+        result(success)
+      }
     case "stop":
       rpcCancellationScope.cancelNetworkExtensionRequests { token in
         // Let the routed awaiter publish its real first outcome. Finishing the
         // Flutter response here would overwrite an NE error already in flight.
         rpcTasks[token]?.cancel()
       }
-      tunnelController.stop()
-      result(true)
+      tunnelController.stop { success in
+        result(success)
+      }
     case "init":
       coreEventRelay.drainEventQueue()
       result("")

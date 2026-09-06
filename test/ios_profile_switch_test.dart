@@ -17,18 +17,26 @@ void main() {
   group('subscription switch releases the previous profile', () {
     test('switching a profile is reported as a switch, startup is not', () {
       final manager = source('lib/manager/core_manager.dart');
-      final start = manager.indexOf('ref.listenManual(currentProfileIdProvider');
-      expect(start, greaterThan(-1),
-          reason: 'the profile-id listener must still exist');
+      final start = manager.indexOf(
+        'ref.listenManual(currentProfileIdProvider',
+      );
+      expect(
+        start,
+        greaterThan(-1),
+        reason: 'the profile-id listener must still exist',
+      );
       final body = manager.substring(
         start,
         manager.indexOf('ref.listenManual(updateParamsProvider', start),
       );
 
-      expect(body, contains('fullSetup(profileSwitched: prev != null)'),
-          reason:
-              'a real switch has a previous profile; the first selection at '
-              'startup must not tear anything down');
+      expect(
+        body,
+        contains('fullSetup(profileSwitched: prev != null)'),
+        reason:
+            'a real switch has a previous profile; the first selection at '
+            'startup must not tear anything down',
+      );
     });
 
     test('fullSetup forwards the switch flag into the setup run', () {
@@ -38,47 +46,50 @@ void main() {
       final body = setup.substring(start, setup.indexOf('\n  }', start));
 
       expect(body, contains('bool profileSwitched = false'));
-      expect(body, contains('_runSetup(force: true, profileSwitched: profileSwitched)'));
+      expect(
+        body,
+        contains('_runSetup(force: true, profileSwitched: profileSwitched)'),
+      );
     });
 
-    test('the release happens before the new profile is applied', () {
+    test('preparation does not stop the old tunnel', () {
       final setup = source('lib/providers/actions/setup.dart');
       final signatureAt = setup.indexOf('Future<void> _runSetup(');
-      expect(signatureAt, greaterThan(-1));
-      // The parameter list is multi-line, so the body starts after `async {`:
-      // slicing from the signature would stop at the closing `}) async {`.
       final start = setup.indexOf('async {', signatureAt);
       final body = setup.substring(start, setup.indexOf('\n  }', start));
 
-      final releaseAt = body.indexOf('_releasePreviousProfile()');
       final schedulerAt = body.indexOf('_setupScheduler.run(');
-      expect(releaseAt, greaterThan(-1),
-          reason: 'a switch must release the previous profile');
+      final setupAt = body.indexOf('await _setupConfig(');
       expect(schedulerAt, greaterThan(-1));
-      expect(releaseAt, lessThan(schedulerAt),
-          reason:
-              'releasing after the new config was pushed would hold both '
-              'profiles in memory at the same time -- the peak that has to go');
-      expect(body, contains('if (profileSwitched)'),
-          reason: 'a plain reload must not drop the user\'s connections');
+      expect(setupAt, greaterThan(schedulerAt));
+      expect(body, isNot(contains('setCoreRunning(false)')));
     });
 
-    test('releasing closes the live connections and never blocks the switch',
-        () {
+    test('every running iOS config change is transactional', () {
       final setup = source('lib/providers/actions/setup.dart');
-      final start = setup.indexOf('Future<void> _releasePreviousProfile()');
-      expect(start, greaterThan(-1));
-      final body = setup.substring(start, setup.indexOf('\n  }', start));
+      final start = setup.indexOf('Future<void> commitAndActivate()');
+      final body = setup.substring(start, setup.indexOf('\n        final message =', start));
 
-      expect(body, contains('coreController.closeConnections()'),
-          reason: 'trackers and sockets of the old profile must be dropped');
-      expect(body, contains('try {'));
-      expect(body, contains('catch (error)'),
-          reason:
-              'a core that is not up yet has nothing to release; that must not '
-              'abort the switch');
-      expect(body, contains('coreFailureLogLevel(error)'),
-          reason: 'an expected failure must not be logged as a warning');
+      expect(
+        body,
+        contains('final onlineSwitch = _isRunning;'),
+        reason:
+            'any formal config replacement while the tunnel is running must '
+            'stop, commit, restart, and roll back on failure',
+      );
+      expect(
+        body,
+        isNot(contains('profileSwitched && _isRunning')),
+        reason: 'ordinary online config edits require the same transaction',
+      );
+      final activationAt = body.indexOf('commitAndActivateIOSConfig(');
+      final commitAt = body.indexOf('persistAtomically: _persistConfigAtomically');
+      final stopAt = body.indexOf('stopTunnel: () => setCoreRunning(false)');
+      final startAt = body.indexOf('startTunnel: () async');
+      expect(activationAt, greaterThan(-1));
+      expect(commitAt, greaterThan(activationAt));
+      expect(stopAt, greaterThan(commitAt));
+      expect(startAt, greaterThan(stopAt));
     });
 
     test('a switch is never treated as a redundant reload', () {
@@ -87,17 +98,23 @@ void main() {
       expect(start, greaterThan(-1));
       final body = setup.substring(start, setup.indexOf(';', start));
 
-      expect(body, contains('!profileSwitched'),
-          reason:
-              'two profiles can render identical YAML; the core still has to '
-              'rebuild so the stale providers are closed');
+      expect(
+        body,
+        contains('!profileSwitched'),
+        reason:
+            'two profiles can render identical YAML; the core still has to '
+            'rebuild so the stale providers are closed',
+      );
     });
 
     test('the switch flag is threaded through to _setupConfig', () {
       final setup = source('lib/providers/actions/setup.dart');
       final start = setup.indexOf('Future<_SetupTaskResult> _setupConfig(');
       expect(start, greaterThan(-1));
-      final signature = setup.substring(start, setup.indexOf('}) async {', start));
+      final signature = setup.substring(
+        start,
+        setup.indexOf('}) async {', start),
+      );
 
       expect(signature, contains('bool profileSwitched = false'));
     });

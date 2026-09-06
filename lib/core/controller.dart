@@ -1,9 +1,13 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/core/core.dart';
 import 'package:fl_clash/core/interface.dart';
+import 'package:fl_clash/core/rule_generation_preparer.dart';
+import 'package:fl_clash/core/rule_preparation_scheduler.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:flutter/foundation.dart' show visibleForTesting;
@@ -94,40 +98,134 @@ class CoreController {
     return _interface.updateConfig(updateParams);
   }
 
+  Future<String> applyFormalConfig(SetupParams params) {
+    return _interface.setupConfig(params);
+  }
+
+  Future<RuleGenerationPreparation> prepareRuleGeneration({
+    required String config,
+    required int profileId,
+  }) {
+    return RuleGenerationPreparer(
+      core: _interface,
+    ).prepare(profileId: profileId, config: config);
+  }
+
+  Future<RuleGenerationPreparation?> getPreparedRuleGeneration({
+    required String config,
+    required int profileId,
+  }) {
+    return RuleGenerationPreparer(
+      core: _interface,
+    ).findPrepared(profileId: profileId, config: config);
+  }
+
   Future<String> setupConfig({
     required SetupParams params,
     Future<void> Function()? preloadInvoke,
+    Future<void> Function(String preparedConfig)? persistPreparedConfig,
+    String? preparationConfig,
+    int? preparationProfileId,
+    @visibleForTesting
+    Future<RuleGenerationPreparation> Function({
+      required String config,
+      required int profileId,
+    })? prepareRuleGenerationOverride,
     @visibleForTesting bool? prepareBeforePreload,
     @visibleForTesting
     Duration rulePreparationTimeout = const Duration(seconds: 60),
   }) async {
-    if (preloadInvoke == null) {
+    final prepareFirst = prepareBeforePreload ?? system.isIOS;
+    String? candidateConfigPath;
+    Future<String> preparation() async {
+      final config = preparationConfig;
+      final profileId = preparationProfileId;
+      if (prepareFirst && config != null && profileId != null) {
+        try {
+          final prepareOperation =
+              prepareRuleGenerationOverride ?? prepareRuleGeneration;
+          final prepared = await prepareOperation(
+            config: config,
+            profileId: profileId,
+          );
+          candidateConfigPath = prepared.configPath;
+          await persistPreparedConfig?.call(prepared.config);
+          return '';
+        } on Object catch (error) {
+          return error.toString();
+        }
+      }
       return _interface.setupConfig(params);
     }
-    if (prepareBeforePreload ?? system.isIOS) {
-      // NECore is fail-closed when any rule provider is not ready. Let the
-      // Runner core fetch raw providers and publish their MRS sidecars before
-      // starting the extension; parallel startup made first launch depend on
-      // which process reached the provider files first.
-      final timeoutLabel = rulePreparationTimeout.inMilliseconds % 1000 == 0
-          ? '${rulePreparationTimeout.inSeconds}s'
-          : '${rulePreparationTimeout.inMilliseconds}ms';
-      final result = await _interface.setupConfig(params).timeout(
-        rulePreparationTimeout,
-        onTimeout: () =>
-            'iOS rule preparation timed out after $timeoutLabel; '
-            'network extension was not started',
-      );
-      if (result.isNotEmpty) {
-        return result;
+
+    Future<String> prepare() {
+      final config = preparationConfig;
+      final profileId = preparationProfileId;
+      if (config == null || profileId == null) {
+        return preparation();
       }
-      await preloadInvoke();
+      final fingerprint = sha256.convert(utf8.encode(config)).toString();
+      return rulePreparationScheduler.prepare(
+        jsonEncode({'profile-id': profileId, 'fingerprint': fingerprint}),
+        preparation,
+      );
+    }
+
+    if (!prepareFirst) {
+      if (preloadInvoke == null) {
+        return preparation();
+      }
+      final (result, _) = await (preparation(), preloadInvoke()).wait;
       return result;
     }
-    final (result, _) = await (
-      _interface.setupConfig(params),
-      preloadInvoke(),
-    ).wait;
+
+    final isolatedPreparation =
+        prepareFirst &&
+        preparationConfig != null &&
+        preparationProfileId != null;
+    // Every iOS waiter is bounded, including a background call without a
+    // preload callback. A connect can still reuse the same in-flight future.
+    final timeoutLabel = rulePreparationTimeout.inMilliseconds % 1000 == 0
+        ? '${rulePreparationTimeout.inSeconds}s'
+        : '${rulePreparationTimeout.inMilliseconds}ms';
+    var result = await prepare().timeout(
+      rulePreparationTimeout,
+      onTimeout: () =>
+          'iOS rule preparation timed out after $timeoutLabel; '
+          'network extension was not started',
+    );
+    if (result.isEmpty && isolatedPreparation && candidateConfigPath == null) {
+      try {
+        final prepared = await getPreparedRuleGeneration(
+          config: preparationConfig,
+          profileId: preparationProfileId,
+        );
+        if (prepared == null) {
+          result = 'prepared config path is missing';
+        } else {
+          candidateConfigPath = prepared.configPath;
+          await persistPreparedConfig?.call(prepared.config);
+        }
+      } on Object catch (error) {
+        result = error.toString();
+      }
+    }
+    if (isolatedPreparation && preloadInvoke != null) {
+      // The isolated stage only publishes immutable artifacts. Runner must
+      // still admit the prepared config and publish the NE runtime readiness
+      // manifest before the extension starts. This pass is local-only because
+      // every HTTP provider now references the prepared generation.
+      final path = candidateConfigPath;
+      if (path == null || path.isEmpty) {
+        result = 'prepared config path is missing';
+      } else {
+        result = await _interface.validateCandidateConfigAtPath(path);
+      }
+    }
+    if (result.isNotEmpty) {
+      return result;
+    }
+    await preloadInvoke?.call();
     return result;
   }
 

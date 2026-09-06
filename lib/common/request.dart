@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
 import 'package:fl_clash/common/common.dart';
@@ -11,12 +12,30 @@ import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/state.dart';
 import 'package:flutter/cupertino.dart';
 
+const _ruleProviderHardLimit = 32 * 1024 * 1024;
+
+class RuleProviderFileDownload {
+  final String path;
+  final int length;
+  final String sha256;
+  final Headers headers;
+
+  const RuleProviderFileDownload({
+    required this.path,
+    required this.length,
+    required this.sha256,
+    required this.headers,
+  });
+}
+
 class Request {
   late final Dio dio;
   late final Dio _clashDio;
+  final Dio Function()? _ruleProviderDioFactory;
   String? userAgent;
 
-  Request() {
+  Request({Dio Function()? ruleProviderDioFactory})
+    : _ruleProviderDioFactory = ruleProviderDioFactory {
     dio = Dio(BaseOptions(headers: {'User-Agent': browserUa}));
     _clashDio = Dio();
     _clashDio.httpClientAdapter = IOHttpClientAdapter(
@@ -31,6 +50,117 @@ class Request {
         return client;
       },
     );
+  }
+
+  Future<RuleProviderFileDownload> downloadRuleProviderToFile({
+    required String url,
+    required Map<String, String> headers,
+    required int sizeLimit,
+    required String destinationPath,
+  }) async {
+    if (sizeLimit <= 0) {
+      throw ArgumentError.value(sizeLimit, 'sizeLimit', 'must be positive');
+    }
+    final effectiveLimit = sizeLimit > _ruleProviderHardLimit
+        ? _ruleProviderHardLimit
+        : sizeLimit;
+    final dio =
+        _ruleProviderDioFactory?.call() ??
+        Dio(
+          BaseOptions(
+            connectTimeout: const Duration(seconds: 10),
+            receiveTimeout: const Duration(seconds: 30),
+          ),
+        );
+    if (_ruleProviderDioFactory == null) {
+      dio.httpClientAdapter = IOHttpClientAdapter(
+        createHttpClient: () => HttpClient()..findProxy = (_) => 'DIRECT',
+      );
+    }
+    final cancelToken = CancelToken();
+    final destination = File(destinationPath);
+    IOSink? sink;
+    var completed = false;
+    Object? pendingError;
+    StackTrace? pendingStack;
+    RuleProviderFileDownload? result;
+    try {
+      final response = await dio.get<ResponseBody>(
+        url,
+        cancelToken: cancelToken,
+        options: Options(headers: headers, responseType: ResponseType.stream),
+      );
+      final body = response.data;
+      final contentLength = int.tryParse(
+        response.headers.value(Headers.contentLengthHeader) ?? '',
+      );
+      if (contentLength != null && contentLength > effectiveLimit) {
+        cancelToken.cancel('rule provider exceeds size-limit');
+        throw StateError('rule provider exceeds size-limit');
+      }
+
+      await destination.parent.create(recursive: true);
+      final outputSink = destination.openWrite(mode: FileMode.writeOnly);
+      sink = outputSink;
+      final digestSink = SingleValueSink<Digest>();
+      final hashSink = sha256.startChunkedConversion(digestSink);
+      var hashClosed = false;
+      try {
+        var received = 0;
+        await for (final chunk
+            in body?.stream ?? const Stream<Uint8List>.empty()) {
+          received += chunk.length;
+          if (received > effectiveLimit) {
+            cancelToken.cancel('rule provider exceeds size-limit');
+            throw StateError('rule provider exceeds size-limit');
+          }
+          outputSink.add(chunk);
+          hashSink.add(chunk);
+          await outputSink.flush();
+        }
+        hashSink.close();
+        hashClosed = true;
+        await outputSink.flush();
+        await outputSink.close();
+        sink = null;
+        completed = true;
+        result = RuleProviderFileDownload(
+          path: destination.path,
+          length: received,
+          sha256: digestSink.value.toString(),
+          headers: response.headers,
+        );
+      } finally {
+        if (!hashClosed) hashSink.close();
+      }
+    } catch (error, stack) {
+      pendingError = error;
+      pendingStack = stack;
+      final activeSink = sink;
+      if (activeSink != null) {
+        try {
+          await activeSink.close();
+        } catch (_) {}
+        sink = null;
+      }
+    } finally {
+      if (!completed && await destination.exists()) {
+        try {
+          await destination.delete();
+        } catch (cleanupError, cleanupStack) {
+          if (pendingError == null) {
+            pendingError = cleanupError;
+            pendingStack = cleanupStack;
+          }
+        }
+      }
+      dio.close(force: true);
+    }
+    if (pendingError != null) {
+      Error.throwWithStackTrace(pendingError, pendingStack!);
+    }
+    if (result != null) return result;
+    throw StateError('rule provider download did not complete');
   }
 
   Future<Response<Uint8List>> getFileResponseForUrl(String url) async {

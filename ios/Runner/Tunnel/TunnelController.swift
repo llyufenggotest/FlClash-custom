@@ -106,12 +106,16 @@ final class TunnelController {
     coordinator.requestStatusRefresh(notifyExternal: false)
   }
 
-  func start() {
-    coordinator.submitTunnelRequest(target: .running)
+  func start(completion: ((Bool) -> Void)? = nil) {
+    coordinator.submitTunnelRequest(target: .running) { state in
+      completion?(state == .running)
+    }
   }
 
-  func stop() {
-    coordinator.submitTunnelRequest(target: .stopped)
+  func stop(completion: ((Bool) -> Void)? = nil) {
+    coordinator.submitTunnelRequest(target: .stopped) { state in
+      completion?(state == .stopped)
+    }
   }
 
   func toggle(notifyExternal: Bool) {

@@ -94,6 +94,14 @@ Future<VM2<String, String>> makeRealProfileTask(
 Future<VM2<String, String>> _makeRealProfileTask(
   MakeRealProfileState data,
 ) async {
+  return makeRealProfileTaskForPlatform(data, isIOS: system.isIOS);
+}
+
+@visibleForTesting
+Future<VM2<String, String>> makeRealProfileTaskForPlatform(
+  MakeRealProfileState data, {
+  required bool isIOS,
+}) async {
   final rawConfig = Map.from(data.rawConfig);
   final realPatchConfig = data.realPatchConfig;
   final profilesPath = data.profilesPath;
@@ -148,7 +156,7 @@ Future<VM2<String, String>> _makeRealProfileTask(
   rawConfig['tun']['endpoint-independent-nat'] =
       realPatchConfig.tun.endpointIndependentNat;
   rawConfig['geodata-loader'] = realPatchConfig.geodataLoader.name;
-  if (system.isIOS) {
+  if (isIOS) {
     rawConfig['geosite-matcher'] = GeositeMatcher.succinct.name;
   } else {
     rawConfig['geosite-matcher'] = realPatchConfig.geositeMatcher.name;
@@ -179,7 +187,7 @@ Future<VM2<String, String>> _makeRealProfileTask(
       }
     }
   }
-  if (rawConfig['rule-providers'] != null) {
+  if (!isIOS && rawConfig['rule-providers'] != null) {
     final ruleProviders = rawConfig['rule-providers'] as Map;
     for (final key in ruleProviders.keys) {
       final ruleProvider = ruleProviders[key];
@@ -287,11 +295,22 @@ Future<VM2<String, String>> _makeRealProfileTask(
   }
   rawConfig['rules'] = rules;
   Map<String, dynamic> finalConfig = Map<String, dynamic>.from(rawConfig);
-  if (system.isIOS) {
+  if (isIOS) {
     // Applied last so it also covers keys written above. The Network Extension
     // budget and its lack of inbound consumers make these edits mandatory; see
     // lib/common/ios_profile_budget.dart for the per-key rationale.
     finalConfig = sanitizeProfileForIOS(finalConfig);
+  }
+
+  if (isIOS) {
+    final ruleProviders = finalConfig['rule-providers'];
+    if (ruleProviders is Map) {
+      for (final provider in ruleProviders.values) {
+        if (provider is Map && provider['type'] == 'http') {
+          provider.remove('path');
+        }
+      }
+    }
   }
   final yaml = await _encodeYaml(finalConfig);
   return VM2(yaml, yaml.toMd5());

@@ -19,7 +19,7 @@ dependencies:
   window_manager:
     git:
       url: https://github.com/chenx-dust/window_manager.git
-      ref: main
+      ref: f0b9f1b93a717108412a0f9565ef4319b79fbdac
       path: packages/window_manager
   dynamic_color: ^1.8.1
   proxy:
@@ -78,6 +78,7 @@ dependencies:
   flutter_cache_manager: ^3.4.1
   crypto: ^3.0.3
   xml: ^6.6.1
+  yaml: ^3.1.3
   yaml_writer:
     git:
       url: https://github.com/chen08209/yaml_writer
@@ -108,7 +109,6 @@ dev_dependencies:
   test: ^1.31.0
   mocktail: ^1.0.4
   path_provider_platform_interface: ^2.1.3
-  yaml: ^3.1.3
 
 flutter:
   uses-material-design: true

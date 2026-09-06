@@ -59,6 +59,56 @@ void main() {
     expect(coordinator, contains('settle still pending after timeout'));
   });
 
+  test('start waits through reasserting for stable connected', () {
+    final types = source('ios/Runner/Tunnel/TunnelTypes.swift');
+    final coordinator = source('ios/Runner/Tunnel/TunnelCoordinator.swift');
+
+    expect(types, contains('var isStableConnected: Bool'));
+    expect(types, contains('self == .connected'));
+    expect(types, contains('case .connected, .reasserting:'));
+
+    final consumeStart = coordinator.indexOf('case .starting:');
+    final consumeEnd = coordinator.indexOf('case .stopping:', consumeStart);
+    final consumeBody = coordinator.substring(consumeStart, consumeEnd);
+    expect(consumeBody, contains('status.isStableConnected'));
+    expect(consumeBody, isNot(contains('status.tunnelState == .running')));
+
+    final reconcileStart = coordinator.indexOf('private func reconcileRunningTunnel');
+    final reconcileEnd = coordinator.indexOf('private func settleBeforeStart');
+    final reconcileBody = coordinator.substring(reconcileStart, reconcileEnd);
+    expect(reconcileBody, contains('status.isStableConnected'));
+    expect(reconcileBody, contains('preparedStatus.isStableConnected'));
+    expect(reconcileBody, contains('status == .reasserting'));
+    expect(reconcileBody, contains('preparedStatus == .reasserting'));
+    expect(reconcileBody, isNot(contains('status.tunnelState == .running')));
+    expect(reconcileBody, isNot(contains('preparedStatus.tunnelState == .running')));
+  });
+
+  test('reasserting disconnect and timeout never report start success', () {
+    final coordinator = source('ios/Runner/Tunnel/TunnelCoordinator.swift');
+    final start = coordinator.indexOf('case .starting:');
+    final end = coordinator.indexOf('case .stopping:', start);
+    final body = coordinator.substring(start, end);
+
+    expect(body, contains('if status.isStableConnected'));
+    expect(body, contains('wait.hasObservedProgress = true'));
+    expect(body, contains('status.isTerminal && wait.hasObservedProgress'));
+
+    final timeoutStart = coordinator.indexOf('case .timeout(let status):');
+    final timeoutEnd = coordinator.indexOf('case .superseded:', timeoutStart);
+    final timeoutBody = coordinator.substring(timeoutStart, timeoutEnd);
+    expect(timeoutBody, isNot(contains('actualState: .running')));
+    expect(timeoutBody, contains('actualState: nil'));
+    expect(coordinator, contains('private func runningFailureState('));
+    expect(coordinator, contains('if status.isStableConnected'));
+    expect(coordinator, contains('if status.isTerminal'));
+    expect(
+      coordinator,
+      contains('? runningFailureState(status)'),
+      reason: 'a thrown start error while reasserting must remain unknown',
+    );
+  });
+
   test('extension has process-local resource heartbeat', () {
     final heartbeat = source('ios/NECore/NativeResourceHeartbeat.swift');
     final provider = source('ios/NECore/PacketTunnelProvider.swift');

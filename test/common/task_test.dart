@@ -7,6 +7,29 @@ import 'package:yaml/yaml.dart';
 
 int _double(int value) => value * 2;
 
+Future<YamlMap> _renderRuleGeneration({
+  required int profileId,
+  required Map<String, dynamic> rawConfig,
+  required bool isIOS,
+}) async {
+  final result = await makeRealProfileTaskForPlatform(
+    MakeRealProfileState(
+      profilesPath: '/profiles',
+      profileId: profileId,
+      rawConfig: rawConfig,
+      realPatchConfig: const PatchClashConfig(),
+      overrideDns: false,
+      appendSystemDns: false,
+      proxyGroups: const [],
+      rules: const [],
+      addedRules: const [],
+      defaultUA: 'FlClash-Test',
+    ),
+    isIOS: isIOS,
+  );
+  return loadYaml(result.a) as YamlMap;
+}
+
 void main() {
   test('encoding helpers round-trip structured data', () async {
     final encoded = await encodeJSONTask({
@@ -155,8 +178,12 @@ void main() {
       );
       expect(
         config['rule-providers']['remote']['path'],
-        startsWith(
-          '${p.join('/profiles', 'providers', '7', 'rules')}${p.separator}',
+        p.join(
+          '/profiles',
+          'providers',
+          '7',
+          'rules',
+          '12f4ca856aba6e53ccd0be8dab34f61b',
         ),
       );
       expect(config['rules'], [
@@ -202,6 +229,60 @@ void main() {
     expect(config['proxy-groups'], hasLength(1));
     expect(config['rules'], ['DOMAIN,custom.example,DIRECT']);
   });
+
+  test(
+    'non-iOS HTTP rule provider uses the stable generated cache path',
+    () async {
+      final config = await _renderRuleGeneration(
+        profileId: 7,
+        isIOS: false,
+        rawConfig: {
+          'rule-providers': {
+            'remote': {
+              'type': 'http',
+              'url': 'https://example.com/rules.yaml',
+              'path': '/legacy/mutable/cache',
+            },
+            'file': {'type': 'file', 'path': './local.yaml'},
+          },
+        },
+      );
+
+      expect(
+        config['rule-providers']['remote']['path'],
+        p.join(
+          '/profiles',
+          'providers',
+          '7',
+          'rules',
+          'ee21988719b19e31d10c5523eb6f6957',
+        ),
+      );
+      expect(config['rule-providers']['file']['path'], './local.yaml');
+    },
+  );
+
+  test(
+    'effective HTTP provider YAML contains no generated cache path',
+    () async {
+      final config = await _renderRuleGeneration(
+        profileId: 7,
+        isIOS: true,
+        rawConfig: {
+          'rule-providers': {
+            'remote': {
+              'type': 'http',
+              'url': 'https://example.com/rules.yaml',
+              'path': '/legacy/mutable/cache',
+            },
+          },
+        },
+      );
+      final provider = config['rule-providers']['remote'] as YamlMap;
+      expect(provider['url'], 'https://example.com/rules.yaml');
+      expect(provider['path'], isNull);
+    },
+  );
 
   test('log and list tasks produce stable mapped output', () async {
     final logs = [

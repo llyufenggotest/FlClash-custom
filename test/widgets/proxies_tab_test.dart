@@ -254,11 +254,7 @@ void main() {
     tester,
   ) async {
     globalContainer.read(groupsProvider.notifier).value = [
-      const Group(
-        type: GroupType.Selector,
-        name: 'A',
-        now: 'Node A',
-      ),
+      const Group(type: GroupType.Selector, name: 'A', now: 'Node A'),
     ];
 
     await tester.pumpWidget(const _TestApp(child: SizedBox()));
@@ -268,6 +264,7 @@ void main() {
         .read(proxiesActionProvider.notifier)
         .changeProxy(groupName: 'A', proxyName: 'Node A');
     await tester.pump();
+    await tester.pump(const Duration(milliseconds: 1));
 
     verify(
       () => coreHandler.changeProxy(

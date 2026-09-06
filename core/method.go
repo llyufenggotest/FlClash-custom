@@ -130,6 +130,49 @@ func handleMethodCall(call *MethodCall, response MethodResponse) {
 		}
 		response.success(handleUpdateConfig(&params))
 		return
+	case prewarmRuleProviderMethod:
+		params := PrewarmRuleProviderParams{}
+		if !decodeMethodArguments(call, response, &params) {
+			return
+		}
+		result, err := handlePrewarmRuleProvider(&params)
+		if err != nil {
+			response.failure("core_error", err.Error(), nil)
+			return
+		}
+		response.success(result)
+		return
+	case publishRuleGenerationMethod:
+		params := PublishRuleGenerationParams{}
+		if !decodeMethodArguments(call, response, &params) {
+			return
+		}
+		result, err := handlePublishRuleGeneration(&params)
+		if err != nil {
+			response.failure("core_error", err.Error(), nil)
+			return
+		}
+		response.success(result)
+		return
+	case getPreparedRuleGenerationMethod:
+		params := GetPreparedRuleGenerationParams{}
+		if !decodeMethodArguments(call, response, &params) {
+			return
+		}
+		result, err := handleGetPreparedRuleGeneration(params.ProfileID, params.Fingerprint)
+		if err != nil {
+			response.failure("core_error", err.Error(), nil)
+			return
+		}
+		response.success(result)
+		return
+	case validateCandidateConfigAtPathMethod:
+		params := ValidateCandidateConfigParams{}
+		if !decodeMethodArguments(call, response, &params) {
+			return
+		}
+		response.success(handleValidateCandidateConfig(&params))
+		return
 	case setupConfigMethod:
 		params := defaultSetupParams()
 		if !decodeMethodArguments(call, response, params) {

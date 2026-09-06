@@ -39,30 +39,6 @@ class SetupAction extends _$SetupAction {
     ref.read(requestsProvider.notifier).value = FixedList(500);
   }
 
-  /// Tears down everything the previous subscription owned before the new one
-  /// is applied ("single core" switch).
-  ///
-  /// Keeping the old connections alive across a switch is not just untidy: the
-  /// trackers, socket buffers and the outgoing sockets themselves stay charged
-  /// to the process, and on iOS that lands straight in the jetsam budget at the
-  /// exact moment the new profile is being parsed -- the peak that showed up as
-  /// footprint 42-48MB in the tester trace. Dropping them first also makes the
-  /// switch behave the way it reads to the user: tapping another subscription
-  /// stops using the old nodes immediately instead of draining in the
-  /// background.
-  Future<void> _releasePreviousProfile() async {
-    try {
-      await coreController.closeConnections();
-    } catch (error) {
-      // A core that is not up yet has nothing to release; never let this block
-      // the switch itself.
-      commonPrint.log(
-        'release previous profile ===> $error',
-        logLevel: coreFailureLogLevel(error),
-      );
-    }
-  }
-
   void _setLocalRunning(bool running) {
     foregroundTicker.unregister(_updateTickerTag);
     if (!running) {
@@ -176,7 +152,10 @@ class SetupAction extends _$SetupAction {
       if (request.running && ref.read(suspendProvider)) {
         return;
       }
-      await setCoreRunning(request.running);
+      final running = await setCoreRunning(request.running);
+      if (system.isIOS && request.running && !running) {
+        throw StateError('iOS tunnel did not start');
+      }
     });
   }
 
@@ -250,6 +229,46 @@ class SetupAction extends _$SetupAction {
     });
   }
 
+  @protected
+  bool get rulePrewarmEnabled => system.isIOS;
+
+  /// Builds the final profile YAML and asks the Runner core to prepare only its
+  /// rule-provider artifacts. The active config and Network Extension are not
+  /// touched.
+  Future<bool> prewarmProfile(Profile profile) async {
+    if (!rulePrewarmEnabled) {
+      return false;
+    }
+    final setupState = await ref.read(setupStateProvider(profile.id).future);
+    final patchConfig = ref.read(patchClashConfigProvider);
+    final rendered = await getProfile(
+      setupState: setupState,
+      patchConfig: patchConfig,
+    );
+    if (rendered.a.isEmpty) {
+      return false;
+    }
+    final parsed = loadYaml(rendered.a);
+    final ruleProviders = parsed is YamlMap ? parsed['rule-providers'] : null;
+    final hasExternalRuleProvider =
+        ruleProviders is YamlMap &&
+        ruleProviders.values.any(
+          (value) => value is YamlMap && value['type'] != 'inline',
+        );
+    if (!hasExternalRuleProvider) {
+      return false;
+    }
+    final result = await coreController.setupConfig(
+      params: _setupParams,
+      preparationConfig: rendered.a,
+      preparationProfileId: profile.id,
+    );
+    if (result.isNotEmpty) {
+      throw result;
+    }
+    return true;
+  }
+
   Future<void> applyProfile({
     bool silence = false,
     bool force = false,
@@ -268,11 +287,8 @@ class SetupAction extends _$SetupAction {
     bool profileSwitched = false,
     Future<void> Function()? preloadInvoke,
   }) async {
-    if (profileSwitched) {
-      await _releasePreviousProfile();
-    }
-    final result = await _setupScheduler.run(() {
-      return _setupConfig(
+    final result = await _setupScheduler.run(() async {
+      final setupResult = await _setupConfig(
         force: force,
         silence: silence,
         profileSwitched: profileSwitched,
@@ -282,6 +298,7 @@ class SetupAction extends _$SetupAction {
           await ref.read(providersProvider.notifier).syncProviders();
         },
       );
+      return setupResult;
     });
     if (result != _SetupTaskResult.handoffToCoreRestart) {
       return;
@@ -407,6 +424,20 @@ class SetupAction extends _$SetupAction {
     }
   }
 
+  Future<void> _persistConfigAtomically(String path, String config) async {
+    final target = File(path);
+    await target.parent.create(recursive: true);
+    final temporary = File(
+      '$path.tmp.$pid.${DateTime.now().microsecondsSinceEpoch}',
+    );
+    try {
+      await temporary.writeAsString(config, flush: true);
+      await temporary.rename(path);
+    } finally {
+      await temporary.safeDelete();
+    }
+  }
+
   Future<_SetupTaskResult> _setupConfig({
     bool force = false,
     bool silence = false,
@@ -445,14 +476,15 @@ class SetupAction extends _$SetupAction {
     // remote rule-providers re-fetched. During that window the extension stops
     // answering provider messages, which surfaced as
     // `network_extension_timeout` dialogs and an empty proxies page.
-    final appliedMd5 = globalState.lastConfigMd5 ??
-        await preferences.getAppliedConfigMd5();
+    final appliedMd5 =
+        globalState.lastConfigMd5 ?? await preferences.getAppliedConfigMd5();
     // A restarted extension self-loads this file in `quickSetup`, so skipping
     // the push is safe only while the file on disk still holds this exact YAML.
     // Checking the content, not just existence, also covers the case where the
     // extension came back as a fresh process after the app was killed.
     final configFile = File(await appPath.configFilePath);
-    final diskMatches = await configFile.exists() &&
+    final diskMatches =
+        await configFile.exists() &&
         (await configFile.readAsString()).toMd5() == yamlMd5;
     final matchesAppliedConfig = yamlMd5 == appliedMd5 && diskMatches;
     // A forced apply is normally honoured because on Android and desktop the
@@ -462,7 +494,8 @@ class SetupAction extends _$SetupAction {
     // A subscription switch is never skipped: the YAML is expected to differ,
     // and if two profiles happen to render identical YAML the core still has to
     // rebuild so the stale providers get closed.
-    final skipRedundantReload = !profileSwitched &&
+    final skipRedundantReload =
+        !profileSwitched &&
         matchesAppliedConfig &&
         (!force || (system.isIOS && _isRunning));
     if (skipRedundantReload) {
@@ -488,16 +521,61 @@ class SetupAction extends _$SetupAction {
     await globalState.loadingRun(
       () async {
         final configFilePath = await appPath.configFilePath;
-        await File(configFilePath).safeWriteAsString(yamlString);
+        String? preparedConfig;
+
+        if (!system.isIOS) {
+          await File(configFilePath).safeWriteAsString(yamlString);
+        }
+
+        Future<void> commitAndActivate() async {
+          final config = preparedConfig;
+          if (config == null) {
+            throw StateError('iOS prepared config is missing after validation');
+          }
+
+          final onlineSwitch = _isRunning;
+          await commitAndActivateIOSConfig(
+            configPath: configFilePath,
+            config: config,
+            oldTunnelWasRunning: onlineSwitch,
+            persistAtomically: _persistConfigAtomically,
+            stopTunnel: () => setCoreRunning(false),
+            startTunnel: () async {
+              if (onlineSwitch) {
+                return setCoreRunning(true);
+              }
+              if (preloadInvoke != null) {
+                await preloadInvoke();
+                return true;
+              }
+              final applyMessage = await coreController.applyFormalConfig(
+                _setupParams,
+              );
+              if (applyMessage.isNotEmpty) {
+                throw applyMessage;
+              }
+              return true;
+            },
+          );
+
+        }
+
         final message = await coreController.setupConfig(
           params: _setupParams,
-          preloadInvoke: preloadInvoke,
+          preloadInvoke: system.isIOS ? commitAndActivate : preloadInvoke,
+          persistPreparedConfig: (config) async {
+            preparedConfig = config;
+          },
+          preparationConfig: yamlString,
+          preparationProfileId: profile?.id,
         );
         if (message.isNotEmpty && !message.endsWith('is empty')) {
           throw message;
         }
-        globalState.lastConfigMd5 = yamlMd5;
-        await preferences.setAppliedConfigMd5(yamlMd5);
+        final appliedYaml = await File(configFilePath).readAsString();
+        final appliedYamlMd5 = appliedYaml.toMd5();
+        globalState.lastConfigMd5 = appliedYamlMd5;
+        await preferences.setAppliedConfigMd5(appliedYamlMd5);
         ref.read(checkIpNumProvider.notifier).add();
         await onUpdated?.call();
       },
