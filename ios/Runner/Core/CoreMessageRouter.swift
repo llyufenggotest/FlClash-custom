@@ -59,6 +59,7 @@ final class CoreMessageRouter {
   private let tunnelController: TunnelController
   private var currentRoute = CoreRoute.app
   private var outstandingAppCalls = Set<UUID>()
+  private var appSetupOutstanding = false
   private lazy var notificationCoordinator = CoreNotificationCoordinator(
     sendMessage: { [weak self] data, route in
       guard let self else {
@@ -84,7 +85,10 @@ final class CoreMessageRouter {
     notificationCoordinator.setDesiredRoute(currentRoute)
   }
 
-  func invoke(_ data: Data) async -> String {
+  func invoke(
+    _ data: Data,
+    onRouteSelected: (CoreRoute) -> Void = { _ in }
+  ) async -> String {
     let method = methodCallName(data)
     let action = notificationCoordinator.action(for: data)
     do {
@@ -97,7 +101,8 @@ final class CoreMessageRouter {
         return try await sendNotificationStop(
           data,
           kind: kind,
-          defaultRoute: selectedRoute
+          defaultRoute: selectedRoute,
+          onRouteSelected: onRouteSelected
         )
       }
 
@@ -108,7 +113,8 @@ final class CoreMessageRouter {
         let response = try await sendConfigurationMessage(
           data,
           method: configurationMethod,
-          networkExtensionActive: networkExtensionActive
+          networkExtensionActive: networkExtensionActive,
+          onRouteSelected: onRouteSelected
         )
         routedResult = (
           response,
@@ -120,7 +126,8 @@ final class CoreMessageRouter {
           selectedRoute: route(
             method: method,
             defaultRoute: selectedRoute
-          )
+          ),
+          onRouteSelected: onRouteSelected
         )
       }
       if case .start(let kind) = action,
@@ -173,9 +180,11 @@ final class CoreMessageRouter {
 
   private func sendRoutedCoreMessage(
     _ data: Data,
-    selectedRoute: CoreRoute
+    selectedRoute: CoreRoute,
+    onRouteSelected: (CoreRoute) -> Void
   ) async throws -> (response: String, route: CoreRoute) {
     // Failure of the selected NE is not permission to mutate/read App core.
+    onRouteSelected(selectedRoute)
     let response = try await sendCoreMessage(data, route: selectedRoute)
     return (response, selectedRoute)
   }
@@ -183,7 +192,8 @@ final class CoreMessageRouter {
   private func sendNotificationStop(
     _ data: Data,
     kind: CoreNotificationKind,
-    defaultRoute: CoreRoute
+    defaultRoute: CoreRoute,
+    onRouteSelected: (CoreRoute) -> Void
   ) async throws -> String {
     let routes = notificationCoordinator.beginStop(
       kind,
@@ -196,6 +206,7 @@ final class CoreMessageRouter {
 
     for route in routes {
       do {
+        onRouteSelected(route)
         let response = try await sendCoreMessage(data, route: route)
         guard methodResponseSucceeded(response) else {
           if failedResponse == nil {
@@ -235,7 +246,8 @@ final class CoreMessageRouter {
   private func sendConfigurationMessage(
     _ data: Data,
     method: ConfigurationCoreMethod,
-    networkExtensionActive: Bool
+    networkExtensionActive: Bool,
+    onRouteSelected: (CoreRoute) -> Void
   ) async throws -> String {
     let appData: Data
     if networkExtensionActive && method == .updateConfig {
@@ -248,6 +260,7 @@ final class CoreMessageRouter {
       appData = data
     }
 
+    onRouteSelected(.app)
     let appResponse = try await sendCoreMessage(appData, route: .app)
     guard networkExtensionActive,
       currentRoute == .networkExtension,
@@ -263,6 +276,7 @@ final class CoreMessageRouter {
         with: false
       )
       : data
+    onRouteSelected(.networkExtension)
     return try await sendCoreMessage(
       networkExtensionData,
       route: .networkExtension
@@ -285,16 +299,24 @@ final class CoreMessageRouter {
       guard outstandingAppCalls.count < 72 else {
         throw CoreRoutingError(code: "app_core_busy", message: "app core capacity exhausted")
       }
+      let isSetup = methodCallName(data) == ConfigurationCoreMethod.setupConfig.rawValue
+      guard !isSetup || !appSetupOutstanding else {
+        throw CoreRoutingError(code: "app_core_busy", message: "iOS rule preparation is still running")
+      }
       let token = UUID()
       let state = CoreCallbackResponse<String?>()
       let response: String? = try await withTaskCancellationHandler(operation: {
         try Task.checkCancellation()
         return try await withCheckedThrowingContinuation { continuation in
           state.install(continuation) {
+            if isSetup { appSetupOutstanding = true }
             outstandingAppCalls.insert(token)
             IOSCoreBridge.invokeMethod(methodCall) { [weak self] value in
               state.resolve(.success(value))
-              Task { @MainActor in self?.outstandingAppCalls.remove(token) }
+              Task { @MainActor in
+                self?.outstandingAppCalls.remove(token)
+                if isSetup { self?.appSetupOutstanding = false }
+              }
             }
           }
         }

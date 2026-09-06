@@ -4,19 +4,22 @@ import NetworkExtension
 import UIKit
 import os
 
+// BEGIN RPC LIFECYCLE UNIT
+final class ProviderMessageWaiter {
+  private var resumed = false
+  var cancel: (() -> Void)?
+
+  func finish(_ action: () -> Void) {
+    guard !resumed else { return }
+    resumed = true
+    cancel = nil
+    action()
+  }
+}
+// END RPC LIFECYCLE UNIT
+
 @MainActor
 final class TunnelController {
-  private final class ProviderMessageWaiter {
-    private var resumed = false
-    var cancel: (() -> Void)?
-
-    func finish(_ action: () -> Void) {
-      guard !resumed else { return }
-      resumed = true
-      cancel = nil
-      action()
-    }
-  }
 
   private let sharedStateStore: SharedStateStore
   private let managerStore: TunnelManagerStore

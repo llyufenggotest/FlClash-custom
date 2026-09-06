@@ -20,6 +20,7 @@ with tempfile.TemporaryDirectory(prefix='ios-rpc-') as directory:
     # Extract verbatim production state units, not a test transport model.
     units = []
     for path in ['ios/Runner/ServiceChannel.swift', 'ios/Runner/Core/CoreMessageRouter.swift',
+                 'ios/Runner/Tunnel/TunnelController.swift',
                  'ios/NECore/PacketTunnelProvider.swift']:
         source = (root / path).read_text(encoding='utf-8')
         units.append(source.split('// BEGIN RPC LIFECYCLE UNIT', 1)[1].split('// END RPC LIFECYCLE UNIT', 1)[0])

@@ -14,6 +14,33 @@ struct LifecycleTests {
     stopped.finish("deadline")
     precondition(cancellationReplies == 1)
 
+    // Stop only cancels work whose current await is owned by the Network
+    // Extension. App-core setup and query work must retain its first response.
+    let cancellationScope = ServiceRPCCancellationScope()
+    let appRPC = cancellationScope.register(route: .app)
+    let networkExtensionRPC = cancellationScope.register(route: .networkExtension)
+    let undecidedRPC = cancellationScope.register(route: nil)
+    var stoppedRPCs = Set<UUID>()
+    cancellationScope.cancelNetworkExtensionRequests { stoppedRPCs.insert($0) }
+    precondition(stoppedRPCs == [networkExtensionRPC])
+    precondition(cancellationScope.contains(appRPC))
+    precondition(cancellationScope.contains(undecidedRPC))
+    precondition(!cancellationScope.contains(networkExtensionRPC))
+
+    precondition(!cancellationScope.updateRoute(undecidedRPC, route: .networkExtension))
+    stoppedRPCs.insert(undecidedRPC)
+    cancellationScope.remove(undecidedRPC)
+    precondition(stoppedRPCs == [networkExtensionRPC, undecidedRPC])
+    cancellationScope.remove(appRPC)
+    precondition(cancellationScope.isEmpty)
+
+    let firstOutcome = ProviderMessageWaiter()
+    var outcomes: [String] = []
+    firstOutcome.finish { outcomes.append("ne_rules_not_ready") }
+    firstOutcome.cancel?()
+    firstOutcome.finish { outcomes.append("rpc_cancelled") }
+    precondition(outcomes == ["ne_rules_not_ready"])
+
     let callback = CoreCallbackResponse<String>()
     callback.resolve(.failure(CancellationError()))
     var dispatched = false

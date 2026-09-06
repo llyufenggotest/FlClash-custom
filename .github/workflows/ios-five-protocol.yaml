@@ -123,6 +123,7 @@ jobs:
           flutter test test/ios_database_container_test.dart
           flutter test test/ios_mtu_override_test.dart
           flutter test test/ios_provider_message_mailbox_test.dart
+          flutter test test/core/controller_test.dart
           flutter test test/setup_test.dart
           ! git grep -n -E '#sl|MAGIC_SHANLIAN_TRIGGER|GenerateMagicSNI' -- 'core/mihomo/*.go' 'core/mihomo/**/*.go' ':!core/mihomo/**/*_test.go'
 

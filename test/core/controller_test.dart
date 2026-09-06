@@ -147,7 +147,90 @@ void main() {
       expect(result, 'ok');
     });
 
-    test('setupConfig waits for asynchronous preload', () async {
+    test('iOS setup prepares rule artifacts before starting the extension', () async {
+      const params = SetupParams(selectedMap: {}, testUrl: 'http://x.com');
+      final setupCompleter = Completer<String>();
+      final events = <String>[];
+      when(() => mock.setupConfig(params)).thenAnswer((_) {
+        events.add('setup');
+        return setupCompleter.future;
+      });
+
+      final setupFuture = controller.setupConfig(
+        params: params,
+        prepareBeforePreload: true,
+        preloadInvoke: () async => events.add('preload'),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(events, ['setup']);
+
+      setupCompleter.complete('');
+      expect(await setupFuture, '');
+      expect(events, ['setup', 'preload']);
+    });
+
+    test('iOS setup failure does not start an unprepared extension', () async {
+      const params = SetupParams(selectedMap: {}, testUrl: 'http://x.com');
+      final events = <String>[];
+      when(() => mock.setupConfig(params)).thenAnswer((_) async {
+        events.add('setup');
+        return 'rule provider preflight failed';
+      });
+
+      final result = await controller.setupConfig(
+        params: params,
+        prepareBeforePreload: true,
+        preloadInvoke: () async => events.add('preload'),
+      );
+      expect(result, 'rule provider preflight failed');
+      expect(events, ['setup']);
+    });
+
+    test('iOS setup timeout does not start an unprepared extension', () async {
+      const params = SetupParams(selectedMap: {}, testUrl: 'http://x.com');
+      final events = <String>[];
+      final setupCompleter = Completer<String>();
+      when(() => mock.setupConfig(params)).thenAnswer((_) {
+        events.add('setup');
+        return setupCompleter.future;
+      });
+
+      final result = await controller.setupConfig(
+        params: params,
+        prepareBeforePreload: true,
+        rulePreparationTimeout: const Duration(milliseconds: 10),
+        preloadInvoke: () async => events.add('preload'),
+      );
+
+      expect(result, contains('rule preparation timed out'));
+      expect(result, contains('10ms'));
+      expect(events, ['setup']);
+
+      setupCompleter.complete('');
+      await Future<void>.delayed(Duration.zero);
+      expect(events, ['setup']);
+    });
+
+    test('iOS setup exception is preserved and does not start the extension', () async {
+      const params = SetupParams(selectedMap: {}, testUrl: 'http://x.com');
+      final providerError = StateError('BanAD provider file is missing');
+      var preloadStarted = false;
+      when(
+        () => mock.setupConfig(params),
+      ).thenAnswer((_) => Future<String>.error(providerError));
+
+      await expectLater(
+        controller.setupConfig(
+          params: params,
+          prepareBeforePreload: true,
+          preloadInvoke: () async => preloadStarted = true,
+        ),
+        throwsA(same(providerError)),
+      );
+      expect(preloadStarted, isFalse);
+    });
+
+    test('non-iOS setup keeps setup and preload parallel', () async {
       const params = SetupParams(selectedMap: {}, testUrl: 'http://x.com');
       final preloadCompleter = Completer<void>();
       final events = <String>[];
@@ -158,6 +241,7 @@ void main() {
 
       final setupFuture = controller.setupConfig(
         params: params,
+        prepareBeforePreload: false,
         preloadInvoke: () async {
           events.add('preload');
           await preloadCompleter.future;

@@ -97,9 +97,32 @@ class CoreController {
   Future<String> setupConfig({
     required SetupParams params,
     Future<void> Function()? preloadInvoke,
+    @visibleForTesting bool? prepareBeforePreload,
+    @visibleForTesting
+    Duration rulePreparationTimeout = const Duration(seconds: 60),
   }) async {
     if (preloadInvoke == null) {
       return _interface.setupConfig(params);
+    }
+    if (prepareBeforePreload ?? system.isIOS) {
+      // NECore is fail-closed when any rule provider is not ready. Let the
+      // Runner core fetch raw providers and publish their MRS sidecars before
+      // starting the extension; parallel startup made first launch depend on
+      // which process reached the provider files first.
+      final timeoutLabel = rulePreparationTimeout.inMilliseconds % 1000 == 0
+          ? '${rulePreparationTimeout.inSeconds}s'
+          : '${rulePreparationTimeout.inMilliseconds}ms';
+      final result = await _interface.setupConfig(params).timeout(
+        rulePreparationTimeout,
+        onTimeout: () =>
+            'iOS rule preparation timed out after $timeoutLabel; '
+            'network extension was not started',
+      );
+      if (result.isNotEmpty) {
+        return result;
+      }
+      await preloadInvoke();
+      return result;
     }
     final (result, _) = await (
       _interface.setupConfig(params),
