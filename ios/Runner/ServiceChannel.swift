@@ -19,6 +19,9 @@ final class ServiceChannel {
   private let tunnelController: TunnelController
   private let coreMessageRouter: CoreMessageRouter
   private let coreEventRelay: CoreEventRelay
+  private var rpcTasks: [UUID: Task<Void, Never>] = [:]
+  private var rpcResponses: [UUID: ServiceRPCResponse] = [:]
+  private let rpcCancellationScope = ServiceRPCCancellationScope()
   private let logger = Logger(
     subsystem: Bundle.main.bundleIdentifier ?? "com.follow.clash",
     category: "ServiceChannel"
@@ -109,8 +112,34 @@ final class ServiceChannel {
         result(invalidMethodCallResponse)
         return
       }
-      Task {
-        result(await coreMessageRouter.invoke(data))
+      guard rpcTasks.count < 72 else {
+        result(rpcError(data, code: "network_extension_busy"))
+        return
+      }
+      let token = rpcCancellationScope.register(route: nil)
+      let response = ServiceRPCResponse { result($0) }
+      rpcResponses[token] = response
+      let timeoutNanoseconds = rpcMethod(in: data) == "setupConfig"
+        ? UInt64(65_000_000_000)
+        : UInt64(16_000_000_000)
+      let deadline = Task { @MainActor [weak self] in
+        do { try await Task.sleep(nanoseconds: timeoutNanoseconds) }
+        catch { return }
+        guard let self else { return }
+        self.rpcCancellationScope.remove(token)
+        self.rpcTasks.removeValue(forKey: token)?.cancel()
+        self.rpcResponses.removeValue(forKey: token)?.finish(
+          self.rpcError(data, code: "rpc_timeout"))
+      }
+      response.onFinish = { deadline.cancel() }
+      rpcTasks[token] = Task {
+        let value = await coreMessageRouter.invoke(data) { route in
+          self.routeSelected(route, for: token)
+        }
+        rpcCancellationScope.remove(token)
+        rpcTasks.removeValue(forKey: token)
+        rpcResponses.removeValue(forKey: token)
+        response.finish(value)
       }
     case "start":
       guard saveSharedState(call) else {
@@ -120,6 +149,11 @@ final class ServiceChannel {
       tunnelController.start()
       result(true)
     case "stop":
+      rpcCancellationScope.cancelNetworkExtensionRequests { token in
+        // Let the routed awaiter publish its real first outcome. Finishing the
+        // Flutter response here would overwrite an NE error already in flight.
+        rpcTasks[token]?.cancel()
+      }
       tunnelController.stop()
       result(true)
     case "init":
@@ -137,8 +171,19 @@ final class ServiceChannel {
       }
     case "getNativeLogs":
       result(NativeDiagnosticLog.shared.exportText())
+    case "clearNativeLogs":
+      result(NativeDiagnosticLog.shared.clearAll())
     default:
       result(FlutterMethodNotImplemented)
+    }
+  }
+
+  private func routeSelected(_ route: CoreRoute, for token: UUID) {
+    guard !rpcCancellationScope.updateRoute(token, route: route) else { return }
+    // Stop crossed this RPC while it was waiting for App core. Cancel as soon
+    // as it attempts to enter the stopped Network Extension generation.
+    Task { @MainActor [weak self] in
+      self?.rpcTasks[token]?.cancel()
     }
   }
 
@@ -175,6 +220,20 @@ final class ServiceChannel {
     return true
   }
 
+  private func rpcMethod(in data: Data) -> String? {
+    let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+    return object?["method"] as? String
+  }
+
+  private func rpcError(_ data: Data, code: String) -> String {
+    let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+    let response: [String: Any] = ["id": object?["id"] ?? NSNull(), "result": NSNull(),
+      "error": ["code": code, "message": code, "details": NSNull()]]
+    guard let encoded = try? JSONSerialization.data(withJSONObject: response),
+      let text = String(data: encoded, encoding: .utf8) else { return invalidMethodCallResponse }
+    return text
+  }
+
   private var invalidMethodCallResponse: String {
     #"{"result":null,"error":{"code":"invalid_method_call","message":"invalid method call","details":null}}"#
   }
@@ -184,6 +243,66 @@ final class ServiceChannel {
     NativeDiagnosticLog.shared.append(source: "Runner.ServiceChannel", message: message)
   }
 }
+
+// BEGIN RPC LIFECYCLE UNIT
+@MainActor
+final class ServiceRPCCancellationScope {
+  private struct Entry {
+    var route: CoreRoute?
+    let stopGeneration: UInt64
+  }
+
+  private var entries: [UUID: Entry] = [:]
+  private var stopGeneration: UInt64 = 0
+
+  func register(route: CoreRoute?) -> UUID {
+    let token = UUID()
+    entries[token] = Entry(route: route, stopGeneration: stopGeneration)
+    return token
+  }
+
+  /// Returns false when a stop happened before this request reached the NE.
+  func updateRoute(_ token: UUID, route: CoreRoute) -> Bool {
+    guard var entry = entries[token] else { return false }
+    entry.route = route
+    entries[token] = entry
+    return route != .networkExtension || entry.stopGeneration == stopGeneration
+  }
+
+  func remove(_ token: UUID) {
+    entries.removeValue(forKey: token)
+  }
+
+  func cancelNetworkExtensionRequests(_ cancel: (UUID) -> Void) {
+    stopGeneration &+= 1
+    let tokens = entries.compactMap { token, entry in
+      entry.route == .networkExtension ? token : nil
+    }
+    for token in tokens {
+      entries.removeValue(forKey: token)
+      cancel(token)
+    }
+  }
+
+  func contains(_ token: UUID) -> Bool { entries[token] != nil }
+  var isEmpty: Bool { entries.isEmpty }
+}
+
+@MainActor
+final class ServiceRPCResponse {
+  private var completion: ((String) -> Void)?
+  var onFinish: (() -> Void)?
+  init(_ completion: @escaping (String) -> Void) { self.completion = completion }
+  func finish(_ value: String) {
+    guard let completion else { return }
+    self.completion = nil
+    let cleanup = onFinish
+    onFinish = nil
+    cleanup?()
+    completion(value)
+  }
+}
+// END RPC LIFECYCLE UNIT
 
 /// Failure-tolerant, bounded lifecycle diagnostics shared with the export UI.
 /// Callers must never pass full configurations, credentials, or node secrets.
@@ -226,6 +345,29 @@ final class NativeDiagnosticLog {
         else { return nil }
         return "--- \(name) ---\n\(text)"
       }.joined(separator: "\n")
+    }
+  }
+
+  /// Truncates both persisted native logs in place. Truncation rather than
+  /// deletion keeps the extension's open file handles valid, so a running
+  /// tunnel keeps logging into the same path after a clear.
+  @discardableResult
+  func clearAll() -> Bool {
+    queue.sync {
+      var cleared = true
+      for name in [runnerFile, neCoreFile] {
+        guard let url = fileURL(named: name) else {
+          cleared = false
+          continue
+        }
+        guard FileManager.default.fileExists(atPath: url.path) else { continue }
+        do {
+          try Data().write(to: url, options: .atomic)
+        } catch {
+          cleared = false
+        }
+      }
+      return cleared
     }
   }
 
