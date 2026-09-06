@@ -44,7 +44,7 @@ func readValidatedCandidateConfig(candidate string) (string, []byte, error) {
 	if profileErr != nil || profileID <= 0 || parts[1] != "generations" || !isSHA256(parts[2]) {
 		return "", nil, errors.New("candidate config path is not in a published generation")
 	}
-	if err := rejectLinkedComponents(path, false); err != nil {
+	if err := rejectLinkedComponentsWithinRoot(path, prewarmRoot, false); err != nil {
 		return "", nil, fmt.Errorf("unsafe candidate config path: %w", err)
 	}
 	preOpenInfo, err := os.Lstat(path)

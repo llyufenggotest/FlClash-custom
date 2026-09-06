@@ -58,28 +58,7 @@ jobs:
           xcodebuild -version
 
       - name: Get dependencies
-        run: |
-          # The fork force-moved `main` on 2026-09-06 and the old locked commit
-          # became unreachable; refresh only this git dependency when that exact
-          # failure is observed, while keeping every other lockfile pin intact.
-          if ! flutter pub get; then
-            echo "pub get failed; refreshing only window_manager from its current main"
-            rm -rf "$PUB_CACHE/git/cache/window_manager"* "$PUB_CACHE/git/window_manager"*
-            git clone --depth 1 https://github.com/chenx-dust/window_manager.git "$RUNNER_TEMP/window_manager"
-            current_ref="$(git -C "$RUNNER_TEMP/window_manager" rev-parse HEAD)"
-            python3 - "$current_ref" <<'PY'
-          import sys
-          from pathlib import Path
-          p = Path("pubspec.lock")
-          s = p.read_text()
-          old = 'resolved-ref: "7ddbd876f96fca602670e2110348fbcb387950e9"'
-          new = f'resolved-ref: "{sys.argv[1]}"'
-          if old not in s:
-              raise SystemExit("expected stale window_manager lock pin not found")
-          p.write_text(s.replace(old, new, 1))
-          PY
-            flutter pub get
-          fi
+        run: flutter pub get
 
       - name: Verify five-protocol and iOS contracts
         shell: bash
