@@ -39,24 +39,26 @@ void main() {
       );
     });
 
-    test('the retry loop is bounded and backs off', () {
+    test('the fallback is single-shot and reuses the deduplicated envelope', () {
       final controller = source('ios/Runner/Tunnel/TunnelController.swift');
-      expect(controller, contains('emptyReplyRetryLimit = 3'));
-      expect(controller, contains('emptyReplyRetryBackoff'));
-      expect(controller, contains('Task.sleep(nanoseconds: backoff)'));
-      expect(controller, contains('for attempt in 1...emptyReplyRetryLimit'));
+      expect(controller, isNot(contains('emptyReplyRetryLimit')));
+      expect(controller, isNot(contains('for attempt in')));
+      expect(controller, contains('return try await sendProviderMessageAttempt(envelope'));
+      expect(controller, contains('return try await sendProviderMessageViaMailbox(envelope'));
+      expect(controller, contains('"requestID": id'));
     });
 
-    test('exhausting the retries reports the terminal code once', () {
+    test('mailbox exhaustion reports one bounded terminal timeout', () {
       final controller = source('ios/Runner/Tunnel/TunnelController.swift');
-      final loopStart = controller.indexOf('guard attempt < emptyReplyRetryLimit');
-      expect(loopStart, greaterThan(-1));
-      final guardBody = controller.substring(loopStart, loopStart + 400);
-      expect(guardBody, contains("code: \"empty_response\""));
-      expect(guardBody, contains('provider message empty seq='));
+      final mailboxStart = controller.indexOf('private func sendProviderMessageViaMailbox(');
+      expect(mailboxStart, greaterThan(-1));
+      final mailboxBody = controller.substring(mailboxStart);
+      expect(mailboxBody, contains('waiter.finish'));
+      expect(mailboxBody, contains('code: "network_extension_timeout"'));
+      expect(mailboxBody, contains('max(0, deadline.timeIntervalSinceNow)'));
     });
 
-    test('the admission slot is held across retries', () {
+    test('the admission slot is held across native and mailbox transports', () {
       final controller = source('ios/Runner/Tunnel/TunnelController.swift');
       final send = controller.indexOf('func sendProviderMessage(');
       final attempt = controller.indexOf('func sendProviderMessageAttempt(');
