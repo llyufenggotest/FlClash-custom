@@ -134,6 +134,70 @@ func TestCandidateConfigPathRejectsUnsafeFiles(t *testing.T) {
 	}
 }
 
+func TestCandidateConfigAllowsSymlinkOutsideTrustedRoot(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows must reject reparse points in the full path")
+	}
+	realParent := t.TempDir()
+	aliasParent := filepath.Join(t.TempDir(), "var")
+	if err := os.Symlink(realParent, aliasParent); err != nil {
+		t.Fatal(err)
+	}
+	home := filepath.Join(aliasParent, "app-home")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	oldHome := C.Path.HomeDir()
+	C.SetHomeDir(home)
+	t.Cleanup(func() { C.SetHomeDir(oldHome) })
+
+	candidate := writeCandidateConfig(t, home, "mode: direct\n")
+	if got, err := validateCandidateConfigPath(candidate); err != nil || got != candidate {
+		t.Fatalf("candidate below aliased system ancestor rejected: got %q err %v", got, err)
+	}
+}
+
+func TestCandidateConfigRejectsTrustedRootSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("covered by Windows reparse-point tests")
+	}
+	home := t.TempDir()
+	realPrewarm := t.TempDir()
+	if err := os.Symlink(realPrewarm, filepath.Join(home, "prewarm")); err != nil {
+		t.Fatal(err)
+	}
+	oldHome := C.Path.HomeDir()
+	C.SetHomeDir(home)
+	t.Cleanup(func() { C.SetHomeDir(oldHome) })
+
+	candidate := writeCandidateConfig(t, home, "mode: direct\n")
+	if _, err := validateCandidateConfigPath(candidate); err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("candidate below symlinked trusted root was not rejected: %v", err)
+	}
+}
+
+func TestCandidateConfigRejectsSymlinkInsideTrustedRoot(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("covered by Windows reparse-point tests")
+	}
+	home := t.TempDir()
+	generationParent := filepath.Join(home, "prewarm", "7")
+	if err := os.MkdirAll(generationParent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(t.TempDir(), filepath.Join(generationParent, "generations")); err != nil {
+		t.Fatal(err)
+	}
+	oldHome := C.Path.HomeDir()
+	C.SetHomeDir(home)
+	t.Cleanup(func() { C.SetHomeDir(oldHome) })
+
+	candidate := writeCandidateConfig(t, home, "mode: direct\n")
+	if _, err := validateCandidateConfigPath(candidate); err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("candidate below symlinked internal directory was not rejected: %v", err)
+	}
+}
+
 func TestRejectedCandidateDoesNotFallBackToFormalConfig(t *testing.T) {
 	home := t.TempDir()
 	oldHome := C.Path.HomeDir()
