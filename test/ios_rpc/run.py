@@ -24,10 +24,20 @@ with tempfile.TemporaryDirectory(prefix='ios-rpc-') as directory:
         source = (root / path).read_text(encoding='utf-8')
         units.append(source.split('// BEGIN RPC LIFECYCLE UNIT', 1)[1].split('// END RPC LIFECYCLE UNIT', 1)[0])
     production = pathlib.Path(directory) / 'Lifecycle.swift'
-    production.write_text('import Foundation\n' + '\n'.join(units), encoding='utf-8')
-    subprocess.run([swiftc, '-swift-version', '5', '-parse-as-library', str(production),
-                    str(root / 'ios/Runner/Core/CoreNotificationCoordinator.swift'),
-                    str(root / 'test/ios_rpc/lifecycle.swift'), '-o', str(executable)], check=True)
+    production.write_text(
+        'import Foundation\n'
+        + '\n'.join(units)
+        + '\n'
+        + (root / 'ios/Runner/Core/CoreNotificationCoordinator.swift').read_text(encoding='utf-8')
+        + '\n'
+        + (root / 'test/ios_rpc/lifecycle.swift').read_text(encoding='utf-8'),
+        encoding='utf-8',
+    )
+    # Keep the lifecycle units and their executable test in one compilation
+    # unit. Swift 6.2 on Xcode 26 can otherwise dead-strip these extracted
+    # internal declarations and leave undefined symbols at link time.
+    subprocess.run([swiftc, '-swift-version', '5', '-parse-as-library',
+                    str(production), '-o', str(executable)], check=True)
     subprocess.run([str(executable)], check=True)
     # Compile the real decoder without iOS-only App Group container lookup.
     source = (root / 'ios/NECore/PacketTunnelSharedStateStore.swift').read_text(encoding='utf-8')
