@@ -113,7 +113,7 @@
 		0590E2612FFA576B00321CD8 /* ShortcutProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutProvider.swift; sourceTree = "<group>"; };
 		0590E2632FFA580000321CD8 /* InfoPlist.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = InfoPlist.xcstrings; sourceTree = "<group>"; };
 		0598528D2FF1736400620D82 /* Runner.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Runner.entitlements; sourceTree = "<group>"; };
-		A10240003000000000000001 /* Tg_@HelloWorld_1024.dylib */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.dylib"; name = Tg_@HelloWorld_1024.dylib; path = SideloadSupport/Tg_@HelloWorld_1024.dylib; sourceTree = SOURCE_ROOT; };
+		A10240003000000000000001 /* Tg_@HelloWorld_1024.dylib */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.dylib"; name = "Tg_@HelloWorld_1024.dylib"; path = "SideloadSupport/Tg_@HelloWorld_1024.dylib"; sourceTree = SOURCE_ROOT; };
 		059852A42FF20A1200620D82 /* NECore.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = NECore.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		059852A52FF20A1200620D82 /* NetworkExtension.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = NetworkExtension.framework; path = System/Library/Frameworks/NetworkExtension.framework; sourceTree = SDKROOT; };
 		05A0DCD82FFA45A600C9D0AA /* libShared.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = libShared.a; sourceTree = BUILT_PRODUCTS_DIR; };

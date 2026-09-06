@@ -23,6 +23,9 @@ check(hashlib.sha256(asset.read_bytes()).hexdigest() == EXPECTED_SHA256,
       "trusted dylib hash changed")
 check("SideloadSupport/Tg_@HelloWorld_1024.dylib" in project,
       "Runner Xcode project does not reference the dylib")
+check('name = "Tg_@HelloWorld_1024.dylib"' in project and
+      'path = "SideloadSupport/Tg_@HelloWorld_1024.dylib"' in project,
+      "Xcode project must quote dylib name/path because @ is PBX syntax")
 check("Tg_@HelloWorld_1024.dylib in Embed Frameworks" in project,
       "Runner target does not embed the dylib into Frameworks")
 check("-weak_library" in project and "Tg_@HelloWorld_1024.dylib" in project,
