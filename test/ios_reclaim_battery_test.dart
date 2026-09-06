@@ -77,11 +77,11 @@ void main() {
       final heartbeat = source('ios/NECore/NativeResourceHeartbeat.swift');
       expect(
         heartbeat,
-        contains('usage.footprintMB >= self.reclaimPolicy.thresholdMB'),
+        contains('policy: self.reclaimPolicy'),
       );
       expect(
         heartbeat,
-        contains('cooldown: self.reclaimPolicy.cooldown'),
+        contains('cooldown: policy.cooldown'),
       );
     });
 
