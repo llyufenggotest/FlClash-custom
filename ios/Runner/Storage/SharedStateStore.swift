@@ -7,6 +7,7 @@ final class SharedStateStore {
   private let tunnelAttemptIDKey = "tunnelAttemptID"
   private let eventQueueDirectoryName = "core-events"
   private let snapshotFileName = "shared-state.json"
+  private let providerMessageMailboxDirectoryName = "provider-message-mailbox"
 
   let appGroupIdentifier = "group.\(Bundle.main.bundleIdentifier!)"
   let eventNotificationName = "\(Bundle.main.bundleIdentifier!).NECore.event"
@@ -111,6 +112,13 @@ final class SharedStateStore {
   func eventQueueDirectory() -> URL? {
     appGroupDirectory()?.appendingPathComponent(
       eventQueueDirectoryName,
+      isDirectory: true
+    )
+  }
+
+  func providerMessageMailboxDirectory() -> URL? {
+    appGroupDirectory()?.appendingPathComponent(
+      providerMessageMailboxDirectoryName,
       isDirectory: true
     )
   }
