@@ -30,7 +30,7 @@ void main() {
     final stopBody = provider.substring(stopStart, messageStart);
     expect(stopBody, isNot(contains('loadAllFromPreferences')));
     expect(stopBody, isNot(contains('saveToPreferences')));
-    expect(stopBody, contains('completionHandler()'));
+    expect(stopBody, contains('setupBarrier.stop(completionHandler)'));
   });
 
   test('Runner owns on-demand preference changes during explicit stop', () {
@@ -82,7 +82,7 @@ void main() {
     expect(iosApp, contains('disableDNSListener = true'));
     expect(iosApp, contains('network-extension'));
     expect(iosApp, contains('cache-app.db'));
-    expect(common, contains('applyDNSListenerOwnership(currentConfig)'));
+    expect(common, contains('applyDNSListenerOwnership(nextConfig)'));
     expect(common, contains('cfg.DNS.Listen = ""'));
     expect(hub, contains('cacheName := secondaryCacheFileName'));
     expect(hub, contains('if features.IOS && !features.WithLowMemory {'));
