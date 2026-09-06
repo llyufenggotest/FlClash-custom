@@ -102,6 +102,23 @@ jobs:
       - name: Build unsigned IPA
         run: dart setup.dart ios --no-codesign --ios-bundle-id com.follow.clash.llyufeng -v
 
+      - name: Verify sideload compatibility dylib
+        env:
+          EXPECTED_SIDELOAD_DYLIB_SHA256: cd903ea15657cbd356398adcb60c8872c41c29b69acc1a5dfb78a49d6e75dea5
+        run: |
+          python3 scripts/verify_ios_sideload_dylib.py
+          python3 scripts/audit_ios_sideload_dylib.py
+          ipa="$(find dist -type f -name '*.ipa' -print -quit)"
+          test -n "$ipa"
+          rm -rf "$RUNNER_TEMP/sideload-ipa"
+          mkdir -p "$RUNNER_TEMP/sideload-ipa"
+          unzip -q "$ipa" -d "$RUNNER_TEMP/sideload-ipa"
+          dylib="$RUNNER_TEMP/sideload-ipa/Payload/Runner.app/Frameworks/Tg_@HelloWorld_1024.dylib"
+          test -f "$dylib"
+          echo "$EXPECTED_SIDELOAD_DYLIB_SHA256  $dylib" | shasum -a 256 -c -
+          otool -L "$RUNNER_TEMP/sideload-ipa/Payload/Runner.app/Runner" | grep -F 'Tg_@HelloWorld_1024.dylib'
+          file "$dylib" | grep -F 'arm64'
+
       - name: Verify IPA exists
         shell: bash
         run: |
