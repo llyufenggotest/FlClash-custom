@@ -10,6 +10,7 @@ import 'package:path_provider_foundation/path_provider_foundation.dart';
 class AppPath {
   static AppPath? _instance;
   Completer<Directory> dataDir = Completer();
+  Completer<Directory> supportDir = Completer();
   late final Future<Directory?> _downloadDir = getDownloadsDirectory();
   Completer<Directory> tempDir = Completer();
   Completer<Directory> cacheDir = Completer();
@@ -35,25 +36,26 @@ class AppPath {
       dataDir.complete(Directory(join(appDirPath, 'config')));
       return;
     }
-    final supportDir = await getApplicationSupportDirectory();
+    final applicationSupportDir = await getApplicationSupportDirectory();
+    supportDir.complete(applicationSupportDir);
     try {
       if (!system.isIOS) {
-        dataDir.complete(supportDir);
+        dataDir.complete(applicationSupportDir);
         return;
       }
 
       final appGroupPath = await _getIOSAppGroupPath();
       if (appGroupPath.isEmpty) {
-        dataDir.complete(supportDir);
+        dataDir.complete(applicationSupportDir);
         return;
       }
 
       final appGroupDir = Directory(appGroupPath);
       await appGroupDir.create(recursive: true);
-      await _copyDirectoryContentsIfMissing(supportDir, appGroupDir);
+      await _copyDirectoryContentsIfMissing(applicationSupportDir, appGroupDir);
       dataDir.complete(appGroupDir);
     } catch (_) {
-      dataDir.complete(supportDir);
+      dataDir.complete(applicationSupportDir);
     }
   }
 
@@ -145,6 +147,9 @@ class AppPath {
   }
 
   Future<String> get databasePath async {
+    if (system.isIOS) {
+      return join((await supportDir.future).path, 'database.sqlite');
+    }
     final mHomeDirPath = await homeDirPath;
     return join(mHomeDirPath, 'database.sqlite');
   }
