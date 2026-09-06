@@ -22,7 +22,12 @@ func TestRunnerCachePath(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := filepath.Join(private, "Library", "Application Support", "RunnerCore", "cache-app.db")
-	if got := filepath.Join(shared, name); got != want {
+	want, err = filepath.EvalSymlinks(filepath.Dir(want))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want = filepath.Join(want, "cache-app.db")
+	if got := filepath.Clean(filepath.Join(shared, name)); got != want {
 		t.Fatalf("cache = %q, want %q", got, want)
 	}
 	if info, err := os.Stat(filepath.Dir(want)); err != nil || !info.IsDir() {

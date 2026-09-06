@@ -170,7 +170,7 @@ jobs:
 
   android:
     name: Build Android APK (arm64)
-    if: github.event.inputs.platforms != 'ios'
+    if: github.event.inputs.platforms == 'all' || github.event.inputs.platforms == 'all-with-macos'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -231,7 +231,7 @@ jobs:
 
   windows:
     name: Build Windows (x64)
-    if: github.event.inputs.platforms != 'ios'
+    if: github.event.inputs.platforms == 'all' || github.event.inputs.platforms == 'all-with-macos'
     runs-on: windows-2022
     timeout-minutes: 90
     steps:
