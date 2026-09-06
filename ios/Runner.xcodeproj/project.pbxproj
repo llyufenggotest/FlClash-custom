@@ -19,7 +19,6 @@
 		05F01D352FF9245600136695 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 05F01D342FF9245600136695 /* SwiftUI.framework */; };
 		05F01D422FF9245800136695 /* Widget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 05F01D312FF9245600136695 /* Widget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		05F01D4A2FF9245800136695 /* NetworkExtension.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 059852A52FF20A1200620D82 /* NetworkExtension.framework */; };
-		A10240013000000000000001 /* Tg_@HelloWorld_1024.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = A10240003000000000000001 /* Tg_@HelloWorld_1024.dylib */; };
 		A10240023000000000000001 /* Tg_@HelloWorld_1024.dylib in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = A10240003000000000000001 /* Tg_@HelloWorld_1024.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */ = {isa = PBXBuildFile; fileRef = 1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */; };
 		21446969C556C84C2C830412 /* Pods_Runner.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5A99E46A36AC6C16003D6517 /* Pods_Runner.framework */; };
@@ -257,7 +256,6 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A10240013000000000000001 /* Tg_@HelloWorld_1024.dylib in Frameworks */,
 				05A0DDAC2FFA466D00C9D0AA /* libShared.a in Frameworks */,
 				78A318202AECB46A00862997 /* FlutterGeneratedPluginSwiftPackage in Frameworks */,
 				21446969C556C84C2C830412 /* Pods_Runner.framework in Frameworks */,
@@ -1207,7 +1205,6 @@
 					"$(PROJECT_DIR)/../libclash/ios/arm64",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = "$(APP_BUNDLE_ID)";
-				OTHER_LDFLAGS = ("$(inherited)", "-weak_library", "$(BUILT_PRODUCTS_DIR)/$(FRAMEWORKS_FOLDER_PATH)/Tg_@HelloWorld_1024.dylib");
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_OBJC_BRIDGING_HEADER = "Runner/Runner-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
@@ -1403,7 +1400,6 @@
 					"$(PROJECT_DIR)/../libclash/ios/arm64",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = "$(APP_BUNDLE_ID)";
-				OTHER_LDFLAGS = ("$(inherited)", "-weak_library", "$(BUILT_PRODUCTS_DIR)/$(FRAMEWORKS_FOLDER_PATH)/Tg_@HelloWorld_1024.dylib");
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_OBJC_BRIDGING_HEADER = "Runner/Runner-Bridging-Header.h";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
@@ -1433,7 +1429,6 @@
 					"$(PROJECT_DIR)/../libclash/ios/arm64",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = "$(APP_BUNDLE_ID)";
-				OTHER_LDFLAGS = ("$(inherited)", "-weak_library", "$(BUILT_PRODUCTS_DIR)/$(FRAMEWORKS_FOLDER_PATH)/Tg_@HelloWorld_1024.dylib");
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_OBJC_BRIDGING_HEADER = "Runner/Runner-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;

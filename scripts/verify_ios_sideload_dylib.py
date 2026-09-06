@@ -28,8 +28,10 @@ check('name = "Tg_@HelloWorld_1024.dylib"' in project and
       "Xcode project must quote dylib name/path because @ is PBX syntax")
 check("Tg_@HelloWorld_1024.dylib in Embed Frameworks" in project,
       "Runner target does not embed the dylib into Frameworks")
-check("-weak_library" in project and "Tg_@HelloWorld_1024.dylib" in project,
-      "Runner has no explicit runtime-load contract for the dylib")
+check("Tg_@HelloWorld_1024.dylib in Frameworks" not in project,
+      "do not link the embedded output back into Runner; Xcode reports a target cycle")
+check("-weak_library" not in project,
+      "runtime dlopen is the only load edge; weak-linking the copied output creates a cycle")
 check("dlopen" in app_delegate and "Tg_@HelloWorld_1024.dylib" in app_delegate,
       "Runner does not explicitly load the embedded dylib from Frameworks")
 check("RTLD_NOW | RTLD_LOCAL" in app_delegate,
