@@ -624,6 +624,12 @@ SharedState sharedState(Ref ref) {
   final stack = clashConfigVM3.a;
   final port = clashConfigVM3.b;
   final mtu = clashConfigVM3.c;
+  // A 9000-byte virtual interface is useful on desktop/Android where the
+  // platform path has been tuned for jumbo frames, but it is needlessly large
+  // for iOS Network Extension paths (Wi-Fi/cellular are normally <= 1500).
+  // Clamp only the value handed to the iOS packet tunnel; keep the saved user
+  // setting and every other platform unchanged.
+  final effectiveMtu = system.isIOS ? mtu.clamp(1280, 1500) : mtu;
   final excludeSSIDs = ref.watch(excludeSSIDsProvider);
   final alwaysOn = ref.watch(alwaysOnProvider);
   return SharedState(
@@ -644,7 +650,7 @@ SharedState sharedState(Ref ref) {
       allowBypass: vpnSetting.allowBypass,
       suspendSupport: vpnSetting.suspendSupport,
       bypassDomain: bypassDomain,
-      mtu: mtu,
+      mtu: effectiveMtu,
       routeAddress: tun.getMobileRouteAddress(routeMode),
       disableIcmpForwarding: tun.disableIcmpForwarding,
       endpointIndependentNat: tun.endpointIndependentNat,

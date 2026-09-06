@@ -25,6 +25,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
   private lazy var eventQueue = NECoreEventQueue(
     sharedStateStore: sharedStateStore
   )
+  private lazy var mailbox = ProviderMessageMailbox(
+    sharedStateStore: sharedStateStore
+  )
   private let logger = Logger(
     subsystem: PacketTunnelEnvironment.extensionBundleIdentifier,
     category: "PacketTunnelProvider"
@@ -97,6 +100,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         "startTunnel fileDescriptor=\(tunnelFileDescriptor, privacy: .public)"
       )
       self.eventQueue.start()
+      self.mailbox.start()
       self.didStartEventQueue = true
       let initParams = self.sharedStateStore.makeInitParams()
       let setupParams = self.sharedStateStore.loadSetupParams()
@@ -169,6 +173,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     sharedStateStore.clearRunTime()
     reloadControlWidget()
     eventQueue.stop()
+    mailbox.stop()
     didStartEventQueue = false
     resourceHeartbeat.stop()
     NECoreBridge.stopTun()
@@ -271,6 +276,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     resourceHeartbeat.stop()
     if didStartEventQueue {
       eventQueue.stop()
+      mailbox.stop()
       didStartEventQueue = false
     }
     NECoreBridge.stopTun()

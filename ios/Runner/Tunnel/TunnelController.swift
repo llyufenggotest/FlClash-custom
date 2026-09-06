@@ -167,6 +167,21 @@ final class TunnelController {
       } catch let error as ProviderMessageError
         where error.code == emptyReplyRetryCode
       {
+        // Ordinary re-signing can leave the Packet Tunnel fully running while
+        // iOS returns nil for every native Provider Message reply. The App Group
+        // startup payload and event queue still work in that environment, so use
+        // the same container as a bounded request/response fallback before
+        // retrying the native channel.
+        do {
+          let message = try await sendProviderMessageViaMailbox(
+            data,
+            sequence: sequence
+          )
+          log("provider message mailbox fallback success seq=\(sequence)")
+          return message
+        } catch {
+          log("provider message mailbox fallback failed seq=\(sequence)")
+        }
         guard attempt < emptyReplyRetryLimit else {
           // Out of retries: report the terminal code the app layer knows.
           log("provider message empty seq=\(sequence) attempts=\(attempt)")
@@ -299,6 +314,45 @@ final class TunnelController {
         }
       }
     }
+  }
+
+  private func sendProviderMessageViaMailbox(
+    _ data: Data,
+    sequence: UInt64
+  ) async throws -> String {
+    guard let directory = sharedStateStore.providerMessageMailboxDirectory()
+    else {
+      throw ProviderMessageError(
+        code: "mailbox_unavailable",
+        message: "provider message mailbox is unavailable"
+      )
+    }
+    try FileManager.default.createDirectory(
+      at: directory,
+      withIntermediateDirectories: true
+    )
+    let id = UUID().uuidString.lowercased()
+    let requestURL = directory.appendingPathComponent("\(id).request")
+    let responseURL = directory.appendingPathComponent("\(id).response")
+    try data.write(to: requestURL, options: .atomic)
+    defer {
+      try? FileManager.default.removeItem(at: requestURL)
+      try? FileManager.default.removeItem(at: responseURL)
+    }
+    let deadline = Date().addingTimeInterval(providerMessageTimeout)
+    while Date() < deadline {
+      if let response = try? Data(contentsOf: responseURL),
+        let message = String(data: response, encoding: .utf8)
+      {
+        return message
+      }
+      try await Task.sleep(nanoseconds: 20_000_000)
+    }
+    log("provider message mailbox timeout seq=\(sequence)")
+    throw ProviderMessageError(
+      code: "network_extension_timeout",
+      message: "provider message mailbox timed out"
+    )
   }
 
   func isCoreActive() async -> Bool {

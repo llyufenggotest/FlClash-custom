@@ -40,6 +40,7 @@ final class PacketTunnelSharedStateStore {
   private let runTimeKey = "runTime"
   private let tunnelAttemptIDKey = "tunnelAttemptID"
   private let snapshotFileName = "shared-state.json"
+  private let providerMessageMailboxDirectoryName = "provider-message-mailbox"
 
   /// Startup payload delivered in memory by `startVPNTunnel(options:)`. Held for
   /// the lifetime of this start so later reads never depend on cross-process
@@ -195,6 +196,13 @@ final class PacketTunnelSharedStateStore {
     FileManager.default.containerURL(
       forSecurityApplicationGroupIdentifier:
         PacketTunnelEnvironment.appGroupIdentifier
+    )
+  }
+
+  func providerMessageMailboxDirectory() -> URL? {
+    appGroupDirectory()?.appendingPathComponent(
+      providerMessageMailboxDirectoryName,
+      isDirectory: true
     )
   }
 
