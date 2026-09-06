@@ -1,6 +1,32 @@
 import Foundation
 import os
 
+// BEGIN RPC LIFECYCLE UNIT
+// Dispatch and cancellation linearize under this lock. A callback may be
+// synchronous; recursive locking permits it without double-resuming a waiter.
+final class CoreCallbackResponse<Value>: @unchecked Sendable {
+  private let lock = NSRecursiveLock()
+  private var outcome: Result<Value, Error>?
+  private var continuation: CheckedContinuation<Value, Error>?
+  func install(_ continuation: CheckedContinuation<Value, Error>, dispatch: () -> Void) {
+    lock.lock()
+    defer { lock.unlock() }
+    if let outcome { continuation.resume(with: outcome); return }
+    self.continuation = continuation
+    dispatch()
+  }
+  func resolve(_ outcome: Result<Value, Error>) {
+    lock.lock()
+    guard self.outcome == nil else { lock.unlock(); return }
+    self.outcome = outcome
+    let waiter = continuation
+    continuation = nil
+    lock.unlock()
+    waiter?.resume(with: outcome)
+  }
+}
+// END RPC LIFECYCLE UNIT
+
 private enum AppCoreMethod: String {
   case initClash
   case getIsInit
@@ -32,6 +58,7 @@ private struct CoreRoutingError: LocalizedError {
 final class CoreMessageRouter {
   private let tunnelController: TunnelController
   private var currentRoute = CoreRoute.app
+  private var outstandingAppCalls = Set<UUID>()
   private lazy var notificationCoordinator = CoreNotificationCoordinator(
     sendMessage: { [weak self] data, route in
       guard let self else {
@@ -60,15 +87,12 @@ final class CoreMessageRouter {
   func invoke(_ data: Data) async -> String {
     let method = methodCallName(data)
     let action = notificationCoordinator.action(for: data)
-    await notificationCoordinator.prepare(for: action)
-    defer {
-      notificationCoordinator.finish(action)
-    }
-
-    let selectedRoute = currentRoute
-    let networkExtensionActive = selectedRoute == .networkExtension
-
     do {
+      try await notificationCoordinator.prepare(for: action)
+      defer { notificationCoordinator.finish(action) }
+      try Task.checkCancellation()
+      let selectedRoute = currentRoute
+      let networkExtensionActive = selectedRoute == .networkExtension
       if case .stop(let kind) = action {
         return try await sendNotificationStop(
           data,
@@ -109,6 +133,8 @@ final class CoreMessageRouter {
         )
       }
       return routedResult.response
+    } catch is CancellationError {
+      return methodErrorResponse(data: data, code: "rpc_cancelled", message: "RPC cancelled or deadline expired")
     } catch let error as CoreRoutingError {
       return methodErrorResponse(
         data: data,
@@ -132,41 +158,26 @@ final class CoreMessageRouter {
 
   func shutdownAppCore() async -> Bool {
     let methodCall = #"{"method":"shutdown","arguments":null}"#
-    return await withCheckedContinuation { continuation in
-      IOSCoreBridge.invokeMethod(methodCall) { [weak self] response in
-        guard let response,
-          let data = response.data(using: .utf8),
-          let payload = try? JSONSerialization.jsonObject(with: data)
-            as? [String: Any],
-          let success = payload["result"] as? Bool
-        else {
-          self?.log("shutdownAppCore invalid response")
-          continuation.resume(returning: false)
-          return
-        }
-        self?.log("shutdownAppCore result=\(success)")
-        continuation.resume(returning: success)
+    do {
+      let response = try await sendCoreMessage(Data(methodCall.utf8), route: .app)
+      guard let data = response.data(using: .utf8),
+        let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        let success = payload["result"] as? Bool else {
+        log("shutdownAppCore invalid response")
+        return false
       }
-    }
+      log("shutdownAppCore result=\(success)")
+      return success
+    } catch { return false }
   }
 
   private func sendRoutedCoreMessage(
     _ data: Data,
     selectedRoute: CoreRoute
   ) async throws -> (response: String, route: CoreRoute) {
-    do {
-      let response = try await sendCoreMessage(data, route: selectedRoute)
-      return (response, selectedRoute)
-    } catch {
-      guard selectedRoute == .networkExtension else {
-        throw error
-      }
-      log(
-        "route fallback networkExtension -> app: \(error.localizedDescription)"
-      )
-      let response = try await sendCoreMessage(data, route: .app)
-      return (response, .app)
-    }
+    // Failure of the selected NE is not permission to mutate/read App core.
+    let response = try await sendCoreMessage(data, route: selectedRoute)
+    return (response, selectedRoute)
   }
 
   private func sendNotificationStop(
@@ -262,6 +273,7 @@ final class CoreMessageRouter {
     _ data: Data,
     route: CoreRoute
   ) async throws -> String {
+    try Task.checkCancellation()
     switch route {
     case .app:
       guard let methodCall = String(data: data, encoding: .utf8) else {
@@ -270,12 +282,23 @@ final class CoreMessageRouter {
           message: "invalid method call"
         )
       }
-      let response: String? = await withCheckedContinuation {
-        (continuation: CheckedContinuation<String?, Never>) in
-        IOSCoreBridge.invokeMethod(methodCall) { value in
-          continuation.resume(returning: value)
-        }
+      guard outstandingAppCalls.count < 72 else {
+        throw CoreRoutingError(code: "app_core_busy", message: "app core capacity exhausted")
       }
+      let token = UUID()
+      let state = CoreCallbackResponse<String?>()
+      let response: String? = try await withTaskCancellationHandler(operation: {
+        try Task.checkCancellation()
+        return try await withCheckedThrowingContinuation { continuation in
+          state.install(continuation) {
+            outstandingAppCalls.insert(token)
+            IOSCoreBridge.invokeMethod(methodCall) { [weak self] value in
+              state.resolve(.success(value))
+              Task { @MainActor in self?.outstandingAppCalls.remove(token) }
+            }
+          }
+        }
+      }, onCancel: { state.resolve(.failure(CancellationError())) })
       guard let response else {
         throw CoreRoutingError(
           code: "empty_response",

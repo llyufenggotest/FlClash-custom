@@ -69,7 +69,6 @@ final class CoreNotificationCoordinator {
   private var migrationRetryTask: Task<Void, Never>?
   private var migrationRetryCount = 0
   private var actionInFlight = false
-  private var actionWaiters: [CheckedContinuation<Void, Never>] = []
 
   init(sendMessage: @escaping SendMessage) {
     self.sendMessage = sendMessage
@@ -100,12 +99,15 @@ final class CoreNotificationCoordinator {
     }
   }
 
-  func prepare(for action: CoreNotificationAction?) async {
-    guard action != nil else {
-      return
+  func prepare(for action: CoreNotificationAction?) async throws {
+    try Task.checkCancellation()
+    guard action != nil else { return }
+    // MainActor makes the test-and-acquire atomic between suspension points.
+    while migrationTask != nil || actionInFlight {
+      try await Task.sleep(nanoseconds: 10_000_000)
     }
-    await migrationTask?.value
-    await acquireAction()
+    try Task.checkCancellation()
+    actionInFlight = true
   }
 
   func finish(_ action: CoreNotificationAction?) {
@@ -199,21 +201,7 @@ final class CoreNotificationCoordinator {
     }
   }
 
-  private func acquireAction() async {
-    guard actionInFlight else {
-      actionInFlight = true
-      return
-    }
-    await withCheckedContinuation { continuation in
-      actionWaiters.append(continuation)
-    }
-  }
-
   private func releaseAction() {
-    guard actionWaiters.isEmpty else {
-      actionWaiters.removeFirst().resume()
-      return
-    }
     actionInFlight = false
     driveMigration()
   }

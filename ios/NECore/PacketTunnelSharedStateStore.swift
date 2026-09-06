@@ -48,6 +48,7 @@ final class PacketTunnelSharedStateStore {
   private var startOptionsData: Data?
 
   func adoptStartOptions(_ options: [String: NSObject]?) {
+    startOptionsData = nil
     guard let options else {
       return
     }
@@ -288,7 +289,7 @@ struct PacketTunnelVPNOptions: Decodable {
       forKey: .bypassDomain
     ) ?? []
     stack = try container.decodeIfPresent(String.self, forKey: .stack) ?? "gvisor"
-    mtu = try container.decodeIfPresent(Int.self, forKey: .mtu) ?? 9000
+    mtu = min(1500, max(1280, try container.decodeIfPresent(Int.self, forKey: .mtu) ?? 1500))
     routeAddress = try container.decodeIfPresent(
       [String].self,
       forKey: .routeAddress
