@@ -143,6 +143,7 @@ var (
 )
 
 func handleStopTun() {
+	cancelDelayTests()
 	tunLock.Lock()
 	defer tunLock.Unlock()
 	if tunHandler != nil {

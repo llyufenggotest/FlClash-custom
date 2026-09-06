@@ -84,7 +84,11 @@ void main() {
     expect(iosApp, contains('cache-app.db'));
     expect(common, contains('applyDNSListenerOwnership(currentConfig)'));
     expect(common, contains('cfg.DNS.Listen = ""'));
-    expect(hub, contains('constant.SetCacheFileName(secondaryCacheFileName)'));
+    expect(hub, contains('cacheName := secondaryCacheFileName'));
+    expect(hub, contains('if features.IOS && !features.WithLowMemory {'));
+    expect(hub, contains('runnerCacheFileName(params.HomeDir, processHome)'));
+    expect(hub, contains('constant.SetCacheFileName(cacheName)'));
+    expect(hub, isNot(contains('constant.SetCacheFileName(secondaryCacheFileName)')));
     expect(path, contains('func SetCacheFileName'));
     expect(path, contains('p.cacheFileName()'));
   });

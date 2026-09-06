@@ -70,45 +70,18 @@ func TestStartTunReportsRealResult(t *testing.T) {
 	}
 }
 
-func TestRuleProviderFirstFetchIsDeferredOnIOSExtension(t *testing.T) {
+func TestRuleProviderPreflightPrecedesTunnelMutation(t *testing.T) {
 	exec := readRepoFile(t, filepath.Join("mihomo", "hub", "executor", "executor.go"))
-
-	// ApplyConfig must call the gated wrapper, not loadProvider directly, for
-	// rule providers.
-	if !strings.Contains(exec, "loadRuleProviders(cfg.RuleProviders)") {
-		t.Error("ApplyConfig must route rule providers through loadRuleProviders")
+	preflight := strings.Index(exec, "preflightRuleProviders(cfg.RuleProviders, features.WithLowMemory)")
+	suspend := strings.Index(exec, "tunnel.OnSuspend()")
+	if preflight < 0 || preflight > suspend {
+		t.Fatal("rule admission must precede tunnel mutation")
 	}
-	if strings.Contains(exec, "loadProvider(cfg.RuleProviders)") {
-		t.Error("ApplyConfig still calls loadProvider(cfg.RuleProviders) directly")
+	if strings.Contains(exec, "go loadProvider(providers)") {
+		t.Fatal("async empty-rule startup is forbidden")
 	}
-	// Proxy providers stay synchronous: groups reference them immediately.
-	if !strings.Contains(exec, "loadProvider(cfg.Providers)") {
-		t.Error("proxy providers must still load synchronously")
-	}
-	if !strings.Contains(exec, "func loadRuleProviders[T P.Provider]") {
-		t.Error("loadRuleProviders must exist")
-	}
-	if !strings.Contains(exec, "go loadProvider(providers)") {
-		t.Error("loadRuleProviders must dispatch asynchronously when gated")
-	}
-
-	// The gate must be a build-tagged constant with both variants present, so
-	// only the iOS Network Extension defers.
-	iosVariant := readRepoFile(t, filepath.Join(
-		"mihomo", "hub", "executor", "rule_provider_defer_ios_lowmem.go"))
-	if !strings.Contains(iosVariant, "//go:build ios && with_low_memory") {
-		t.Error("iOS variant must be tagged `ios && with_low_memory`")
-	}
-	if !strings.Contains(iosVariant, "deferRuleProviderInitial = true") {
-		t.Error("iOS extension variant must defer")
-	}
-
-	defaultVariant := readRepoFile(t, filepath.Join(
-		"mihomo", "hub", "executor", "rule_provider_defer_default.go"))
-	if !strings.Contains(defaultVariant, "//go:build !(ios && with_low_memory)") {
-		t.Error("default variant must carry the negated build tag")
-	}
-	if !strings.Contains(defaultVariant, "deferRuleProviderInitial = false") {
-		t.Error("non-iOS builds must keep the synchronous first fetch")
+	core := readRepoFile(t, "common.go")
+	if !strings.Contains(core, "err = hub.ApplyConfig(nextConfig)") {
+		t.Fatal("core must propagate startup errors")
 	}
 }

@@ -26,8 +26,27 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     sharedStateStore: sharedStateStore
   )
   private lazy var mailbox = ProviderMessageMailbox(
-    sharedStateStore: sharedStateStore
+    directory: sharedStateStore.providerMessageMailboxDirectory(),
+    invoke: { data, reply in NECoreBridge.invokeMethod(data) { reply($0) } },
+    markResponsive: { [weak self] in self?.eventQueue.markCoreResponsive() }
   )
+  private let lifecycleQueue = DispatchQueue(label: "com.follow.clash.ne.lifecycle")
+  private var generation: UInt64 = 0
+  private var pendingStart: ((Error?) -> Void)?
+  private lazy var setupBarrier = CoreSetupStopBarrier { [weak self] completion in
+    guard let self else { return }
+    // shutdown closes ordinary listeners too; stopTun alone only closes TUN.
+    let request = Data(#"{"method":"shutdown","arguments":null}"#.utf8)
+    NECoreBridge.invokeMethod(request) { data in
+      self.lifecycleQueue.async {
+        let object = data.flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]
+        let success = object?["result"] as? Bool == true
+          && (object?["error"] == nil || object?["error"] is NSNull)
+        if success { NECoreBridge.stopTun() }
+        completion(success)
+      }
+    }
+  }
   private let logger = Logger(
     subsystem: PacketTunnelEnvironment.extensionBundleIdentifier,
     category: "PacketTunnelProvider"
@@ -42,6 +61,26 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     options: [String: NSObject]?,
     completionHandler: @escaping (Error?) -> Void
   ) {
+    lifecycleQueue.async {
+      self.beginStart(options: options, completionHandler: completionHandler)
+    }
+  }
+
+  private func beginStart(options: [String: NSObject]?, completionHandler: @escaping (Error?) -> Void) {
+    // Do not overlap two Go quickSetup operations in one provider instance.
+    guard pendingStart == nil, !didStartTun, setupBarrier.canStart else {
+      completionHandler(PacketTunnelProviderError.startCancelled)
+      return
+    }
+    generation &+= 1
+    let attempt = generation
+    pendingStart?(PacketTunnelProviderError.startCancelled)
+    pendingStart = completionHandler
+    let completionHandler: (Error?) -> Void = { error in
+      guard self.generation == attempt, let pending = self.pendingStart else { return }
+      self.pendingStart = nil
+      pending(error)
+    }
     NECoreSideloadCompatibilityLoader.loadIfPresent()
     logger.info("startTunnel begin")
     nativeLog("startTunnel begin")
@@ -72,6 +111,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     setTunnelNetworkSettings(
       networkConfiguration.makeSettings(for: vpnOptions)
     ) { error in
+      self.lifecycleQueue.async {
+      guard self.generation == attempt, self.pendingStart != nil else { return }
       if let error {
         self.logger.error(
           "setTunnelNetworkSettings failed: \(error.localizedDescription, privacy: .public)"
@@ -100,16 +141,19 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         "startTunnel fileDescriptor=\(tunnelFileDescriptor, privacy: .public)"
       )
       self.eventQueue.start()
-      self.mailbox.start()
       self.didStartEventQueue = true
       let initParams = self.sharedStateStore.makeInitParams()
       let setupParams = self.sharedStateStore.loadSetupParams()
       self.logger.info("quickSetup begin")
       self.nativeLog("quickSetup begin setupParamsPresent=\(!setupParams.isEmpty)")
+      guard self.setupBarrier.beginSetup() else { return }
       NECoreBridge.quickSetup(
         withInitParams: initParams,
         setupParams: setupParams
       ) { result in
+        self.lifecycleQueue.async {
+        self.setupBarrier.finishSetup()
+        guard self.generation == attempt, self.pendingStart != nil else { return }
         if let result,
           !result.isEmpty
         {
@@ -151,6 +195,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         self.nativeLog("startTun result=\(started)")
         if started {
           self.didStartTun = true
+          self.mailbox.start()
           self.sharedStateStore.saveRunTime()
           self.resourceHeartbeat.start()
         } else {
@@ -160,6 +205,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         completionHandler(
           started ? nil : PacketTunnelProviderError.couldNotStartCoreTun
         )
+        }
+      }
       }
     }
   }
@@ -168,6 +215,16 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     with reason: NEProviderStopReason,
     completionHandler: @escaping () -> Void
   ) {
+    lifecycleQueue.async {
+      self.finishStop(reason: reason, completionHandler: completionHandler)
+    }
+  }
+
+  private func finishStop(reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
+    generation &+= 1
+    let pending = pendingStart
+    pendingStart = nil
+    pending?(PacketTunnelProviderError.startCancelled)
     logger.info("stopTunnel reason=\(reason.rawValue, privacy: .public)")
     nativeLog("stopTunnel reason=\(reason.rawValue)")
     sharedStateStore.clearRunTime()
@@ -178,7 +235,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     resourceHeartbeat.stop()
     NECoreBridge.stopTun()
     didStartTun = false
-    completionHandler()
+    // If quickSetup is still applying configuration, wait for its callback,
+    // then shutdown and confirm resource retirement before acknowledging stop.
+    setupBarrier.stop(completionHandler)
   }
 
   override func handleAppMessage(
@@ -188,45 +247,31 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     logger.debug(
       "handleAppMessage bytes=\(messageData.count, privacy: .public)"
     )
-    eventQueue.markCoreResponsive()
-    guard let completionHandler else {
-      logger.warning("handleAppMessage ignored: missing completion handler")
-      return
-    }
-
-    NECoreBridge.invokeMethod(messageData) { response in
-      guard let response else {
-        self.logger.warning("handleAppMessage empty core response")
-        completionHandler(
-          self.methodErrorResponse(
-            messageData: messageData,
-            code: "empty_response",
-            message: "empty core response"
-          )
-        )
-        return
-      }
-      self.logger.debug(
-        "handleAppMessage response bytes=\(response.count, privacy: .public)"
-      )
-      completionHandler(response)
+    guard let completionHandler else { return }
+    lifecycleQueue.async {
+      guard self.didStartTun else { completionHandler(nil); return }
+      self.mailbox.handle(messageData, completion: completionHandler)
     }
   }
 
   override func sleep(completionHandler: @escaping () -> Void) {
-    if suspendSupport {
-      logger.info("sleep: suspending tunnel")
-      nativeLog("sleep suspending=true")
+    lifecycleQueue.async {
+    if self.didStartTun && self.suspendSupport {
+      self.logger.info("sleep: suspending tunnel")
+      self.nativeLog("sleep suspending=true")
       NECoreBridge.setSuspended(true)
     }
     completionHandler()
+    }
   }
 
   override func wake() {
-    if suspendSupport {
-      logger.info("wake: resuming tunnel")
-      nativeLog("wake suspended=false")
+    lifecycleQueue.async {
+    if self.didStartTun && self.suspendSupport {
+      self.logger.info("wake: resuming tunnel")
+      self.nativeLog("wake suspended=false")
       NECoreBridge.setSuspended(false)
+    }
     }
   }
 
@@ -281,6 +326,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     }
     NECoreBridge.stopTun()
     didStartTun = false
+    setupBarrier.stop {}
   }
 
   private func safeError(_ error: Error) -> String {
@@ -301,6 +347,52 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
   }
 }
 
+// BEGIN RPC LIFECYCLE UNIT
+// Confined to the provider lifecycle queue. Failed/missing cleanup deliberately
+// keeps the barrier closed: only process teardown is safe in that condition.
+final class CoreSetupStopBarrier {
+  private var setupOutstanding = false
+  private var stopping = false
+  private var cleanupOutstanding = false
+  private var cleanupFailed = false
+  private var cleanupGeneration: UInt64 = 0
+  private var completions: [() -> Void] = []
+  private let cleanup: (@escaping (Bool) -> Void) -> Void
+  init(cleanup: @escaping (@escaping (Bool) -> Void) -> Void) { self.cleanup = cleanup }
+  var canStart: Bool { !setupOutstanding && !stopping }
+  func beginSetup() -> Bool {
+    guard canStart else { return false }
+    setupOutstanding = true
+    return true
+  }
+  func finishSetup() {
+    guard setupOutstanding else { return }
+    setupOutstanding = false
+    driveCleanup()
+  }
+  func stop(_ completion: @escaping () -> Void) {
+    stopping = true
+    completions.append(completion)
+    driveCleanup()
+  }
+  private func driveCleanup() {
+    guard stopping, !setupOutstanding, !cleanupOutstanding, !cleanupFailed else { return }
+    cleanupOutstanding = true
+    cleanupGeneration &+= 1
+    let attempt = cleanupGeneration
+    cleanup { success in
+      guard self.cleanupOutstanding, self.cleanupGeneration == attempt else { return }
+      self.cleanupOutstanding = false
+      guard success else { self.cleanupFailed = true; return }
+      self.stopping = false
+      let pending = self.completions
+      self.completions.removeAll()
+      pending.forEach { $0() }
+    }
+  }
+}
+// END RPC LIFECYCLE UNIT
+
 private struct CoreTunOptions: Encodable {
   let stack: String
   let address: String
@@ -311,12 +403,15 @@ private struct CoreTunOptions: Encodable {
 }
 
 private enum PacketTunnelProviderError: LocalizedError {
+  case startCancelled
   case missingVPNOptions
   case couldNotDetermineFileDescriptor
   case couldNotStartCoreTun
 
   var errorDescription: String? {
     switch self {
+    case .startCancelled:
+      return "tunnel start cancelled"
     case .missingVPNOptions:
       return "missing VPN options"
     case .couldNotDetermineFileDescriptor:

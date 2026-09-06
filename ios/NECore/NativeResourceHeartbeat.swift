@@ -8,12 +8,10 @@ final class NativeResourceHeartbeat {
   private var warnReported = false
   private var lastReclaimUptime: TimeInterval = 0
 
-  /// iOS terminates a packet-tunnel provider near a ~50 MB phys_footprint.
-  /// The 2026-08-29 22:46 traces pinned the real death line: four consecutive
-  /// tunnel lives each logged a final heartbeat of 43, 48, 47 and 47 MB and were
-  /// killed on the very next tick, so the effective ceiling is around 48 MB, not
-  /// 50. Warning and reclaim thresholds sit low enough to leave a reaction
-  /// window before that line.
+  /// Historical traces ended with samples at 43–48 MB. Missing subsequent
+  /// samples alone do not establish jetsam or a universal process memory limit.
+  /// These thresholds are operational tuning, not OS guarantees; correlate
+  /// device JetsamEvent reports and pressure tests before adjusting them.
   ///
   /// Reclaiming is only a backstop. Those traces also showed
   /// `memory_pressure_reclaimed` reporting the same or a higher footprint,
@@ -42,14 +40,16 @@ final class NativeResourceHeartbeat {
   // So the trigger adapts. A reclaim that frees real memory keeps the base
   // threshold and cooldown. A reclaim that frees nothing counts towards a
   // streak, and after `ineffectiveStreakLimit` consecutive misses the effective
-  // threshold escalates towards the death line and the cooldown backs off
-  // exponentially. The backstop survives (48 MB still reclaims promptly once
-  // escalated, which is what saved the tunnel in the trace) while a healthy
-  // plateau stops paying for pointless GC.
+  // threshold increases and the cooldown backs off exponentially. A separate
+  // emergency watermark bypasses that adaptive delay, with its own short rate
+  // limit. GC cannot free live objects or guarantee prevention of termination.
   private static let minEffectiveYieldMB = 2
   private static let ineffectiveStreakLimit = 3
   private static let escalatedReclaimMB = 44
   private static let maxReclaimCooldown: TimeInterval = 120
+  // Tunable pressure trigger, explicitly NOT an iOS hard memory limit.
+  private static let emergencyReclaimMB = 48
+  private static let emergencyReclaimCooldown: TimeInterval = 2
 
   /// Live reclaim tuning. Kept as a value type so the escalation rule is a pure
   /// function that can be unit-tested without a running extension.
@@ -126,7 +126,7 @@ final class NativeResourceHeartbeat {
     // *escalated* threshold, not the warning one: the trace put the steady-state
     // median at 38 MB, so exempting everything above the 30 MB warning line
     // exempted 96.5% of samples and threw the throttle away. p90 was 42 and p99
-    // 43, so 44 MB and up is genuinely the run-up to the 48 MB kill.
+    // 43. Treat 44 MB and up as elevated pressure, not proof of imminent jetsam.
     if footprintMB >= escalatedReclaimMB { return true }
     // The first sample of a tunnel life is always logged: there is no baseline
     // to compare against, and inventing one via a sentinel is what overflowed.
@@ -177,11 +177,11 @@ final class NativeResourceHeartbeat {
           "memory_pressure_warning footprint_mb=\(usage.footprintMB) threshold_mb=\(Self.footprintWarningMB)"
         )
       }
-      guard usage.footprintMB >= self.reclaimPolicy.thresholdMB else { return }
       guard Self.shouldReclaim(
+        footprintMB: usage.footprintMB,
         uptimeSeconds: uptimeSeconds,
         lastReclaimUptime: self.lastReclaimUptime,
-        cooldown: self.reclaimPolicy.cooldown
+        policy: self.reclaimPolicy
       ) else { return }
       self.lastReclaimUptime = uptimeSeconds
       NativeDiagnosticLog.shared.append(
@@ -200,6 +200,25 @@ final class NativeResourceHeartbeat {
     }
     self.timer = timer
     timer.resume()
+  }
+
+  /// Emergency pressure is independent of the ineffective-GC backoff, but
+  /// remains rate limited to avoid a per-tick heap walk on a live-object plateau.
+  static func shouldReclaim(
+    footprintMB: Int,
+    uptimeSeconds: TimeInterval,
+    lastReclaimUptime: TimeInterval,
+    policy: ReclaimPolicy
+  ) -> Bool {
+    if footprintMB >= emergencyReclaimMB {
+      return shouldReclaim(uptimeSeconds: uptimeSeconds,
+                           lastReclaimUptime: lastReclaimUptime,
+                           cooldown: emergencyReclaimCooldown)
+    }
+    guard footprintMB >= policy.thresholdMB else { return false }
+    return shouldReclaim(uptimeSeconds: uptimeSeconds,
+                         lastReclaimUptime: lastReclaimUptime,
+                         cooldown: policy.cooldown)
   }
 
   /// First crossing always reclaims; later crossings wait out the cooldown,

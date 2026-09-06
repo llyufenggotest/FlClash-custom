@@ -11,6 +11,7 @@ const disableDNSListener = true
 
 const dnsListenerOwner = "network-extension"
 
-// Distinct cache file: bbolt holds an exclusive lock, so sharing one file makes
-// whichever process opens second fail with "can't open cache file: timeout".
+// The iOS app initializer relocates this cache into its validated private
+// Application Support/RunnerCore directory; the name alone is not isolation
+// from shared-container suspension locks. NE keeps the canonical shared cache.
 const secondaryCacheFileName = "cache-app.db"

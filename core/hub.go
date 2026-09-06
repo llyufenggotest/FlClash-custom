@@ -74,11 +74,26 @@ type StampedLogEvent struct {
 func handleInitClash(params *InitParams) bool {
 	runLock.Lock()
 	defer runLock.Unlock()
+	cacheName := secondaryCacheFileName
+	if features.IOS && !features.WithLowMemory {
+		processHome, err := os.UserHomeDir()
+		if err == nil {
+			cacheName, err = runnerCacheFileName(params.HomeDir, processHome)
+		}
+		if err != nil {
+			log.Errorln("[APP cache] private path validation failed: %v", err)
+			return false
+		}
+	}
 	version = params.Version
 	constant.SetHomeDir(params.HomeDir)
-	if secondaryCacheFileName != "" {
-		// Avoid racing the process that owns the canonical bbolt cache.
-		constant.SetCacheFileName(secondaryCacheFileName)
+	if cacheName != "" {
+		constant.SetCacheFileName(cacheName)
+	}
+	if features.IOS && !features.WithLowMemory {
+		// Path intent only: cachefile opens lazily and retains its bbolt lock.
+		// Do not close the sync.Once singleton on background/shutdown.
+		log.Infoln("[APP cache] pid=%d path=%s scope=private lock=lifetime-on-open open-state=not-probed", os.Getpid(), constant.Path.Cache())
 	}
 	constant.Path.MMDB()
 	constant.Path.ASN()
@@ -253,8 +268,10 @@ func handleResetTraffic() {
 }
 
 func handleAsyncTestDelay(params *TestDelayParams, fn func(*Delay)) {
-	batchKey := params.ProxyName + "\x00" + params.TestUrl
-	mBatch.Go(batchKey, func() (bool, error) {
+	// Copy caller-owned parameters before asynchronous scheduling.
+	request := *params
+	params = &request
+	scheduleDelayTest(time.Millisecond*time.Duration(params.Timeout), func(ctx context.Context) {
 		testUrl := params.TestUrl
 		if testUrl == "" {
 			testUrl = constant.DefaultTestURL
@@ -268,28 +285,30 @@ func handleAsyncTestDelay(params *TestDelayParams, fn func(*Delay)) {
 		expectedStatus, err := utils.NewUnsignedRanges[uint16]("")
 		if err != nil {
 			fn(delayData)
-			return false, nil
+			return
 		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond*time.Duration(params.Timeout))
-		defer cancel()
 
 		proxies := tunnel.AllProxies()
 		proxy := proxies[params.ProxyName]
 
 		if proxy == nil {
 			fn(delayData)
-			return false, nil
+			return
 		}
 		delay, err := proxy.URLTest(ctx, testUrl, expectedStatus)
 		if err != nil || delay == 0 {
 			fn(delayData)
-			return false, nil
+			return
 		}
 
 		delayData.Value = int32(delay)
 		fn(delayData)
-		return false, nil
+	}, func() {
+		testURL := params.TestUrl
+		if testURL == "" {
+			testURL = constant.DefaultTestURL
+		}
+		fn(&Delay{Name: params.ProxyName, Url: testURL, Value: -1})
 	})
 }
 

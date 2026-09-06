@@ -2,7 +2,6 @@ package main
 
 import (
 	b "bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,7 +15,6 @@ import (
 	"github.com/metacubex/mihomo/adapter/inbound"
 	"github.com/metacubex/mihomo/adapter/outboundgroup"
 	"github.com/metacubex/mihomo/adapter/provider"
-	"github.com/metacubex/mihomo/common/batch"
 	"github.com/metacubex/mihomo/component/dialer"
 	"github.com/metacubex/mihomo/component/resolver"
 	"github.com/metacubex/mihomo/component/updater"
@@ -38,7 +36,6 @@ var (
 	version       = 0
 	isRunning     = false
 	runLock       sync.Mutex
-	mBatch, _     = batch.New[bool](context.Background(), batch.WithConcurrencyNum[bool](delayBatchConcurrency))
 	debugError    = false
 )
 
@@ -140,6 +137,7 @@ func updateListeners() {
 }
 
 func stopListeners() {
+	cancelDelayTests()
 	listener.StopListener()
 }
 
@@ -339,17 +337,20 @@ func updateConfig(params *UpdateParams) {
 }
 
 func applyConfig(params *SetupParams) error {
+	cancelDelayTests()
 	runtime.GC()
 	runLock.Lock()
 	defer runLock.Unlock()
-	var err error
-	constant.DefaultTestURL = params.TestURL
-	currentConfig, err = executor.ParseWithPath(filepath.Join(constant.Path.HomeDir(), "config.yaml"))
+	nextConfig, err := executor.ParseWithPath(filepath.Join(constant.Path.HomeDir(), "config.yaml"))
 	if err != nil {
-		currentConfig, _ = config.ParseRawConfig(config.DefaultRawConfig())
+		return err
 	}
-	applyDNSListenerOwnership(currentConfig)
-	hub.ApplyConfig(currentConfig)
+	applyDNSListenerOwnership(nextConfig)
+	if err = hub.ApplyConfig(nextConfig); err != nil {
+		return err
+	}
+	currentConfig = nextConfig
+	constant.DefaultTestURL = params.TestURL
 	patchSelectGroup(params.SelectedMap)
 	updateListeners()
 	if features.WithLowMemory {

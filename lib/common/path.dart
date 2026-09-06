@@ -106,6 +106,11 @@ class AppPath {
     }
     await for (final entity in source.list(recursive: true)) {
       final relativePath = relative(entity.path, from: source.path);
+      // Runner's long-lived bbolt cache must never be mirrored to App Group.
+      // No migration of the old shared cache: it may still be locked by a core.
+      if (split(relativePath).first == 'RunnerCore') {
+        continue;
+      }
       final targetPath = join(target.path, relativePath);
       if (entity is Directory) {
         await Directory(targetPath).create(recursive: true);

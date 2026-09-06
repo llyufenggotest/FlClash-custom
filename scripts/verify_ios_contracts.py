@@ -14,6 +14,18 @@ def check(path, present=(), absent=()):
             failures.append('%s should not contain %r' % (path, n))
 
 
+def check_order(path, *needles):
+    """Assert data-flow ordering, not just disconnected token presence."""
+    text = Path(path).read_text(encoding='utf-8', errors='replace')
+    cursor = 0
+    for needle in needles:
+        position = text.find(needle, cursor)
+        if position < 0:
+            failures.append('%s missing ordered %r after offset %d' % (path, needle, cursor))
+            return
+        cursor = position + len(needle)
+
+
 check(
     'core/dns_listener_default.go',
     present=[
@@ -35,18 +47,32 @@ check(
 
 check(
     'core/common.go',
-    present=[
-        'applyDNSListenerOwnership(currentConfig)',
-        'cfg.DNS.Listen = ""',
-        'releaseReloadMemory()',
-        'debug.FreeOSMemory()',
-        'features.WithLowMemory',
-    ],
+    present=['applyDNSListenerOwnership(nextConfig)', 'cfg.DNS.Listen = ""', 'releaseReloadMemory()', 'debug.FreeOSMemory()', 'features.WithLowMemory'],
 )
 
 check(
     'core/hub.go',
-    present=['constant.SetCacheFileName(secondaryCacheFileName)'],
+    present=[
+        'cacheName := secondaryCacheFileName',
+        'if features.IOS && !features.WithLowMemory {',
+        'runnerCacheFileName(params.HomeDir, processHome)',
+        'private path validation failed',
+        'constant.SetCacheFileName(cacheName)',
+    ],
+    absent=['constant.SetCacheFileName(secondaryCacheFileName)'],
+)
+check(
+    'core/runner_cache_path.go',
+    present=[
+        'filepath.IsAbs(processHome)', 'filepath.IsAbs(sharedHome)',
+        'filepath.EvalSymlinks(processHome)',
+        '/Containers/Data/Application/',
+        '"Library", "Application Support", "RunnerCore"',
+        'filepath.EvalSymlinks(dir)', 'filepath.Rel(privateHome, resolved)',
+        'Runner cache directory escapes private data container',
+        'os.Lstat(cachePath)', 'info.Mode().IsRegular()',
+        'filepath.Rel(filepath.Clean(sharedHome), cachePath)',
+    ],
 )
 
 check(
@@ -224,10 +250,53 @@ check(
     ],
 )
 
+# Manual requests are bounded before goroutine creation; actual URLTest work
+# shares one budget across manual, group and provider-health-check entry points.
+# Contracts moved to build-tag-specific scheduler and to the new ApplyConfig/preflight flow.
+check('core/delay_scheduler_extension.go', present=['manualProbes = probelimit.New(delayBatchConcurrency*5, 0)', 'manualProbes.CancelAll()', 'probelimit.Default.CancelAll()', 'manualProbes.Acquire(ctx)', 'defer release()'])
+check('core/delay_scheduler_default.go', present=['manualProbeSlots = make(chan struct{}, delayBatchConcurrency)', 'func cancelDelayTests() {}'])
+check('core/mihomo/adapter/adapter.go', present=['ctx, release, err = probelimit.Default.Acquire(ctx)', 'if probelimit.Enabled && ctx.Err() == context.Canceled {'])
+check('core/mihomo/hub/executor/executor.go', present=['loadProvider(providers)'])
+check('core/mihomo/rules/provider/lowmem_budget_lowmem.go', present=['maxLowMemoryRuleCount = extensionRawRuleBudget'])
+check('core/lib.go', present=['func handleStopTun() {\n\tcancelDelayTests()'])
 check(
-    'core/common.go',
-    present=['batch.WithConcurrencyNum[bool](delayBatchConcurrency)'],
-    absent=['batch.WithConcurrencyNum[bool](50)'],
+    'core/hub.go',
+    present=['func handleAsyncTestDelay(', 'request := *params', 'proxy.URLTest(ctx, testUrl, expectedStatus)'],
+    absent=['mBatch.Go', 'batchKey :='],
+)
+check(
+    'core/mihomo/common/probelimit/limiter.go',
+    present=[
+        'Default = New(activeLimit, activeLimit*4)',
+        'admitted: make(chan struct{}, active+queued)',
+        'return nil, nil, ErrBusy', 'context.AfterFunc(l.generation, cancel)',
+        'case <-ctx.Done():', 'var once sync.Once',
+        'once.Do(func() { <-l.active; cleanup() })',
+    ],
+)
+check(
+    'core/mihomo/adapter/adapter.go',
+    present=[
+        'ctx, release, err = probelimit.Default.Acquire(ctx)',
+        'defer release()', 'if probelimit.Enabled && ctx.Err() == context.Canceled {',
+        'p.historyMu.Lock()', 'if len(p.extraOrder) >= 16 {',
+        'p.extra.Delete(p.extraOrder[0])',
+    ],
+)
+check(
+    'core/delay_scheduler_test.go',
+    present=[
+        'func TestManualProbeOverloadRespondsOnce(',
+        'func TestManualProbeExpiredRespondsOnce(',
+        'func TestStopCancelsProbeGenerations(',
+    ],
+)
+check(
+    'core/mihomo/common/probelimit/limiter_test.go',
+    present=[
+        'func TestBoundCancelAndReuse(', 'func TestQueuedDeadline(',
+        'func TestCancelAllQueued(',
+    ],
 )
 
 check(
@@ -436,8 +505,6 @@ check(
     present=[
         'loadRuleProviders(cfg.RuleProviders)',
         'func loadRuleProviders[T P.Provider]',
-        'go loadProvider(providers)',
-        # Proxy providers must stay synchronous: groups reference them at once.
         'loadProvider(cfg.Providers)',
     ],
     absent=['loadProvider(cfg.RuleProviders)'],
@@ -591,7 +658,7 @@ check(
 # the finished bitmap instead (~18 MB), so no rules have to be dropped.
 check(
     'core/mihomo/rules/provider/lowmem_budget_lowmem.go',
-    present=['//go:build with_low_memory', 'maxLowMemoryRuleCount = 10000'],
+    present=['//go:build with_low_memory', 'maxLowMemoryRuleCount = extensionRawRuleBudget'],
 )
 check(
     'core/mihomo/rules/provider/lowmem_budget_default.go',
@@ -600,11 +667,26 @@ check(
 check(
     'core/mihomo/rules/provider/mrs_sidecar.go',
     present=[
-        'func sidecarUsable(',
-        'func loadFromSidecar(',
-        'func writeSidecar(',
-        'sc.ModTime().Before(src.ModTime())',
+        'func loadFromSidecar(path string, source []byte, behavior P.RuleBehavior)',
+        'func writeSidecar(vehiclePath string, source []byte, behavior P.RuleBehavior, strategy ruleStrategy)',
+        'const sidecarMagic = "MRS-SC02"',
+        'const sidecarHeaderSize = len(sidecarMagic) + 2*sha256.Size',
+        'len(buf) < sidecarHeaderSize',
+        'string(buf[:len(sidecarMagic)]) != sidecarMagic',
+        'sourceHash := sha256.Sum256(source)',
+        'payload := buf[sidecarHeaderSize:]',
+        'payloadHash := sha256.Sum256(payload)',
+        '!bytes.Equal(buf[len(sidecarMagic):len(sidecarMagic)+sha256.Size], sourceHash[:])',
+        '!bytes.Equal(buf[len(sidecarMagic)+sha256.Size:sidecarHeaderSize], payloadHash[:])',
+        'rulesMrsParse(payload, newStrategy(behavior, nil))',
+        'envelope.Write(sourceHash[:])', 'envelope.Write(payloadHash[:])',
+        'envelope.Write(payload.Bytes())',
+        'os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")',
+        'defer os.Remove(tmp.Name())',
+        'tmp.Write(envelope.Bytes())', 'tmp.Sync()', 'tmp.Close()',
+        'os.Rename(tmp.Name(), path)',
     ],
+    absent=['func sidecarUsable(', '.ModTime()', 'os.Stat(', 'path + ".tmp"'],
 )
 # The sidecar must be tried BEFORE the raw parse on the capped build, and
 # written only on an uncapped one.
@@ -612,9 +694,9 @@ check(
     'core/mihomo/rules/provider/provider.go',
     present=[
         'if maxLowMemoryRuleCount > 0 && format != P.MrsRule {',
-        'sidecarUsable(vehicle.Path())',
+        'loadFromSidecar(sidecarPath(vehicle.Path()), bytes, behavior)',
         'if maxLowMemoryRuleCount == 0 && format != P.MrsRule {',
-        'writeSidecar(vehicle.Path(), behavior, strategy)',
+        'writeSidecar(vehicle.Path(), bytes, behavior, strategy)',
     ],
 )
 # The rule-count cap must gate the TRIE path only. Capping the MRS reader would
@@ -633,6 +715,58 @@ check(
         'func TestCorruptSidecarErrors(',
     ],
 )
+
+# These remain source contracts, not a substitute for running the Go behavior
+# suites in default and with_low_memory builds or measuring a physical device.
+check(
+    'core/mihomo/rules/provider/mrs_freshness_test.go',
+    present=[
+        'func TestSidecarSurvivesIdenticalRawTouch(',
+        'func TestSidecarRejectsDifferentParserInput(',
+        'func TestSidecarRejectsPayloadCorruptionAndWrongBehavior(',
+        'func TestFetcherFirstDownloadAndChangedDownload(',
+        'same-size same-mtime changed source accepted',
+        'errors.Is(err, ErrRuleSetTooLarge)',
+        'injected cache write failure',
+        'assertDomainRules(t, rp.strategy, "host", 12000)',
+        'assertDomainRules(t, second.strategy, "next", 12000)',
+        'for i := 0; i < n; i++ {',
+        's.Match(metadataForHost(',
+    ],
+)
+check_order(
+    'core/hub.go', 'func handleAsyncTestDelay(', 'request := *params',
+    'scheduleDelayTest(', 'proxy.URLTest(', 'fn(delayData)',
+)
+check_order(
+    'core/hub.go', 'runnerCacheFileName(params.HomeDir, processHome)',
+    'if err != nil {', 'return false', 'constant.SetHomeDir(params.HomeDir)',
+    'constant.SetCacheFileName(cacheName)',
+)
+check_order(
+    'core/mihomo/rules/provider/provider.go',
+    'if maxLowMemoryRuleCount > 0 && format != P.MrsRule {',
+    'loadFromSidecar(sidecarPath(vehicle.Path()), bytes, behavior)',
+    'if err == nil {', 'return strategy, nil',
+    'strategy, err := rulesParse(bytes,', 'if err != nil {', 'return nil, err',
+    'if maxLowMemoryRuleCount == 0 && format != P.MrsRule {',
+    'writeSidecar(vehicle.Path(), bytes, behavior, strategy)',
+)
+check_order(
+    'core/mihomo/rules/provider/mrs_sidecar.go',
+    'buf, err := os.ReadFile(path)', 'sourceHash := sha256.Sum256(source)',
+    'payload := buf[sidecarHeaderSize:]', 'payloadHash := sha256.Sum256(payload)',
+    'return nil, fmt.Errorf("MRS sidecar content hash mismatch;',
+    'return rulesMrsParse(payload, newStrategy(behavior, nil))',
+)
+check_order(
+    'core/mihomo/rules/provider/mrs_sidecar.go',
+    'os.CreateTemp(', 'tmp.Write(envelope.Bytes())', 'tmp.Sync()',
+    'tmp.Close()', 'if err == nil {', 'os.Rename(tmp.Name(), path)',
+)
+sidecar_source = Path('core/mihomo/rules/provider/mrs_sidecar.go').read_text(encoding='utf-8')
+if sidecar_source.count('os.ReadFile(') != 1:
+    failures.append('mrs_sidecar.go must validate and parse a single read buffer')
 
 if failures:
     for f in failures:

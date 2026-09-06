@@ -108,6 +108,8 @@ jobs:
           (cd core/mihomo && CGO_ENABLED=0 go test -tags with_low_memory ./rules/provider/ -count=1)
           (cd core/mihomo && CGO_ENABLED=0 go test ./rules/provider/ -count=1)
           python3 scripts/verify_ios_contracts.py
+          python3 scripts/test_necore_diagnostics_behavior.py
+          python3 test/ios_rpc/run.py
           flutter test test/common/fastup_subscription_test.dart
           flutter test test/oppa_yaml_test.dart
           flutter test test/ios_network_extension_audit_test.dart
