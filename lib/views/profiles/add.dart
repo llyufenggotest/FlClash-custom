@@ -162,6 +162,7 @@ class _URLFormDialogState extends State<URLFormDialog> {
           children: [
             TextField(
               keyboardType: TextInputType.url,
+              textInputAction: TextInputAction.next,
               minLines: 1,
               maxLines: 5,
               inputFormatters: TextInputLimits.limit(TextInputLimits.url),
@@ -176,7 +177,8 @@ class _URLFormDialogState extends State<URLFormDialog> {
               ),
             ),
             TextField(
-              textInputAction: TextInputAction.next,
+              textInputAction: TextInputAction.done,
+              onSubmitted: (_) => _handleAddProfileFormURL(),
               controller: _ageSecretKeyController,
               obscureText: _obscureAgeSecretKey,
               maxLines: 1,

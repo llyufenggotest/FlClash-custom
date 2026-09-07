@@ -410,6 +410,16 @@ enum RuleAction {
 }
 
 extension RuleActionExt on RuleAction {
+  bool get hasCommaPayload => [
+    RuleAction.AND,
+    RuleAction.OR,
+    RuleAction.NOT,
+    RuleAction.SUB_RULE,
+    RuleAction.DOMAIN_REGEX,
+    RuleAction.PROCESS_NAME_REGEX,
+    RuleAction.PROCESS_PATH_REGEX,
+  ].contains(this);
+
   bool get hasParams => [
     RuleAction.GEOIP,
     RuleAction.IP_ASN,
