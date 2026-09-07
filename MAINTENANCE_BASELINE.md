@@ -17,6 +17,15 @@
 
 以后所有功能、协议和上游同步必须从本维护分支继续；禁止从旧`five-protocol-ios`、`fastup-integration`、`experiment/*`或上游main覆盖本基线。旧分支仅作历史来源和回滚证据。
 
+## 0.8.120 选择性升级候选（2026-09-08）
+
+- 父仓分支：`upgrade/0.8.120-audit`；提交：`919ff277bafc5b164b1939c0a4225067b5256ffd`；备份标签：`pre-actions-0.8.120-safe-20260908-round2`。
+- mihomo 分支：`upgrade/0.8.120-provider-suspend`；提交：`7d24e3561b4f63bec9daa6f707c73bf23d3cb96f`；sing-shadowsocks2 继续固定 `98c4afa30d95f4af5bdaa18abf8ff6cc6d3ed8d7`。
+- 全端 Actions `34170355784` 已通过：Android arm64-v8a、Windows x64、iOS arm64 unsigned IPA、macOS arm64、macOS x64。
+- 已选择性吸收：iOS 禁用 MsgX、复合规则无损解析和 MATCH 正确序列化、键盘提交、NECore 构建配置隔离、provider 休眠健康检查、Android 磁贴当前配置、WebDAV URL 键盘和 Dashboard 对比度。
+- 未接受上游整包 Core/Runner/RPC/NECore 重构；五协议 wire、本地 sing-shadowsocks2 replace、MRS 不可变预热/候选验收/失败回滚、provider 快照租约与安全关闭、mailbox 去重/lease/8并发、低内存规则预算与 ASN 禁映射、统一探测限流、DIRECT 防环、GLOBAL 非 DIRECT 默认及普通重签/TrollStore 双份 dylib 嵌入均不可回退。
+- 当前状态是“全端构建验证候选”，真机流量和内存验收完成后方可替代上面的固定基线；此前 `ios-five-protocol-stable-20260907` 仍是回滚基线。
+
 ## 不可丢失的协议产品面
 
 最终产品面固定为五类，`#sl`明确删除且CI有反向门禁：
