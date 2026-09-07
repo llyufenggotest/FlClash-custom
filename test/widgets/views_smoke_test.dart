@@ -635,6 +635,26 @@ void main() {
     expect(promptSetting, findsOneWidget);
   });
 
+  testWidgets('WebDAV address field uses a URL keyboard', (tester) async {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    globalState.container = container;
+
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const _TestApp(child: WebDAVFormDialog()),
+      ),
+    );
+    await tester.pump();
+
+    final addressField = tester.widget<TextFormField>(
+      find.byType(TextFormField).first,
+    );
+    expect(addressField.keyboardType, TextInputType.url);
+    expect(tester.takeException(), null);
+  });
+
   testWidgets('backup and restore exposes clear data with confirmation', (
     tester,
   ) async {

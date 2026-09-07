@@ -329,6 +329,10 @@ class _AddedContainerState extends State<_AddedContainer> {
               child: IconButton.filled(
                 iconSize: 20,
                 padding: const EdgeInsets.all(2),
+                style: IconButton.styleFrom(
+                  backgroundColor: context.colorScheme.primary,
+                  foregroundColor: context.colorScheme.onPrimary,
+                ),
                 onPressed: _handleAdd,
                 icon: const Icon(Icons.add),
               ),

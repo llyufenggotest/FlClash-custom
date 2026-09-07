@@ -748,6 +748,10 @@ class _DeletableContainerState extends State<_DeletableContainer>
                 child: IconButton.filled(
                   iconSize: 20,
                   padding: const EdgeInsets.all(2),
+                  style: IconButton.styleFrom(
+                    backgroundColor: context.colorScheme.primary,
+                    foregroundColor: context.colorScheme.onPrimary,
+                  ),
                   onPressed: _handleDel,
                   icon: const Icon(Icons.close),
                 ),

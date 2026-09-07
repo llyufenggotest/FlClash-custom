@@ -44,6 +44,53 @@ void main() {
     expect(tester.getTopLeft(grid).dx, 240);
     expect(tester.takeException(), null);
   });
+
+  testWidgets('dashboard add button preserves filled-button contrast', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1000, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final container = ProviderContainer(
+      overrides: [
+        dashboardStateProvider.overrideWithValue(
+          const DashboardState(dashboardWidgets: []),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+    globalState.container = container;
+
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const _TestApp(child: DashboardView()),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.edit));
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.add_circle));
+    await tester.pumpAndSettle();
+
+    final addButtonFinder = find.ancestor(
+      of: find.byIcon(Icons.add).first,
+      matching: find.byType(IconButton),
+    );
+    final addButton = tester.widget<IconButton>(addButtonFinder);
+    final colorScheme = Theme.of(tester.element(addButtonFinder)).colorScheme;
+    expect(
+      addButton.style?.backgroundColor?.resolve({}),
+      colorScheme.primary,
+    );
+    expect(
+      addButton.style?.foregroundColor?.resolve({}),
+      colorScheme.onPrimary,
+    );
+    expect(tester.takeException(), null);
+  });
 }
 
 class _TestApp extends StatelessWidget {
