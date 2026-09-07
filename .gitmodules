@@ -1,7 +1,7 @@
 [submodule "core/mihomo"]
 	path = core/mihomo
 	url = https://github.com/llyufenggotest/Clash.Meta-custom.git
-	branch = five-protocol-ios
+	branch = maintenance/ios-five-protocol-stable
 [submodule "core/sing-shadowsocks2"]
 	path = core/sing-shadowsocks2
 	url = https://github.com/llyufeng/sing-shadowsocks2-meta.git
