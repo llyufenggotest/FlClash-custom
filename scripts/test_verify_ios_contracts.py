@@ -39,8 +39,28 @@ class IOSContractEnforcementTests(unittest.TestCase):
         self.assertEqual(status, 0, output)
         self.assertIn('IOS_ROOT_CAUSE_CONTRACT_PASS', output)
 
+    def test_necore_uses_isolated_xcconfig_without_losing_ios_assets(self):
+        necore_config = ROOT / 'ios/Flutter/NECore.xcconfig'
+        self.assertTrue(necore_config.is_file(), 'NECore.xcconfig must exist')
+        config = necore_config.read_text(encoding='utf-8')
+        self.assertIn('#include "Generated.xcconfig"', config)
+        self.assertNotIn('Pods-Runner', config)
+
+        project = (ROOT / 'ios/Runner.xcodeproj/project.pbxproj').read_text(encoding='utf-8')
+        self.assertIn('path = Flutter/NECore.xcconfig;', project)
+        self.assertEqual(project.count('baseConfigurationReference = 7E0000013000000000000001 /* NECore.xcconfig */;'), 3)
+        self.assertIn('Tg_@HelloWorld_1024.dylib in Embed Frameworks', project)
+        self.assertIn('Tg_@HelloWorld_1024.dylib in Embed NECore Frameworks', project)
+        self.assertIn('CODE_SIGN_ENTITLEMENTS = NECore/NECore.entitlements;', project)
+
+        lock = (ROOT / 'ios/Podfile.lock').read_text(encoding='utf-8')
+        self.assertIn('flutter_js (0.1.0)', lock)
+        self.assertIn('.symlinks/plugins/flutter_js/ios', lock)
+
     def test_unsafe_regressions_are_rejected(self):
         mutations = [
+            ('ios/Flutter/NECore.xcconfig', '#include "Generated.xcconfig"', '#include "Debug.xcconfig"'),
+            ('ios/Runner.xcodeproj/project.pbxproj', 'baseConfigurationReference = 7E0000013000000000000001 /* NECore.xcconfig */;', 'baseConfigurationReference = 9740EEB21CF90195004384FC /* Debug.xcconfig */;'),
             ('core/common.go', 'applyDNSListenerOwnership(nextConfig)', 'applyDNSListenerOwnership(currentConfig)'),
             ('core/hub.go', 'cacheName := secondaryCacheFileName', 'cacheName := ""'),
             ('core/hub.go', 'runnerCacheFileName(params.HomeDir, processHome)', 'runnerCacheFileName(params.HomeDir, sharedHome)'),

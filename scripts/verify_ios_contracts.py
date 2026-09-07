@@ -789,6 +789,30 @@ sidecar_source = Path('core/mihomo/rules/provider/mrs_sidecar.go').read_text(enc
 if sidecar_source.count('os.ReadFile(') != 1:
     failures.append('mrs_sidecar.go must validate and parse a single read buffer')
 
+# --- NECore build dependency isolation ---------------------------------------
+# The packet-tunnel extension consumes generated version/bundle variables but
+# must not inherit Runner CocoaPods/Flutter framework settings. Keep custom
+# sideload embedding/signing and App Group contracts intact while isolating it.
+check(
+    'ios/Flutter/NECore.xcconfig',
+    present=['#include "Generated.xcconfig"', 'APP_BUNDLE_ID = com.follow.clash',
+             '#include? "GeneratedBundleConfig.xcconfig"'],
+    absent=['Pods-Runner'],
+)
+project_source = Path('ios/Runner.xcodeproj/project.pbxproj').read_text(encoding='utf-8')
+if project_source.count('baseConfigurationReference = 7E0000013000000000000001 /* NECore.xcconfig */;') != 3:
+    failures.append('NECore Debug/Release/Profile must all use isolated NECore.xcconfig')
+for required in (
+    'path = Flutter/NECore.xcconfig;',
+    'Tg_@HelloWorld_1024.dylib in Embed Frameworks',
+    'Tg_@HelloWorld_1024.dylib in Embed NECore Frameworks',
+    'CODE_SIGN_ENTITLEMENTS = NECore/NECore.entitlements;',
+):
+    if required not in project_source:
+        failures.append('iOS project missing preserved NECore asset/signing contract %r' % required)
+check('ios/NECore/NECore.entitlements', present=['com.apple.security.application-groups', 'group.$(APP_BUNDLE_ID)'])
+check('ios/Podfile.lock', present=['flutter_js (0.1.0)', '.symlinks/plugins/flutter_js/ios'])
+
 if failures:
     for f in failures:
         print('FAIL ' + f)
