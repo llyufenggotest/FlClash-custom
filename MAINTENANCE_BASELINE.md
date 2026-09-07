@@ -101,6 +101,23 @@
 - iOS构建优先`macos-15`，资源不足时回退可分配runner；不要重复克隆Flutter/Go到C盘。
 - 产物验收必须包含ZIP、Runner、NECore、Widget、双dylib路径/哈希/0755、协议marker；构建成功不能替代真机流量。
 
+## 审计确认的边界与待增强项
+
+这些不是当前真机稳定版的发布阻断，但未来维护时不得误判为“可以顺手删除”或“已经完全覆盖”：
+
+- **ViewTurbo位置**：ViewTurbo/`#VT`不在mihomo源码中，而在固定的`core/sing-shadowsocks2@98c4afa`；仅搜索mihomo会得到“缺失”的假结论。父`core/go.mod`本地replace与子模块指针是其产品实现的一部分。
+- **MRS格式**：sidecar使用`MRS-SC02`包封，同时绑定原始解析输入SHA-256与MRS payload SHA-256；不能退化为mtime或仅文件存在检查。原生`format:mrs`不受raw规则预算限制。
+- **classical边界**：超过10000条的raw classical provider因没有安全MRS表示而明确失败。这是fail-closed设计，不得通过截断、丢规则或空规则启动来“修复”；产品侧应提示、拆分或改写规则。
+- **fastnode语义**：URLTest最后有效快节点写入bbolt `fastnode` bucket，冷启动可立即复用；它不是用户手选状态，不受`profile.store-selected`控制。缓存节点不在当前组时必须忽略，真实测速完成后允许切换。
+- **低内存标签联动**：NECore必须继续以`ios + with_low_memory`语义构建；否则DIRECT防环、全局测速限流、ASN禁映射和规则预算会一起失效。CI与真机日志都要验证这一点。
+- **测试缺口**：BLACKSTONE/XHTTP的远端控制、解密、线路竞速与自定义流，以及x365请求/响应字节，目前更多依赖源契约和真机流量。后续应补脱敏固定向量及`net.Pipe`级wire测试，不能以现有编译通过宣称全自动覆盖。
+- **Fastup兼容回退**：生产订阅应显式携带`mpw`；源码兼容回退值属于敏感协议材料，不得写进日志、文档、issue或回复，未来弃用必须做版本迁移与真机对照。
+- **Oppa live门禁**：实时测试依赖外部授权节点，缺少环境时会跳过；应保留live test，并逐步补本地TLS假服务端覆盖TCP、UDP、SNI和坏帧。
+- **不透明dylib**：仓库只能证明固定哈希、大小、架构、权限、嵌入和加载，不能证明第三方二进制源码行为。更换必须单独做二进制/来源审计和普通重签、TrollStore真机回归。
+- **构建血缘**：当前稳定IPA由Actions run、父/子模块SHA和artifact哈希共同追踪；Runner与NECore的Info.plist尚未内嵌统一完整父SHA。未来可增强为双进程启动日志输出同一`build_commit`并在IPA内核对，但不能为此回改当前真机稳定产物。
+- **Entitlements/App Group**：本轮定制diff没有修改entitlements/Info.plist，因此上游同步时容易无冲突地破坏共享容器。每次发布必须额外核验bundle ID、App Group、NE extension存在性与权限，而不是只看定制diff。
+- **更新策略**：规则在线更新若新raw尚无匹配sidecar，应保留旧generation并报告/重试，规则可能短时陈旧但不得半发布。所有预热相关父仓`22e6b250→8f065e52→dd725800`与mihomo`0b144773→09f57e31`按不可拆分功能栈维护。
+
 ## 每次修改的最低门禁
 
 1. 确认从`maintenance/ios-five-protocol-stable`及其后继提交开始，子模块祖先关系正确。
