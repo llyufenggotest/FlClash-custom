@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"runtime/debug"
 	"sync"
+	"sync/atomic"
 
 	"github.com/metacubex/mihomo/adapter"
 	"github.com/metacubex/mihomo/adapter/inbound"
@@ -32,11 +33,12 @@ import (
 )
 
 var (
-	currentConfig *config.Config
-	version       = 0
-	isRunning     = false
-	runLock       sync.Mutex
-	debugError    = false
+	currentConfig                 *config.Config
+	version                       = 0
+	isRunning                     = false
+	providerHealthChecksSuspended atomic.Bool
+	runLock                       sync.Mutex
+	debugError                    = false
 )
 
 func getExternalProvidersRaw() map[string]cp.Provider {

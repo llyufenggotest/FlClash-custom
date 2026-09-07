@@ -19,6 +19,7 @@ import (
 	"github.com/metacubex/mihomo/adapter"
 	"github.com/metacubex/mihomo/adapter/outbound"
 	"github.com/metacubex/mihomo/adapter/outboundgroup"
+	"github.com/metacubex/mihomo/adapter/provider"
 	"github.com/metacubex/mihomo/common/observable"
 	"github.com/metacubex/mihomo/common/utils"
 	"github.com/metacubex/mihomo/component/age"
@@ -779,11 +780,34 @@ func handleSideLoadExternalProvider(providerName string, data []byte, fn func(va
 	}()
 }
 
+// defaultRefreshHealthChecks re-probes every proxy provider off the calling
+// thread. Providers coalesce concurrent checks internally, so an extra call
+// costs nothing when one is already running.
+func defaultRefreshHealthChecks() {
+	go func() {
+		for name, p := range tunnel.Providers() {
+			log.Debugln("[APP] re-checking provider %s after resume", name)
+			p.HealthCheck()
+		}
+	}()
+}
+
+var refreshHealthChecks = defaultRefreshHealthChecks
+
 func handleSuspend(suspended bool) bool {
+	wasSuspended := providerHealthChecksSuspended.Swap(suspended)
+	provider.SuspendHealthCheck(suspended)
 	if suspended {
 		tunnel.OnSuspend()
-	} else {
-		tunnel.OnRunning()
+		return true
+	}
+
+	tunnel.OnRunning()
+	// Scheduled proxy-provider checks are suppressed during suspension. Refresh
+	// immediately after a real resume, but not while listeners are stopped: the
+	// service also resumes the core as part of teardown.
+	if wasSuspended && isRunning {
+		refreshHealthChecks()
 	}
 	return true
 }
