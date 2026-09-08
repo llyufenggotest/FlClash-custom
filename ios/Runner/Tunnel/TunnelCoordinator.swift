@@ -8,7 +8,9 @@ final class TunnelCoordinator {
   private let onTunnelStateChanged: (TunnelTarget) -> Void
   private let onExternalStart: () -> Void
   private let onExternalStop: () -> Void
-  private let connectTimeout: TimeInterval = 5
+  // NetworkExtension cold starts can legitimately exceed five seconds on
+  // older devices. This is an observation deadline, never a kill deadline.
+  private let connectTimeout: TimeInterval = 30
   private let logger = Logger(
     subsystem: Bundle.main.bundleIdentifier ?? "com.follow.clash",
     category: "TunnelCoordinator"
@@ -308,8 +310,14 @@ final class TunnelCoordinator {
           actualState: status.tunnelState
         )
       case .timeout(let status):
-        cleanUpFailedStart(manager: manager, status: status)
-        finishTunnelRequest(request, actualState: .stopped)
+        if status.isLifecycleActive {
+          log(
+            "startup still pending after timeout status=\(statusDescription(status)); leaving Network Extension alive"
+          )
+          finishTunnelRequest(request, actualState: nil)
+        } else {
+          finishTunnelRequest(request, actualState: .stopped)
+        }
       case .superseded:
         return
       }
@@ -337,8 +345,14 @@ final class TunnelCoordinator {
       }
       return true
     case .timeout(let status):
-      cleanUpFailedStart(manager: manager, status: status)
-      finishTunnelRequest(request, actualState: .stopped)
+      if status.isLifecycleActive {
+        log(
+          "settle still pending after timeout status=\(statusDescription(status)); leaving Network Extension alive"
+        )
+        finishTunnelRequest(request, actualState: nil)
+      } else {
+        finishTunnelRequest(request, actualState: .stopped)
+      }
       return false
     case .superseded:
       return false
@@ -494,15 +508,6 @@ final class TunnelCoordinator {
     resolveTunnelWait(wait, result: .superseded)
   }
 
-  private func cleanUpFailedStart(
-    manager: NETunnelProviderManager,
-    status: NEVPNStatus
-  ) {
-    if status.isLifecycleActive && status != .disconnecting {
-      manager.connection.stopVPNTunnel()
-      log("failed start requested cleanup stop")
-    }
-  }
 
   private func finishRunningRequestIfSatisfied(
     _ request: TunnelRequest,
