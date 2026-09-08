@@ -14,6 +14,7 @@ Future<void> commitAndActivateIOSConfig({
   required IOSConfigPersistence persistAtomically,
   required IOSTunnelOperation stopTunnel,
   required IOSTunnelOperation startTunnel,
+  IOSTunnelOperation? restoreTunnel,
   IOSActivationGuard? activationGuard,
 }) async {
   void ensureCurrent() {
@@ -58,7 +59,7 @@ Future<void> commitAndActivateIOSConfig({
       rethrow;
     }
     try {
-      if (!await startTunnel()) {
+      if (!await (restoreTunnel ?? startTunnel)()) {
         throw StateError('old iOS tunnel did not restart');
       }
     } catch (rollbackError) {
@@ -101,7 +102,7 @@ Future<void> commitAndActivateIOSConfig({
   }
   if (oldTunnelWasRunning) {
     try {
-      if (!await startTunnel()) {
+      if (!await (restoreTunnel ?? startTunnel)()) {
         throw StateError('old iOS tunnel did not restart');
       }
     } catch (error) {
