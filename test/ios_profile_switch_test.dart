@@ -55,14 +55,14 @@ void main() {
     test('preparation does not stop the old tunnel', () {
       final setup = source('lib/providers/actions/setup.dart');
       final signatureAt = setup.indexOf('Future<_SetupTaskResult> _runSetup(');
-      final start = setup.indexOf('async {', signatureAt);
+      final start = setup.indexOf('_setupScheduler.run(', signatureAt);
       final end = setup.indexOf('\n  Future<_SetupTaskResult> _setupConfig(', start);
-      expect(end, greaterThan(start));
+      expect(start, greaterThan(signatureAt));
       final body = setup.substring(start, end);
 
       final schedulerAt = body.indexOf('_setupScheduler.run(');
       final setupAt = body.indexOf('await _setupConfig(');
-      expect(schedulerAt, greaterThan(-1));
+      expect(schedulerAt, 0);
       expect(setupAt, greaterThan(schedulerAt));
       expect(body, isNot(contains('setCoreRunning(false)')));
     });
@@ -107,9 +107,11 @@ void main() {
       expect(body, contains('await preloadInvoke();'));
       expect(body, contains('activationGuard != null && !activationGuard()'));
       expect(body, contains('iOS activation request is no longer current'));
+      expect(body, contains('startTunnel: () async'));
+      expect(body, contains('return setCoreRunning(true);'));
       expect(
-        body.indexOf('await preloadInvoke();'),
-        lessThan(body.indexOf('return setCoreRunning(true);')),
+        body.indexOf('activationGuard != null && !activationGuard()'),
+        lessThan(body.indexOf('await preloadInvoke();')),
       );
       expect(
         body,
