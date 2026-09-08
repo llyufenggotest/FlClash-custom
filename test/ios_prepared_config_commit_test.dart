@@ -88,10 +88,13 @@ void main() {
       final restoreEnd = body.indexOf('startTunnel: () async', restoreAt);
       final restoreBody = body.substring(restoreAt, restoreEnd);
       expect(restoreAt, greaterThan(stopAt));
-      expect(
-        restoreBody.indexOf('coreController.applyFormalConfig('),
-        lessThan(restoreBody.indexOf('return setCoreRunning(true);')),
+      final restoreApplyAt = restoreBody.indexOf(
+        'coreController.applyFormalConfig(',
       );
+      final restoreStartAt = restoreBody.indexOf('return setCoreRunning(true);');
+      expect(restoreApplyAt, greaterThan(-1));
+      expect(restoreStartAt, greaterThan(-1));
+      expect(restoreApplyAt, lessThan(restoreStartAt));
       final helper = source('lib/common/ios_config_activation.dart');
       expect(
         helper.indexOf('final oldConfigBytes ='),
