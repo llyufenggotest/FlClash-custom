@@ -23,10 +23,13 @@ Future<Directory> migrateIOSDataDirectory({
     return appGroupDirectory;
   }
   await for (final entity in supportDirectory.list(recursive: true)) {
-    final targetPath = join(
-      appGroupDirectory.path,
-      relative(entity.path, from: supportDirectory.path),
-    );
+    final relativePath = relative(entity.path, from: supportDirectory.path);
+    // RunnerCore owns a process-private bbolt cache. Mirroring it into the
+    // App Group can copy a live database and recreate the cross-process lock.
+    if (split(relativePath).first == 'RunnerCore') {
+      continue;
+    }
+    final targetPath = join(appGroupDirectory.path, relativePath);
     if (entity is Directory) {
       await Directory(targetPath).create(recursive: true);
     } else if (entity is File && !await File(targetPath).exists()) {

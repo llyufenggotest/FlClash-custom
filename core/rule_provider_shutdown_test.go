@@ -19,17 +19,3 @@ func TestShutdownRetiresRuleProvidersWithoutChangingStopListener(t *testing.T) {
 		t.Fatal("listener-only stop retires resources owned by the running core")
 	}
 }
-
-func functionSource(t *testing.T, source, signature string) string {
-	t.Helper()
-	start := strings.Index(source, signature)
-	if start < 0 {
-		t.Fatalf("missing function %q", signature)
-	}
-	body := source[start:]
-	end := strings.Index(body, "\n}")
-	if end < 0 {
-		t.Fatalf("unterminated function %q", signature)
-	}
-	return body[:end+2]
-}
