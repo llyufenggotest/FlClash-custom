@@ -109,7 +109,7 @@ class ProxiesAction extends _$ProxiesAction {
               'updateGroups error: $e',
               logLevel: coreFailureLogLevel(e),
             );
-            return <Group>[];
+            return ref.read(groupsProvider);
           }
         },
         retryIf: (res) => res.isEmpty,

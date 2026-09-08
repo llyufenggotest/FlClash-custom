@@ -118,6 +118,8 @@ class ProductMigrationContractTest(unittest.TestCase):
         self.assertIn("package:fl_clash/widgets/widgets.dart", oppa)
         self.assertIn("CommonDialog(", oppa)
         self.assertIn("Process.runSync('llvm-config', ['--libdir'])", rust_hook)
+        self.assertIn("on ProcessException", rust_hook)
+        self.assertIn("llvmConfig = null", rust_hook)
         self.assertIn("_containsLibclang", rust_hook)
 
 
