@@ -69,7 +69,7 @@ void main() {
       final setup = source('lib/providers/actions/setup.dart');
       final start = setup.indexOf('Future<void> commitAndActivate()');
       expect(start, greaterThan(-1));
-      final end = setup.indexOf('\n        final message =', start);
+      final end = setup.indexOf('\n          final message =', start);
       expect(end, greaterThan(start));
       final body = setup.substring(start, end);
 
