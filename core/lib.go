@@ -223,7 +223,7 @@ func handleStartTun(callback unsafe.Pointer, fd int, options t.Options) bool {
 		if callback != nil {
 			releaseObject(callback)
 		}
-		logError("startTun was handed no tun descriptor")
+		logError("TUN: refusing to start with fd=0")
 		return false
 	}
 	tunHandler = &TunHandler{
@@ -293,7 +293,7 @@ func startTUN(callback unsafe.Pointer, fd C.int, optionsChar *C.char) bool {
 	}
 	started := handleStartTun(callback, int(fd), options)
 	if !started {
-		return false
+		return started
 	}
 	if !isRunning.Load() {
 		handleStartListener()
