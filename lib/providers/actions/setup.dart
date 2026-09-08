@@ -535,10 +535,16 @@ class SetupAction extends _$SetupAction {
           }
           final coreController = _core;
           Future<void> commitAndActivate() async {
+            // _start marks local state running before initialization. A supplied
+            // preload callback therefore means "start after commit", not that an
+            // old tunnel already exists. Without one, _isRunning denotes a real
+            // online replacement.
+            final onlineSwitch = _isRunning && preloadInvoke == null;
+            final shouldStartTunnel = onlineSwitch || preloadInvoke != null;
             await commitAndActivateIOSConfig(
               configPath: configFilePath,
               config: yamlString,
-              oldTunnelWasRunning: _isRunning,
+              oldTunnelWasRunning: onlineSwitch,
               persistAtomically: _persistConfigAtomically,
               stopTunnel: () => setCoreRunning(false),
               startTunnel: () async {
@@ -547,6 +553,9 @@ class SetupAction extends _$SetupAction {
                 );
                 if (applyResult.isNotEmpty) {
                   throw MessageException(applyResult);
+                }
+                if (!shouldStartTunnel) {
+                  return true;
                 }
                 return setCoreRunning(true);
               },
