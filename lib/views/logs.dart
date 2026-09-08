@@ -100,7 +100,7 @@ class _LogsViewState extends ConsumerState<LogsView> {
         icon: const Icon(Icons.save_outlined),
       ),
       IconButton(
-        tooltip: appLocalizations.clear,
+        tooltip: context.appLocalizations.clear,
         onPressed: () {
           _handleClear();
         },
@@ -167,17 +167,15 @@ class _LogsViewState extends ConsumerState<LogsView> {
   /// nothing; this removes the records themselves.
   Future<void> _handleClear() async {
     final appLocalizations = context.appLocalizations;
-    final confirmed = await globalState.showMessage(
+    final confirmed = await dialogs.showMessage(
+      context: context,
       title: appLocalizations.clear,
       message: TextSpan(text: appLocalizations.confirmClearAllData),
     );
     if (confirmed != true || !mounted) return;
-    await globalState.container.read(logsProvider.notifier).clearLogs();
+    await ref.read(logsProvider.notifier).clearLogs();
     if (!mounted) return;
-    setState(() {
-      _logs = [];
-      _logsStateNotifier.value = _logsStateNotifier.value.copyWith(logs: []);
-    });
+    _listController.setLogs(const []);
   }
 
   void updateLogsThrottler() {

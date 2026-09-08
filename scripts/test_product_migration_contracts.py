@@ -62,6 +62,31 @@ class ProductMigrationContractTest(unittest.TestCase):
         self.assertIn("dialogs.openUrl('https://github.com/$repository')", about)
         self.assertIn("chenx-dust/mihomo/tree/FlClash", about)
 
+    def test_dart_migration_keeps_rule_prewarm_and_current_ui_contracts(self):
+        request = self.read("lib/common/request.dart")
+        methods = self.read("lib/core/method.dart")
+        setup = self.read("lib/providers/actions/setup.dart")
+        profiles = self.read("lib/providers/action.dart")
+        logs = self.read("lib/views/logs.dart")
+        oppa = self.read("lib/views/profiles/oppa_profile_dialog.dart")
+
+        self.assertIn("class RuleProviderFileDownload", request)
+        self.assertIn("downloadRuleProviderToFile", request)
+        for method in (
+            "prewarmRuleProvider",
+            "publishRuleGeneration",
+            "getPreparedRuleGeneration",
+            "validateCandidateConfigAtPath",
+        ):
+            self.assertIn(method, methods)
+        self.assertIn("Future<bool> prewarmProfile(Profile profile)", setup)
+        self.assertIn("import 'dart:convert';", profiles)
+        self.assertIn("import 'dart:typed_data';", profiles)
+        self.assertIn("dialogs.showMessage", logs)
+        self.assertIn("_listController.setLogs(const [])", logs)
+        self.assertIn("package:fl_clash/widgets/widgets.dart", oppa)
+        self.assertIn("CommonDialog(", oppa)
+
 
 if __name__ == "__main__":
     unittest.main()
