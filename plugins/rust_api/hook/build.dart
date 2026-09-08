@@ -78,7 +78,11 @@ Map<String, String> _bindgenEnvironment(BuildInput input) {
       return {'LIBCLANG_PATH': directory.path};
     }
   }
-  for (final root in const ['/usr/lib/llvm-20/lib', '/usr/lib/llvm-19/lib']) {
+  for (final root in const [
+    '/usr/lib/llvm-20/lib',
+    '/usr/lib/llvm-19/lib',
+    '/usr/lib/llvm-18/lib',
+  ]) {
     final directory = Directory(root);
     if (_containsLibclang(directory)) {
       return {'LIBCLANG_PATH': directory.path};

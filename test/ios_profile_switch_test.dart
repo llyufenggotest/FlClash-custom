@@ -56,7 +56,9 @@ void main() {
       final setup = source('lib/providers/actions/setup.dart');
       final signatureAt = setup.indexOf('Future<_SetupTaskResult> _runSetup(');
       final start = setup.indexOf('async {', signatureAt);
-      final body = setup.substring(start, setup.indexOf('\n  }', start));
+      final end = setup.indexOf('\n  Future<_SetupTaskResult> _setupConfig(', start);
+      expect(end, greaterThan(start));
+      final body = setup.substring(start, end);
 
       final schedulerAt = body.indexOf('_setupScheduler.run(');
       final setupAt = body.indexOf('await _setupConfig(');
@@ -68,7 +70,9 @@ void main() {
     test('every running iOS config change is transactional', () {
       final setup = source('lib/providers/actions/setup.dart');
       final start = setup.indexOf('Future<void> commitAndActivate()');
-      final body = setup.substring(start, setup.indexOf('\n        final message =', start));
+      final end = setup.indexOf('\n          final message =', start);
+      expect(end, greaterThan(start));
+      final body = setup.substring(start, end);
 
       expect(
         body,
@@ -95,7 +99,9 @@ void main() {
     test('initialization keeps stale-request and suspend arbitration', () {
       final setup = source('lib/providers/actions/setup.dart');
       final start = setup.indexOf('Future<void> commitAndActivate()');
-      final body = setup.substring(start, setup.indexOf('\n        final message =', start));
+      final end = setup.indexOf('\n          final message =', start);
+      expect(end, greaterThan(start));
+      final body = setup.substring(start, end);
 
       expect(body, contains('if (preloadInvoke != null)'));
       expect(body, contains('await preloadInvoke();'));
