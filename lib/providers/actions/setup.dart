@@ -133,6 +133,8 @@ class SetupAction extends _$SetupAction {
       try {
         applied = await applyProfile(
           force: true,
+          activationGuard: () =>
+              _isCurrent(request) && !ref.read(suspendProvider),
           preloadInvoke: () => _setCoreRunning(request),
         );
       } catch (_) {
@@ -273,12 +275,14 @@ class SetupAction extends _$SetupAction {
     bool silence = false,
     bool force = false,
     bool profileSwitched = false,
+    bool Function()? activationGuard,
     Future<void> Function()? preloadInvoke,
   }) async {
     final result = await _runSetup(
       force: force,
       silence: silence,
       profileSwitched: profileSwitched,
+      activationGuard: activationGuard,
       preloadInvoke: preloadInvoke,
     );
     return result != _SetupTaskResult.failed;
@@ -288,6 +292,7 @@ class SetupAction extends _$SetupAction {
     bool silence = false,
     bool force = false,
     bool profileSwitched = false,
+    bool Function()? activationGuard,
     Future<void> Function()? preloadInvoke,
   }) async {
     final result = await _setupScheduler.run(() {
@@ -295,6 +300,7 @@ class SetupAction extends _$SetupAction {
         force: force,
         silence: silence,
         profileSwitched: profileSwitched,
+        activationGuard: activationGuard,
         preloadInvoke: preloadInvoke,
         onUpdated: () async {
           await ref.read(proxiesActionProvider.notifier).updateGroups();
@@ -466,6 +472,7 @@ class SetupAction extends _$SetupAction {
     bool force = false,
     bool silence = false,
     bool profileSwitched = false,
+    bool Function()? activationGuard,
     Future<void> Function()? preloadInvoke,
     FutureOr Function()? onUpdated,
   }) async {
@@ -536,7 +543,10 @@ class SetupAction extends _$SetupAction {
           final coreController = _core;
           Future<void> commitAndActivate() async {
             // _start marks local state running before initialization. A supplied
-            // preload callback owns stale-request and suspend arbitration.
+            // activation guard owns stale-request and suspend arbitration.
+            if (activationGuard != null && !activationGuard()) {
+              throw StateError('iOS activation request is no longer current');
+            }
             final onlineSwitch = _isRunning && preloadInvoke == null;
             await commitAndActivateIOSConfig(
               configPath: configFilePath,

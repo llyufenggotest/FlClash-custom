@@ -124,6 +124,8 @@ class TestSetupAction extends SetupAction {
   Future<bool> applyProfile({
     bool silence = false,
     bool force = false,
+    bool profileSwitched = false,
+    bool Function()? activationGuard,
     Future<void> Function()? preloadInvoke,
   }) async {
     applyProfileCalls++;
