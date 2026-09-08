@@ -59,7 +59,11 @@ class ProductMigrationContractTest(unittest.TestCase):
         ndk_marker = f"NDK_VERSION: '{ndk.group(1)}'"
         self.assertIn(ndk_marker, release_workflow)
         self.assertIn(ndk_marker, matrix_workflow)
-        self.assertIn("ndk-version: ${{ env.NDK_VERSION }}", matrix_workflow)
+        self.assertIn("NDK_RELEASE: r28c", matrix_workflow)
+        self.assertIn("ndk-version: ${{ env.NDK_RELEASE }}", matrix_workflow)
+        self.assertIn(
+            "flutter test test/common/oppa_yaml_test.dart", matrix_workflow
+        )
 
     def test_brand_and_update_source_are_pinned(self):
         constants = self.read("lib/common/constant.dart")
