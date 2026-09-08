@@ -58,14 +58,35 @@ Map<String, String> _bindgenEnvironment(BuildInput input) {
     final directory = Directory(
       '${llvmRoot.path}${Platform.pathSeparator}$name',
     );
-    if (directory.existsSync() && directory.listSync().any(_isLibclang)) {
+    if (_containsLibclang(directory)) {
+      return {'LIBCLANG_PATH': directory.path};
+    }
+  }
+
+  // Flutter can select an older SDK NDK for the compiler even when CI installs
+  // the project NDK. Bindgen only needs a host libclang, so fall back to the
+  // runner's LLVM installation instead of coupling it to that compiler NDK.
+  final llvmConfig = Process.runSync('llvm-config', ['--libdir']);
+  if (llvmConfig.exitCode == 0) {
+    final directory = Directory('${llvmConfig.stdout}'.trim());
+    if (_containsLibclang(directory)) {
+      return {'LIBCLANG_PATH': directory.path};
+    }
+  }
+  for (final root in const ['/usr/lib/llvm-20/lib', '/usr/lib/llvm-19/lib']) {
+    final directory = Directory(root);
+    if (_containsLibclang(directory)) {
       return {'LIBCLANG_PATH': directory.path};
     }
   }
   throw StateError(
-    'No libclang under ${llvmRoot.path} (lib, lib64, or bin); the NDK Flutter '
-    'passed cannot run bindgen for rquickjs',
+    'No usable libclang under ${llvmRoot.path} or the host LLVM installation; '
+    'bindgen cannot generate rquickjs bindings',
   );
+}
+
+bool _containsLibclang(Directory directory) {
+  return directory.existsSync() && directory.listSync().any(_isLibclang);
 }
 
 bool _isLibclang(FileSystemEntity entity) {

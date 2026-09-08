@@ -81,6 +81,7 @@ class ProductMigrationContractTest(unittest.TestCase):
         profiles = self.read("lib/providers/action.dart")
         logs = self.read("lib/views/logs.dart")
         oppa = self.read("lib/views/profiles/oppa_profile_dialog.dart")
+        rust_hook = self.read("plugins/rust_api/hook/build.dart")
 
         self.assertIn("class RuleProviderFileDownload", request)
         self.assertIn("downloadRuleProviderToFile", request)
@@ -98,6 +99,8 @@ class ProductMigrationContractTest(unittest.TestCase):
         self.assertIn("_listController.setLogs(const [])", logs)
         self.assertIn("package:fl_clash/widgets/widgets.dart", oppa)
         self.assertIn("CommonDialog(", oppa)
+        self.assertIn("Process.runSync('llvm-config', ['--libdir'])", rust_hook)
+        self.assertIn("_containsLibclang", rust_hook)
 
 
 if __name__ == "__main__":

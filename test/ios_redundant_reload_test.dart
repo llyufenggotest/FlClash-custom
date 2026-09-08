@@ -100,7 +100,7 @@ void main() {
     test('stopping the tunnel forgets the fingerprint on iOS', () {
       final setup = source('lib/providers/actions/setup.dart');
       final stopStart = setup.indexOf(
-        'Future<void> _stop(_RunRequest request)',
+        'Future<bool> _stop(_RunRequest request)',
       );
       final stopEnd = setup.indexOf('Future<void> _setCoreRunning');
       expect(stopStart, greaterThan(-1));
