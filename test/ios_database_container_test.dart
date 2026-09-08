@@ -11,6 +11,11 @@ void main() {
     );
     expect(
       source,
+      contains('final applicationSupportDir = await supportDirectory();'),
+    );
+    expect(source, contains('supportDir.complete(applicationSupportDir);'));
+    expect(
+      source,
       contains("return join((await supportDir.future).path, 'database.sqlite');"),
     );
   });
