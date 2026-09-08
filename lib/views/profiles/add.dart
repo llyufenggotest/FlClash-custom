@@ -4,6 +4,7 @@ import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/pages/scan.dart';
 import 'package:fl_clash/providers/action.dart';
 import 'package:fl_clash/views/profiles/age_key_generator.dart';
+import 'package:fl_clash/views/profiles/oppa_profile_dialog.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -47,6 +48,15 @@ class AddProfileView extends ConsumerWidget {
     }
   }
 
+  Future<void> _toAddOppa(WidgetRef ref) async {
+    final config = await dialogs.showCommonDialog<OppaProxyConfig>(
+      child: const OppaProfileDialog(),
+    );
+    if (config != null) {
+      unawaited(ref.read(profilesActionProvider.notifier).addOppaProfile(config));
+    }
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final appLocalizations = context.appLocalizations;
@@ -63,6 +73,12 @@ class AddProfileView extends ConsumerWidget {
           title: Text(appLocalizations.file),
           subtitle: Text(appLocalizations.fileDesc),
           onTap: () => _handleAddProfileFormFile(ref),
+        ),
+        ListItem(
+          leading: const Icon(Icons.speed),
+          title: const Text('Oppa'),
+          subtitle: const Text('Create an editable Oppa profile'),
+          onTap: () => _toAddOppa(ref),
         ),
         ListItem(
           leading: const Icon(Icons.cloud_download_sharp),

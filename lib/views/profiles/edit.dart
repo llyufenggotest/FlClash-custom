@@ -9,6 +9,7 @@ import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/pages/editor.dart';
 import 'package:fl_clash/providers/action.dart';
 import 'package:fl_clash/state.dart';
+import 'package:fl_clash/views/profiles/oppa_profile_dialog.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -38,6 +39,8 @@ class _EditProfileViewState extends ConsumerState<EditProfileView> {
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
   final _fileInfoNotifier = ValueNotifier<FileInfo?>(null);
   late SetupAction _setupAction;
+  ProtocolEditPolicy _protocolEditPolicy = ProtocolEditPolicy.standard;
+  OppaProxyConfig? _oppaConfig;
   Uint8List? _fileData;
 
   @override
@@ -54,6 +57,24 @@ class _EditProfileViewState extends ConsumerState<EditProfileView> {
     );
     _setupAction = ref.read(setupActionProvider.notifier);
     _updateFileInfo();
+    _loadProtocolPolicy();
+  }
+
+  Future<void> _loadProtocolPolicy() async {
+    final file = await widget.profile.file;
+    if (!await file.exists()) return;
+    final source = await file.readAsString();
+    _protocolEditPolicy = protocolEditPolicyForYaml(source);
+    try {
+      _oppaConfig = _protocolEditPolicy == ProtocolEditPolicy.oppa
+          ? OppaProxyConfig.fromYaml(source)
+          : null;
+    } on Object {
+      _protocolEditPolicy = ProtocolEditPolicy.standard;
+      _oppaConfig = null;
+    }
+    if (!mounted) return;
+    setState(() {});
   }
 
   Future<void> _updateFileInfo() async {
@@ -146,7 +167,30 @@ class _EditProfileViewState extends ConsumerState<EditProfileView> {
     }
   }
 
+  Future<void> _editOppaProfile() async {
+    final initial = _oppaConfig;
+    if (initial == null) return;
+    final updated = await dialogs.showCommonDialog<OppaProxyConfig>(
+      child: OppaProfileDialog(initial: initial),
+    );
+    if (updated == null || !mounted) return;
+    final data = Uint8List.fromList(utf8.encode(updated.toYaml()));
+    setState(() {
+      _oppaConfig = updated;
+      _fileData = data;
+    });
+    _fileInfoNotifier.value = _fileInfoNotifier.value?.copyWith(
+      size: data.length,
+      lastModified: DateTime.now(),
+    );
+  }
+
   Future<void> _editProfileFile() async {
+    if (_protocolEditPolicy == ProtocolEditPolicy.readOnly) return;
+    if (_protocolEditPolicy == ProtocolEditPolicy.oppa) {
+      await _editOppaProfile();
+      return;
+    }
     if (_rawText == null) {
       final profilePath = await appPath.getProfilePath(
         widget.profile.id.toString(),
@@ -286,8 +330,13 @@ class _EditProfileViewState extends ConsumerState<EditProfileView> {
       ],
       _ProfileFileItem(
         fileInfoNotifier: _fileInfoNotifier,
-        onEdit: _editProfileFile,
-        onUpload: _uploadProfileFile,
+        onEdit: _protocolEditPolicy == ProtocolEditPolicy.readOnly
+            ? null
+            : _editProfileFile,
+        onUpload: _protocolEditPolicy == ProtocolEditPolicy.readOnly
+            ? null
+            : _uploadProfileFile,
+        readOnly: _protocolEditPolicy == ProtocolEditPolicy.readOnly,
       ),
     ];
     return FocusTraversalGroup(
@@ -434,11 +483,13 @@ class _ProfileFileItem extends StatelessWidget {
     required this.fileInfoNotifier,
     required this.onEdit,
     required this.onUpload,
+    required this.readOnly,
   });
 
   final ValueNotifier<FileInfo?> fileInfoNotifier;
-  final VoidCallback onEdit;
-  final VoidCallback onUpload;
+  final VoidCallback? onEdit;
+  final VoidCallback? onUpload;
+  final bool readOnly;
 
   Widget _buildMetadata(BuildContext context, FileInfo fileInfo) {
     return Padding(
@@ -459,6 +510,7 @@ class _ProfileFileItem extends StatelessWidget {
 
   List<CommonPopupMenuItem> _menuItems(BuildContext context) {
     final appLocalizations = context.appLocalizations;
+    if (readOnly) return const [];
     return [
       CommonPopupMenuItem(
         icon: Icons.edit_outlined,
@@ -492,7 +544,12 @@ class _ProfileFileItem extends StatelessWidget {
                       contentPadding: const EdgeInsets.only(left: 16, right: 8),
                       title: Text(appLocalizations.profile),
                       subtitle: _buildMetadata(context, fileInfo),
-                      trailing: CommonPopupBox(
+                      trailing: readOnly
+                          ? const Tooltip(
+                              message: 'XHTTP / BLACKSTONE profiles are read-only',
+                              child: Icon(Icons.lock_outline),
+                            )
+                          : CommonPopupBox(
                         popupBuilder: (_) =>
                             CommonPopupMenu(items: _menuItems(context)),
                         targetBuilder: (open) {

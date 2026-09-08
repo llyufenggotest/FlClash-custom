@@ -18,6 +18,49 @@ env:
   NDK_VERSION: r29
 
 jobs:
+  protocol-contract:
+    name: Five protocol contracts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout pinned protocol sources
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: core/go.sum
+
+      - name: Verify recursive submodule SHAs
+        shell: bash
+        run: |
+          test "$(git -C core/mihomo rev-parse HEAD)" = 294e072d12f5a068f86f5b275fc9c49544c3f4fa
+          test "$(git -C core/sing-shadowsocks2 rev-parse HEAD)" = 98c4afa30d95f4af5bdaa18abf8ff6cc6d3ed8d7
+          git submodule status --recursive
+
+      - name: Verify protocol parsers and both build-tag modes
+        shell: bash
+        run: |
+          (cd core/mihomo && go test ./transport/oppa)
+          (cd core/mihomo && go test ./adapter -run 'Test(ParseOppa|ParseTrojanFastup)' -count=1)
+          (cd core/mihomo && go test ./adapter/outbound -run 'Test(Fastup|Vless)' -count=1)
+          (cd core && CGO_ENABLED=0 go test ./...)
+          (cd core && CGO_ENABLED=0 go test -tags with_low_memory ./...)
+
+      - name: Reject retired ShanLian protocol
+        shell: bash
+        run: |
+          ! git grep -n -E '#sl|MAGIC_SHANLIAN_TRIGGER|GenerateMagicSNI' -- \
+            'core/mihomo/*.go' 'core/mihomo/**/*.go' ':!core/mihomo/**/*_test.go'
+
+      - name: Run five-protocol configuration smoke contracts
+        run: python scripts/protocol_smoke.py
+
+      - name: Verify product migration contracts
+        run: python scripts/test_product_migration_contracts.py
+
   dart:
     name: Dart
     runs-on: ubuntu-latest
@@ -228,7 +271,7 @@ jobs:
 
   build:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: [ dart, plugins, go, android, rust, windows-helper-test ]
+    needs: [ protocol-contract, dart, plugins, go, android, rust, windows-helper-test ]
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
