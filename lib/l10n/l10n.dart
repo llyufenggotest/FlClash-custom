@@ -3580,6 +3580,56 @@ class AppLocalizations {
     return Intl.message('Add profile', name: 'addProfile', desc: '', args: []);
   }
 
+  /// `Please drop one YAML profile at a time.`
+  String get dropSingleYamlProfile {
+    return Intl.message(
+      'Please drop one YAML profile at a time.',
+      name: 'dropSingleYamlProfile',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Only .yaml and .yml profiles are supported.`
+  String get dropYamlOnly {
+    return Intl.message(
+      'Only .yaml and .yml profiles are supported.',
+      name: 'dropYamlOnly',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `The dropped profile exceeds the 32 MiB limit.`
+  String get droppedProfileTooLarge {
+    return Intl.message(
+      'The dropped profile exceeds the 32 MiB limit.',
+      name: 'droppedProfileTooLarge',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Unable to access the dropped file.`
+  String get droppedProfileAccessFailed {
+    return Intl.message(
+      'Unable to access the dropped file.',
+      name: 'droppedProfileAccessFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Drop YAML profile to import`
+  String get dropYamlProfileToImport {
+    return Intl.message(
+      'Drop YAML profile to import',
+      name: 'dropYamlProfileToImport',
+      desc: '',
+      args: [],
+    );
+  }
+
   /// `Delay test`
   String get delayTest {
     return Intl.message('Delay test', name: 'delayTest', desc: '', args: []);

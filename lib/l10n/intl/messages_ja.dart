@@ -384,6 +384,21 @@ class MessageLookup extends MessageLookupByLibrary {
     "download": MessageLookupByLibrary.simpleMessage("ダウンロード"),
     "downloadSpeed": MessageLookupByLibrary.simpleMessage("ダウンロード速度"),
     "downloadTraffic": MessageLookupByLibrary.simpleMessage("ダウンロード通信量"),
+    "dropSingleYamlProfile": MessageLookupByLibrary.simpleMessage(
+      "YAML プロファイルは一度に1つだけドロップしてください。",
+    ),
+    "dropYamlOnly": MessageLookupByLibrary.simpleMessage(
+      ".yaml または .yml プロファイルのみ対応しています。",
+    ),
+    "dropYamlProfileToImport": MessageLookupByLibrary.simpleMessage(
+      "YAML プロファイルをドロップしてインポート",
+    ),
+    "droppedProfileAccessFailed": MessageLookupByLibrary.simpleMessage(
+      "ドロップしたファイルにアクセスできません。",
+    ),
+    "droppedProfileTooLarge": MessageLookupByLibrary.simpleMessage(
+      "ドロップしたプロファイルは 32 MiB の上限を超えています。",
+    ),
     "edit": MessageLookupByLibrary.simpleMessage("編集"),
     "editGlobalRules": MessageLookupByLibrary.simpleMessage("グローバルルールを編集"),
     "editProxy": MessageLookupByLibrary.simpleMessage("プロキシを編集"),

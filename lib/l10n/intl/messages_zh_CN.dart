@@ -342,6 +342,21 @@ class MessageLookup extends MessageLookupByLibrary {
     "download": MessageLookupByLibrary.simpleMessage("下载"),
     "downloadSpeed": MessageLookupByLibrary.simpleMessage("下载速度"),
     "downloadTraffic": MessageLookupByLibrary.simpleMessage("下载流量"),
+    "dropSingleYamlProfile": MessageLookupByLibrary.simpleMessage(
+      "请每次只拖入一个 YAML 配置文件。",
+    ),
+    "dropYamlOnly": MessageLookupByLibrary.simpleMessage(
+      "仅支持 .yaml 和 .yml 配置文件。",
+    ),
+    "dropYamlProfileToImport": MessageLookupByLibrary.simpleMessage(
+      "释放以导入 YAML 配置",
+    ),
+    "droppedProfileAccessFailed": MessageLookupByLibrary.simpleMessage(
+      "无法访问拖入的文件。",
+    ),
+    "droppedProfileTooLarge": MessageLookupByLibrary.simpleMessage(
+      "拖入的配置文件超过 32 MiB 限制。",
+    ),
     "edit": MessageLookupByLibrary.simpleMessage("编辑"),
     "editGlobalRules": MessageLookupByLibrary.simpleMessage("编辑全局规则"),
     "editProxy": MessageLookupByLibrary.simpleMessage("编辑代理"),
