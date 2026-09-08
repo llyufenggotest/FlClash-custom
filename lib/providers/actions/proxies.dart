@@ -16,7 +16,9 @@ class _DelayTestTarget {
 class ProxiesAction extends _$ProxiesAction {
   CoreController get _core => ref.read(coreHandlerProvider);
 
-  final TaskPool _delayTestPool = TaskPool(maxConcurrentDelayTests);
+  static final _delayTestConcurrency = maxConcurrentDelayTests;
+  // TaskPool starts work only while _runningDelayTests < _delayTestConcurrency.
+  final TaskPool _delayTestPool = TaskPool(_delayTestConcurrency);
   final Map<String, Future<Delay?>> _pendingDelayTests = {};
   final Map<String, _DelayTestTarget> _pendingDelayTargets = {};
   int _delayTestGeneration = 0;

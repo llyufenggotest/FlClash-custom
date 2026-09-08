@@ -60,7 +60,11 @@ const coreConnectionWaitDuration = Duration(seconds: 10);
 
 /// Keep at or below the Core's delay-test concurrency (`delayTestConcurrency`
 /// in core/common.go).
-const maxConcurrentDelayTests = 16;
+const _maxConcurrentDelayTestsDefault = 50;
+const _maxConcurrentDelayTestsIOS = 8;
+final maxConcurrentDelayTests = system.isIOS
+    ? _maxConcurrentDelayTestsIOS
+    : _maxConcurrentDelayTestsDefault;
 const animateDuration = Duration(milliseconds: 100);
 const midDuration = Duration(milliseconds: 200);
 const commonDuration = Duration(milliseconds: 300);
@@ -82,6 +86,7 @@ const localhost = '127.0.0.1';
 const defaultExternalControllerPort = 9090;
 const clashConfigKey = 'clash_config';
 const configKey = 'config';
+const appliedConfigMd5Key = 'applied_config_md5';
 const systemDnsRecordKey = 'system_dns_record';
 const bootRecordKey = 'boot_record';
 const defaultSystemDnsFallback = '223.5.5.5';

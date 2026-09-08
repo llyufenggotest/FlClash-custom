@@ -166,6 +166,10 @@ class SetupAction extends _$SetupAction {
     if (!_isCurrent(request)) {
       return true;
     }
+    if (system.isIOS) {
+      globalState.lastConfigMd5 = null;
+      await preferences.setAppliedConfigMd5(null);
+    }
     resetCoreTraffic();
     ref.read(trafficsProvider.notifier).clear();
     ref.read(totalTrafficProvider.notifier).value = const Traffic();
@@ -268,11 +272,13 @@ class SetupAction extends _$SetupAction {
   Future<bool> applyProfile({
     bool silence = false,
     bool force = false,
+    bool profileSwitched = false,
     Future<void> Function()? preloadInvoke,
   }) async {
     final result = await _runSetup(
       force: force,
       silence: silence,
+      profileSwitched: profileSwitched,
       preloadInvoke: preloadInvoke,
     );
     return result != _SetupTaskResult.failed;
@@ -281,12 +287,14 @@ class SetupAction extends _$SetupAction {
   Future<_SetupTaskResult> _runSetup({
     bool silence = false,
     bool force = false,
+    bool profileSwitched = false,
     Future<void> Function()? preloadInvoke,
   }) async {
     final result = await _setupScheduler.run(() {
       return _setupConfig(
         force: force,
         silence: silence,
+        profileSwitched: profileSwitched,
         preloadInvoke: preloadInvoke,
         onUpdated: () async {
           await ref.read(proxiesActionProvider.notifier).updateGroups();
@@ -445,6 +453,7 @@ class SetupAction extends _$SetupAction {
   Future<_SetupTaskResult> _setupConfig({
     bool force = false,
     bool silence = false,
+    bool profileSwitched = false,
     Future<void> Function()? preloadInvoke,
     FutureOr Function()? onUpdated,
   }) async {
@@ -476,7 +485,21 @@ class SetupAction extends _$SetupAction {
     final profileFailed = realProfile == null;
     final yamlString = realProfile?.yaml ?? '';
     final yamlMd5 = realProfile?.md5 ?? '';
-    if (!profileFailed && yamlMd5 == globalState.lastConfigMd5 && !force) {
+    final appliedMd5 = globalState.lastConfigMd5 ??
+        await preferences.getAppliedConfigMd5();
+    final configFile = File(await appPath.configFilePath);
+    final diskMatches = await configFile.exists() &&
+        (await configFile.readAsString()).toMd5() == yamlMd5;
+    final matchesAppliedConfig =
+        !profileFailed && yamlMd5 == appliedMd5 && diskMatches;
+    final skipRedundantReload =
+        !profileSwitched &&
+        matchesAppliedConfig &&
+        (!force || (system.isIOS && _isRunning));
+    if (skipRedundantReload) {
+      globalState.lastConfigMd5 = yamlMd5;
+      await preloadInvoke?.call();
+      await onUpdated?.call();
       return _SetupTaskResult.completed;
     }
     if (system.isAndroid) {
@@ -510,7 +533,9 @@ class SetupAction extends _$SetupAction {
           }
           rethrow;
         }
-        globalState.lastConfigMd5 = yamlMd5;
+        final appliedYamlMd5 = (await configFile.readAsString()).toMd5();
+        globalState.lastConfigMd5 = appliedYamlMd5;
+        await preferences.setAppliedConfigMd5(appliedYamlMd5);
         ref.read(checkIpNumProvider.notifier).add();
         await onUpdated?.call();
       },

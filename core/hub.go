@@ -344,6 +344,35 @@ func reportMissingDelayTestProxy(name string) {
 	logError("delay test: %q is not part of the applied config", name)
 }
 
+func handleAsyncTestDelay(params *TestDelayParams, fn func(*Delay)) {
+	request := *params
+	scheduleDelayTest(delayTestTimeout(request.Timeout), func(ctx context.Context) {
+		testUrl := request.TestUrl
+		if testUrl == "" {
+			testUrl = currentTestURL()
+		}
+		delayData := &Delay{Name: request.ProxyName, Url: testUrl, Value: -1}
+		proxy := lookupProxy(request.ProxyName)
+		if proxy == nil {
+			reportMissingDelayTestProxy(request.ProxyName)
+			fn(delayData)
+			return
+		}
+		expectedStatus := anyDelayTestStatus
+		delay, err := proxy.URLTest(ctx, testUrl, expectedStatus)
+		if err == nil {
+			delayData.Value = delayValue(delay)
+		}
+		fn(delayData)
+	}, func() {
+		testUrl := request.TestUrl
+		if testUrl == "" {
+			testUrl = currentTestURL()
+		}
+		fn(&Delay{Name: request.ProxyName, Url: testUrl, Value: -1})
+	})
+}
+
 func handleTestDelay(params *TestDelayParams) *Delay {
 	url := params.TestUrl
 	if url == "" {
