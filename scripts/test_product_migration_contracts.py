@@ -46,6 +46,13 @@ class ProductMigrationContractTest(unittest.TestCase):
         self.assertIn("MAGIC_SHANLIAN_TRIGGER", workflow)
         self.assertIn("protocol_smoke", workflow)
 
+    def test_five_platform_workflow_uses_release_flutter_toolchain(self):
+        release_workflow = self.read(".github/workflows/build.yaml")
+        matrix_workflow = self.read(".github/workflows/ios-five-protocol.yaml")
+        marker = "FLUTTER_VERSION: '3.47.2'"
+        self.assertIn(marker, release_workflow)
+        self.assertIn(marker, matrix_workflow)
+
     def test_brand_and_update_source_are_pinned(self):
         constants = self.read("lib/common/constant.dart")
         request = self.read("lib/common/request.dart")
