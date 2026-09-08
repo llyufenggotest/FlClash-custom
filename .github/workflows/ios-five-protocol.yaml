@@ -20,6 +20,7 @@ permissions:
 
 env:
   FLUTTER_VERSION: '3.47.2'
+  NDK_VERSION: '28.2.13676358'
 
 jobs:
   ios:
@@ -186,7 +187,7 @@ jobs:
       - name: Setup NDK
         uses: nttld/setup-ndk@v1
         with:
-          ndk-version: r29
+          ndk-version: ${{ env.NDK_VERSION }}
           add-to-path: true
           link-to-sdk: true
 

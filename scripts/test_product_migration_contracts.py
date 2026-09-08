@@ -1,4 +1,5 @@
 import pathlib
+import re
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -46,12 +47,19 @@ class ProductMigrationContractTest(unittest.TestCase):
         self.assertIn("MAGIC_SHANLIAN_TRIGGER", workflow)
         self.assertIn("protocol_smoke", workflow)
 
-    def test_five_platform_workflow_uses_release_flutter_toolchain(self):
+    def test_five_platform_workflow_uses_release_toolchains(self):
         release_workflow = self.read(".github/workflows/build.yaml")
         matrix_workflow = self.read(".github/workflows/ios-five-protocol.yaml")
-        marker = "FLUTTER_VERSION: '3.47.2'"
-        self.assertIn(marker, release_workflow)
-        self.assertIn(marker, matrix_workflow)
+        gradle_versions = self.read("android/gradle/libs.versions.toml")
+        flutter_marker = "FLUTTER_VERSION: '3.47.2'"
+        self.assertIn(flutter_marker, release_workflow)
+        self.assertIn(flutter_marker, matrix_workflow)
+        ndk = re.search(r'^ndkVersion = "([^"]+)"$', gradle_versions, re.MULTILINE)
+        self.assertIsNotNone(ndk)
+        ndk_marker = f"NDK_VERSION: '{ndk.group(1)}'"
+        self.assertIn(ndk_marker, release_workflow)
+        self.assertIn(ndk_marker, matrix_workflow)
+        self.assertIn("ndk-version: ${{ env.NDK_VERSION }}", matrix_workflow)
 
     def test_brand_and_update_source_are_pinned(self):
         constants = self.read("lib/common/constant.dart")

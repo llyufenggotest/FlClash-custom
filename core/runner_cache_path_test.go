@@ -53,8 +53,8 @@ func TestResolvedExpectedParentCanonicalizesAlias(t *testing.T) {
 	if err := os.Symlink(realParent, alias); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
-	if got := resolvedExpectedParent(t, alias); got != realParent {
-		t.Fatalf("resolved parent = %q, want %q", got, realParent)
+	if got, want := resolvedExpectedParent(t, alias), resolvedExpectedParent(t, realParent); got != want {
+		t.Fatalf("resolved parent = %q, want %q", got, want)
 	}
 }
 
