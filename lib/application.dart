@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:desktop_drop/desktop_drop.dart';
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/common/window.dart';
 import 'package:fl_clash/bootstrap.dart';
@@ -82,8 +83,112 @@ class Application extends ConsumerStatefulWidget {
 }
 
 class ApplicationState extends ConsumerState<Application> {
+  static const _maxDroppedProfileBytes = 32 * 1024 * 1024;
+
   Timer? _autoUpdateProfilesTaskTimer;
   bool _preHasVpn = false;
+  bool _isDraggingConfig = false;
+
+  bool _isYamlFile(String path) {
+    final lowerPath = path.toLowerCase();
+    return lowerPath.endsWith('.yaml') || lowerPath.endsWith('.yml');
+  }
+
+  Future<void> _handleConfigDrop(DropDoneDetails details) async {
+    if (mounted && _isDraggingConfig) {
+      setState(() => _isDraggingConfig = false);
+    }
+    if (details.files.length != 1) {
+      await dialogs.showMessage(
+        message: const TextSpan(text: 'Please drop one YAML profile at a time.'),
+        cancelable: false,
+      );
+      return;
+    }
+    final file = details.files.single;
+    if (file is DropItemDirectory || !_isYamlFile(file.path)) {
+      await dialogs.showMessage(
+        message: const TextSpan(text: 'Only .yaml and .yml profiles are supported.'),
+        cancelable: false,
+      );
+      return;
+    }
+    await globalState.safeRun<void>(() async {
+      final bookmark = file.extraAppleBookmark;
+      var scopedAccess = false;
+      try {
+        if (system.isMacOS && bookmark?.isNotEmpty == true) {
+          scopedAccess = await DesktopDrop.instance
+              .startAccessingSecurityScopedResource(bookmark: bookmark!);
+          if (!scopedAccess) {
+            throw const MessageException('Unable to access the dropped file.');
+          }
+        }
+        final length = await file.length();
+        if (length > _maxDroppedProfileBytes) {
+          throw const MessageException(
+            'The dropped profile exceeds the 32 MiB limit.',
+          );
+        }
+        await ref
+            .read(profilesActionProvider.notifier)
+            .addProfileFromDroppedFile(
+              name: file.name,
+              bytes: await file.readAsBytes(),
+            );
+      } finally {
+        if (scopedAccess) {
+          await DesktopDrop.instance.stopAccessingSecurityScopedResource(
+            bookmark: bookmark!,
+          );
+        }
+      }
+    });
+  }
+
+  Widget _buildDesktopDropTarget(Widget child) {
+    if (!system.isDesktop) return child;
+    return DropTarget(
+      onDragEntered: (_) {
+        if (!_isDraggingConfig) setState(() => _isDraggingConfig = true);
+      },
+      onDragExited: (_) {
+        if (_isDraggingConfig) setState(() => _isDraggingConfig = false);
+      },
+      onDragDone: _handleConfigDrop,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          child,
+          if (_isDraggingConfig)
+            Positioned.fill(
+              child: IgnorePointer(
+                child: ColoredBox(
+                  color: context.colorScheme.surface.withValues(alpha: 0.92),
+                  child: Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.upload_file,
+                          size: 48,
+                          color: context.colorScheme.primary,
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          'Drop YAML profile to import',
+                          style: context.textTheme.titleMedium,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
 
   ColorScheme _getAppColorScheme({required Brightness brightness}) {
     return ref.read(genColorSchemeProvider(brightness));
@@ -195,7 +300,7 @@ class ApplicationState extends ConsumerState<Application> {
                         isDesktop: system.isDesktop,
                         isAndroid: system.isAndroid,
                         onConnectivityChanged: _handleConnectivityChanged,
-                        child: child!,
+                        child: _buildDesktopDropTarget(child!),
                       ),
                     ),
                   );

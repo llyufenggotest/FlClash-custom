@@ -35,6 +35,24 @@ class ProductMigrationContractTest(unittest.TestCase):
         self.assertIn("blackstone", policy.lower())
         self.assertIn("oppa", policy.lower())
 
+    def test_desktop_yaml_drop_reuses_profile_validation_pipeline(self):
+        pubspec = self.read("pubspec.yaml")
+        app = self.read("lib/application.dart")
+        actions = self.read("lib/providers/actions/profiles.dart")
+        self.assertIn("desktop_drop:", pubspec)
+        self.assertIn("DropTarget(", app)
+        self.assertIn("system.isDesktop", app)
+        self.assertIn(".yaml", app)
+        self.assertIn(".yml", app)
+        self.assertIn("addProfileFromDroppedFile", app)
+        self.assertIn("startAccessingSecurityScopedResource", app)
+        self.assertIn("stopAccessingSecurityScopedResource", app)
+        self.assertIn("DropItemDirectory", app)
+        self.assertIn("32 * 1024 * 1024", app)
+        self.assertIn("await file.length()", app)
+        self.assertIn("Future<void> addProfileFromDroppedFile", actions)
+        self.assertIn("saveFile(bytes, prepare: prepareProfileConfig)", actions)
+
     def test_ci_preserves_matrix_and_adds_protocol_gates(self):
         workflow = self.read(".github/workflows/build.yaml")
         for platform in ("android", "ios", "linux", "windows", "macos"):
