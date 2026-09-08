@@ -93,10 +93,10 @@ class AppPath {
       dataDir.complete(directory);
       return;
     }
-    final supportDir = await supportDirectory();
-    this.supportDir.complete(supportDir);
+    final applicationSupportDir = await supportDirectory();
+    supportDir.complete(applicationSupportDir);
     if (!system.isIOS) {
-      dataDir.complete(supportDir);
+      dataDir.complete(applicationSupportDir);
       return;
     }
     try {
@@ -108,12 +108,12 @@ class AppPath {
           '';
       dataDir.complete(
         await migrateIOSDataDirectory(
-          supportDirectory: supportDir,
+          supportDirectory: applicationSupportDir,
           appGroupPath: appGroupPath,
         ),
       );
     } catch (_) {
-      dataDir.complete(supportDir);
+      dataDir.complete(applicationSupportDir);
     }
   }
 
