@@ -66,9 +66,14 @@ Map<String, String> _bindgenEnvironment(BuildInput input) {
   // Flutter can select an older SDK NDK for the compiler even when CI installs
   // the project NDK. Bindgen only needs a host libclang, so fall back to the
   // runner's LLVM installation instead of coupling it to that compiler NDK.
-  final llvmConfig = Process.runSync('llvm-config', ['--libdir']);
-  if (llvmConfig.exitCode == 0) {
-    final directory = Directory('${llvmConfig.stdout}'.trim());
+  ProcessResult? llvmConfig;
+  try {
+    llvmConfig = Process.runSync('llvm-config', ['--libdir']);
+  } on ProcessException {
+    llvmConfig = null;
+  }
+  if (llvmConfig?.exitCode == 0) {
+    final directory = Directory('${llvmConfig!.stdout}'.trim());
     if (_containsLibclang(directory)) {
       return {'LIBCLANG_PATH': directory.path};
     }

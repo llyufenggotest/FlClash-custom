@@ -69,6 +69,9 @@ class GlobalState {
     required LoadingTag? tag,
     bool silence = false,
   }) async {
+    if (system.isIOS) {
+      silence = true;
+    }
     return globalState.safeRun(
       futureFunction,
       silence: silence,

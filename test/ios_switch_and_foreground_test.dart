@@ -136,7 +136,7 @@ void main() {
     });
 
     test('the tab is derived from the group list, so it must stay filled', () {
-      final state = source('lib/providers/state.dart');
+      final state = source('lib/providers/state/navigation.dart');
       expect(state, contains('final hasProxies = ref.watch('));
       expect(state, contains('currentGroupsStateProvider.select'));
     });

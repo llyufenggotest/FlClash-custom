@@ -150,8 +150,11 @@ class CoreMethodException implements Exception {
     this.details,
   });
 
-  bool get isCoreUnavailable =>
-      const {'transport_disconnected', 'transport_error'}.contains(code);
+  bool get isCoreUnavailable => const {
+    'transport_disconnected',
+    'transport_error',
+    'network_extension_unavailable',
+  }.contains(code);
 
   @override
   String toString() => 'CoreMethodException($code, $message, $details)';
