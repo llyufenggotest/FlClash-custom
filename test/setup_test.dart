@@ -73,6 +73,14 @@ void main() {
       expect(results.rest, ['ios']);
     });
 
+    test('unsigned iOS builder explicitly disables Xcode signing', () {
+      final source = File('setup.dart').readAsStringSync();
+      expect(source, contains("['CODE_SIGNING_ALLOWED'] = 'NO'"));
+      expect(source, contains("['CODE_SIGNING_REQUIRED'] = 'NO'"));
+      expect(source, contains("['CODE_SIGN_IDENTITY'] = ''"));
+      expect(source, contains('environment: noSignEnvironment'));
+    });
+
     test('parses dependency installation opt-out', () {
       final results = setup.createSetupArgParser().parse([
         'linux',

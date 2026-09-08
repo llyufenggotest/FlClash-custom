@@ -4,6 +4,7 @@ final class SharedStateStore {
   private let sharedStateKey = "sharedState"
   private let setupParamsKey = "setupParams"
   private let runTimeKey = "runTime"
+  private let tunnelAttemptIDKey = "tunnelAttemptID"
   private let eventQueueDirectoryName = "core-events"
 
   let appGroupIdentifier = "group.\(Bundle.main.bundleIdentifier!)"
@@ -61,6 +62,14 @@ final class SharedStateStore {
   func runTime() -> Int {
     UserDefaults(suiteName: appGroupIdentifier)?
       .integer(forKey: runTimeKey) ?? 0
+  }
+
+  @discardableResult
+  func beginTunnelAttempt() -> String {
+    let attemptID = UUID().uuidString.lowercased()
+    UserDefaults(suiteName: appGroupIdentifier)?
+      .set(attemptID, forKey: tunnelAttemptIDKey)
+    return attemptID
   }
 }
 
