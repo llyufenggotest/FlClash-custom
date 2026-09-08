@@ -4,6 +4,10 @@ go 1.25
 
 replace github.com/metacubex/mihomo => ./mihomo
 
+// ViewTurbo lives in the local fork and the shipped libraries are built from
+// this main module. Keeping the replace only in mihomo/go.mod is insufficient.
+replace github.com/metacubex/sing-shadowsocks2 => ./sing-shadowsocks2
+
 replace github.com/metacubex/sing-tun => github.com/metacubex/sing-tun v0.4.23-0.20260905152808-cf4803d5489c
 
 require (
