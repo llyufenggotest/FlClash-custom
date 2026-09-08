@@ -536,11 +536,8 @@ class SetupAction extends _$SetupAction {
           final coreController = _core;
           Future<void> commitAndActivate() async {
             // _start marks local state running before initialization. A supplied
-            // preload callback therefore means "start after commit", not that an
-            // old tunnel already exists. Without one, _isRunning denotes a real
-            // online replacement.
+            // preload callback owns stale-request and suspend arbitration.
             final onlineSwitch = _isRunning && preloadInvoke == null;
-            final shouldStartTunnel = onlineSwitch || preloadInvoke != null;
             await commitAndActivateIOSConfig(
               configPath: configFilePath,
               config: yamlString,
@@ -554,7 +551,13 @@ class SetupAction extends _$SetupAction {
                 if (applyResult.isNotEmpty) {
                   throw MessageException(applyResult);
                 }
-                if (!shouldStartTunnel) {
+                if (preloadInvoke != null) {
+                  // A stale or suspended initialization deliberately no-ops in
+                  // _setCoreRunning; that is successful intent arbitration.
+                  await preloadInvoke();
+                  return true;
+                }
+                if (!onlineSwitch) {
                   return true;
                 }
                 return setCoreRunning(true);

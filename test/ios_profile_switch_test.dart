@@ -72,7 +72,7 @@ void main() {
 
       expect(
         body,
-        contains('final onlineSwitch = _isRunning;'),
+        contains('final onlineSwitch = _isRunning && preloadInvoke == null;'),
         reason:
             'any formal config replacement while the tunnel is running must '
             'stop, commit, restart, and roll back on failure',
@@ -90,6 +90,24 @@ void main() {
       expect(commitAt, greaterThan(activationAt));
       expect(stopAt, greaterThan(commitAt));
       expect(startAt, greaterThan(stopAt));
+    });
+
+    test('initialization keeps stale-request and suspend arbitration', () {
+      final setup = source('lib/providers/actions/setup.dart');
+      final start = setup.indexOf('Future<void> commitAndActivate()');
+      final body = setup.substring(start, setup.indexOf('\n        final message =', start));
+
+      expect(body, contains('if (preloadInvoke != null)'));
+      expect(body, contains('await preloadInvoke();'));
+      expect(
+        body.indexOf('await preloadInvoke();'),
+        lessThan(body.indexOf('return setCoreRunning(true);')),
+      );
+      expect(
+        body,
+        isNot(contains('final shouldStartTunnel =')),
+        reason: 'callback presence must not bypass request/suspend arbitration',
+      );
     });
 
     test('a switch is never treated as a redundant reload', () {
