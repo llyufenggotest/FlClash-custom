@@ -85,6 +85,7 @@ void main() {
 
     test('loadingRun swallows core-unavailable failures', () {
       final state = source('lib/state.dart');
+      expect(state, contains("import 'core/core.dart';"));
       final catchStart = state.indexOf('if (isCoreUnavailableError(e))');
       expect(catchStart, greaterThan(-1));
       final body = state.substring(catchStart, catchStart + 500);
