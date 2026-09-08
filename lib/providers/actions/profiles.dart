@@ -43,9 +43,9 @@ class ProfilesAction extends _$ProfilesAction {
     String content,
     String? ageSecretKey,
   ) async {
-    var prepared = content;
+    var prepared = convertFastupSubscription(content);
     if (ageSecretKey?.isNotEmpty == true) {
-      final decrypted = await _core.decryptAgeConfig(content, ageSecretKey!);
+      final decrypted = await _core.decryptAgeConfig(prepared, ageSecretKey!);
       if (decrypted.isNotEmpty) {
         prepared = decrypted;
       }
@@ -133,6 +133,18 @@ class ProfilesAction extends _$ProfilesAction {
             .stop(profile.updatingKey, operation);
       }
     }
+  }
+
+  Future<void> addOppaProfile(OppaProxyConfig config) async {
+    final profile = await globalState.loadingRun(
+      tag: LoadingTag.profiles,
+      () => Profile.normal(label: config.name).saveFile(
+        Uint8List.fromList(utf8.encode(config.toYaml())),
+        prepare: prepareProfileConfig,
+      ),
+      title: currentAppLocalizations.addProfile,
+    );
+    if (profile != null) putProfile(profile);
   }
 
   Future<void> addProfileFormFile() async {
