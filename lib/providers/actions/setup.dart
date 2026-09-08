@@ -267,6 +267,44 @@ class SetupAction extends _$SetupAction {
     });
   }
 
+  @protected
+  bool get rulePrewarmEnabled => system.isIOS;
+
+  /// Prepares external rule-provider artifacts without activating the profile.
+  Future<bool> prewarmProfile(Profile profile) async {
+    if (!rulePrewarmEnabled) {
+      return false;
+    }
+    final setupState = await ref.read(setupStateProvider(profile.id).future);
+    final patchConfig = ref.read(patchClashConfigProvider);
+    final rendered = await getProfile(
+      setupState: setupState,
+      patchConfig: patchConfig,
+    );
+    if (rendered.yaml.isEmpty) {
+      return false;
+    }
+    final parsed = loadYaml(rendered.yaml);
+    final ruleProviders = parsed is YamlMap ? parsed['rule-providers'] : null;
+    final hasExternalRuleProvider =
+        ruleProviders is YamlMap &&
+        ruleProviders.values.any(
+          (value) => value is YamlMap && value['type'] != 'inline',
+        );
+    if (!hasExternalRuleProvider) {
+      return false;
+    }
+    final result = await _core.setupConfig(
+      params: _setupParams,
+      preparationConfig: rendered.yaml,
+      preparationProfileId: profile.id,
+    );
+    if (result.isNotEmpty) {
+      throw MessageException(result);
+    }
+    return true;
+  }
+
   // False means building the profile, the config write, or the Core setup
   // step failed; a profile that fails to build is still pushed to the Core
   // as the empty config so it never keeps serving the previous one.
