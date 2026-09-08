@@ -54,17 +54,15 @@ void main() {
 
     test('preparation does not stop the old tunnel', () {
       final setup = source('lib/providers/actions/setup.dart');
-      final signatureAt = setup.indexOf('Future<_SetupTaskResult> _runSetup(');
-      final start = setup.indexOf('_setupScheduler.run(', signatureAt);
-      final end = setup.indexOf('\n  Future<_SetupTaskResult> _setupConfig(', start);
+      final signatureAt = setup.indexOf('Future<_SetupTaskResult> _setupConfig(');
+      final start = setup.indexOf('async {', signatureAt);
+      final end = setup.length;
+      expect(signatureAt, greaterThan(-1));
       expect(start, greaterThan(signatureAt));
       final body = setup.substring(start, end);
 
-      final schedulerAt = body.indexOf('_setupScheduler.run(');
-      final setupAt = body.indexOf('await _setupConfig(');
-      expect(schedulerAt, 0);
-      expect(setupAt, greaterThan(schedulerAt));
-      expect(body, isNot(contains('setCoreRunning(false)')));
+      expect(body, contains('commitAndActivateIOSConfig('));
+      expect(body, isNot(contains('await setCoreRunning(false)')));
     });
 
     test('every running iOS config change is transactional', () {
