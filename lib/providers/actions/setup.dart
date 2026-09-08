@@ -450,6 +450,18 @@ class SetupAction extends _$SetupAction {
     return fallback;
   }
 
+  Future<void> _persistConfigAtomically(String path, String config) async {
+    final temporary = File(
+      '$path.tmp.$pid.${DateTime.now().microsecondsSinceEpoch}',
+    );
+    try {
+      await temporary.writeAsString(config, flush: true);
+      await temporary.rename(path);
+    } finally {
+      await temporary.safeDelete();
+    }
+  }
+
   Future<_SetupTaskResult> _setupConfig({
     bool force = false,
     bool silence = false,
@@ -514,14 +526,37 @@ class SetupAction extends _$SetupAction {
       () async {
         try {
           final configFilePath = await appPath.configFilePath;
-          await File(configFilePath).safeWriteAsString(yamlString);
+          if (!system.isIOS) {
+            await File(configFilePath).safeWriteAsString(yamlString);
+          }
           final profileId = profile?.id;
           if (profileId != null) {
             await appPath.ensureProviderDirs(profileId);
           }
-          final message = await _core.setupConfig(
+          final coreController = _core;
+          Future<void> commitAndActivate() async {
+            await commitAndActivateIOSConfig(
+              configPath: configFilePath,
+              config: yamlString,
+              oldTunnelWasRunning: _isRunning,
+              persistAtomically: _persistConfigAtomically,
+              stopTunnel: () => setCoreRunning(false),
+              startTunnel: () async {
+                final applyResult = await coreController.applyFormalConfig(
+                  _setupParams,
+                );
+                if (applyResult.isNotEmpty) {
+                  throw MessageException(applyResult);
+                }
+                return setCoreRunning(true);
+              },
+            );
+          }
+          final message = await coreController.setupConfig(
             params: _setupParams,
-            preloadInvoke: preloadInvoke,
+            preparationConfig: system.isIOS ? yamlString : null,
+            preparationProfileId: system.isIOS ? profileId : null,
+            preloadInvoke: system.isIOS ? commitAndActivate : preloadInvoke,
           );
           if (message.isNotEmpty) {
             throw MessageException(message);
