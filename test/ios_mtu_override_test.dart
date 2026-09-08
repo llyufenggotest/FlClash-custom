@@ -6,7 +6,7 @@ void main() {
   String source(String path) => File(path).readAsStringSync();
 
   test('iOS uses a conservative MTU without changing other platforms', () {
-    final state = source('lib/providers/state.dart');
+    final state = source('lib/providers/state/system.dart');
     expect(state, contains('final effectiveMtu = system.isIOS'));
     expect(state, contains('mtu.clamp(1280, 1500)'));
     expect(state, contains('mtu: effectiveMtu'));

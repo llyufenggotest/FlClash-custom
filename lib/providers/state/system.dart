@@ -196,6 +196,9 @@ SharedState sharedState(Ref ref) {
   final testUrl = appSetting.testUrl;
   final stack = clashConfig.stack;
   final port = clashConfig.mixedPort;
+  final effectiveMtu = system.isIOS
+      ? clashConfig.mtu.clamp(1280, 1500)
+      : clashConfig.mtu;
   return SharedState(
     currentProfileName: currentProfileName,
     onlyStatisticsProxy: onlyStatisticsProxy,
@@ -222,7 +225,7 @@ SharedState sharedState(Ref ref) {
       allowBypass: vpnSetting.allowBypass,
       suspendSupport: vpnSetting.suspendSupport,
       bypassDomain: networkSetting.bypassDomain,
-      mtu: clashConfig.mtu,
+      mtu: effectiveMtu,
       routeAddress: clashConfig.routeAddress,
       disableIcmpForwarding: ref.watch(
         patchClashConfigProvider.select(
