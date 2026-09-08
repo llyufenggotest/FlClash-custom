@@ -147,24 +147,29 @@ class ProfilesAction extends _$ProfilesAction {
     if (profile != null) putProfile(profile);
   }
 
-  Future<void> addProfileFormFile() async {
-    final platformFile = await globalState.safeRun(picker.pickerFile);
-    if (platformFile == null) return;
-    final bytes = await platformFile.readBytes();
+  Future<void> addProfileFromDroppedFile({
+    required String name,
+    required Uint8List bytes,
+  }) async {
     globalState.navigatorKey.currentState?.popUntil((route) => route.isFirst);
     ref.read(currentPageLabelProvider.notifier).toProfiles();
     final profile = await globalState.loadingRun(
       tag: LoadingTag.profiles,
-      () async {
-        return Profile.normal(
-          label: platformFile.name,
-        ).saveFile(bytes, prepare: prepareProfileConfig);
-      },
+      () => Profile.normal(
+        label: name,
+      ).saveFile(bytes, prepare: prepareProfileConfig),
       title: currentAppLocalizations.addProfile,
     );
-    if (profile != null) {
-      putProfile(profile);
-    }
+    if (profile != null) putProfile(profile);
+  }
+
+  Future<void> addProfileFormFile() async {
+    final platformFile = await globalState.safeRun(picker.pickerFile);
+    if (platformFile == null) return;
+    await addProfileFromDroppedFile(
+      name: platformFile.name,
+      bytes: await platformFile.readBytes(),
+    );
   }
 
   Future<void> addProfileFormURL(String url, {String? ageSecretKey}) async {
