@@ -109,11 +109,15 @@ class ProxiesAction extends _$ProxiesAction {
               'updateGroups error: $e',
               logLevel: coreFailureLogLevel(e),
             );
-            return ref.read(groupsProvider);
+            return <Group>[];
           }
         },
         retryIf: (res) => res.isEmpty,
       );
+      if (groups.isEmpty && ref.read(groupsProvider).isNotEmpty) {
+        commonPrint.log('updateGroups: ignoring transient empty result');
+        return;
+      }
       ref.read(groupsProvider.notifier).value = groups;
       if (groups.isNotEmpty) {
         _removeUnavailableSelections(profileId: profileId, groups: groups);

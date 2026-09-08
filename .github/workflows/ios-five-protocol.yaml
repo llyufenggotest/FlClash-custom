@@ -192,6 +192,11 @@ jobs:
           add-to-path: true
           link-to-sdk: true
 
+      - name: Install host libclang for Rust bindgen
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libclang-dev
+
       - name: Get dependencies
         run: flutter pub get
 

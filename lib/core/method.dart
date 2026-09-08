@@ -169,3 +169,10 @@ LogLevel coreFailureLogLevel(Object? error) {
   }
   return error.isCoreUnavailable ? LogLevel.debug : LogLevel.warning;
 }
+
+bool isCoreUnavailableError(Object? error) {
+  if (error is TimeoutException) {
+    return true;
+  }
+  return error is CoreMethodException && error.isCoreUnavailable;
+}
