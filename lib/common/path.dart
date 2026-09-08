@@ -51,6 +51,7 @@ bool get isPortableMode {
 class AppPath {
   static AppPath? _instance;
   Completer<Directory> dataDir = Completer();
+  Completer<Directory> supportDir = Completer();
   late final Future<Directory?> _downloadDir = downloadDirectory();
   Completer<Directory> tempDir = Completer();
   Completer<Directory> cacheDir = Completer();
@@ -87,10 +88,13 @@ class AppPath {
 
   Future<void> _initDataDir() async {
     if (isPortable) {
-      dataDir.complete(Directory(join(appDirPath, 'config')));
+      final directory = Directory(join(appDirPath, 'config'));
+      supportDir.complete(directory);
+      dataDir.complete(directory);
       return;
     }
     final supportDir = await supportDirectory();
+    this.supportDir.complete(supportDir);
     if (!system.isIOS) {
       dataDir.complete(supportDir);
       return;
@@ -162,8 +166,7 @@ class AppPath {
   }
 
   Future<String> get databasePath async {
-    final mHomeDirPath = await homeDirPath;
-    return join(mHomeDirPath, 'database.sqlite');
+    return join((await supportDir.future).path, 'database.sqlite');
   }
 
   Future<String> get backupFilePath async {
