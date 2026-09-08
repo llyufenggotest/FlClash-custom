@@ -21,7 +21,7 @@ func TestRunnerCachePath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := filepath.Join(private, "Library", "Application Support", "RunnerCore", "cache-app.db")
+	want := filepath.Join(resolvedExpectedParent(t, private), "Library", "Application Support", "RunnerCore", "cache-app.db")
 	if got := filepath.Join(shared, name); got != want {
 		t.Fatalf("cache = %q, want %q", got, want)
 	}
@@ -31,6 +31,30 @@ func TestRunnerCachePath(t *testing.T) {
 	again, err := runnerCacheFileName(shared, private)
 	if err != nil || again != name {
 		t.Fatalf("repeat init changed path: %q %v", again, err)
+	}
+}
+
+func resolvedExpectedParent(t *testing.T, path string) string {
+	t.Helper()
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resolved
+}
+
+func TestResolvedExpectedParentCanonicalizesAlias(t *testing.T) {
+	root := t.TempDir()
+	realParent := filepath.Join(root, "real")
+	if err := os.Mkdir(realParent, 0700); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(root, "alias")
+	if err := os.Symlink(realParent, alias); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if got := resolvedExpectedParent(t, alias); got != realParent {
+		t.Fatalf("resolved parent = %q, want %q", got, realParent)
 	}
 }
 

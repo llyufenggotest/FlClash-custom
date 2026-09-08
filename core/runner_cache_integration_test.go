@@ -29,7 +29,7 @@ func TestRunnerCachePersistenceAndLockIsolation(t *testing.T) {
 	C.SetCacheFileName(name)
 	t.Cleanup(func() { C.SetCacheFileName("") })
 	path := filepath.Clean(C.Path.Cache())
-	if path != filepath.Join(private, "Library", "Application Support", "RunnerCore", "cache-app.db") {
+	if path != filepath.Join(resolvedExpectedParent(t, private), "Library", "Application Support", "RunnerCore", "cache-app.db") {
 		t.Fatal(path)
 	}
 	db, err := bbolt.Open(path, 0600, &bbolt.Options{Timeout: 100 * time.Millisecond})
