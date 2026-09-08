@@ -21,6 +21,7 @@ permissions:
 env:
   FLUTTER_VERSION: '3.47.2'
   NDK_VERSION: '28.2.13676358'
+  NDK_RELEASE: r28c
 
 jobs:
   ios:
@@ -92,7 +93,7 @@ jobs:
           python3 scripts/test_necore_diagnostics_behavior.py
           python3 test/ios_rpc/run.py
           flutter test test/common/fastup_subscription_test.dart
-          flutter test test/oppa_yaml_test.dart
+          flutter test test/common/oppa_yaml_test.dart
           flutter test test/ios_network_extension_audit_test.dart
           flutter test test/ios_profile_budget_test.dart
           flutter test test/ios_redundant_reload_test.dart
@@ -187,7 +188,7 @@ jobs:
       - name: Setup NDK
         uses: nttld/setup-ndk@v1
         with:
-          ndk-version: ${{ env.NDK_VERSION }}
+          ndk-version: ${{ env.NDK_RELEASE }}
           add-to-path: true
           link-to-sdk: true
 
