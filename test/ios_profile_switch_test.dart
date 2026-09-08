@@ -99,6 +99,8 @@ void main() {
 
       expect(body, contains('if (preloadInvoke != null)'));
       expect(body, contains('await preloadInvoke();'));
+      expect(body, contains('activationGuard != null && !activationGuard()'));
+      expect(body, contains('iOS activation request is no longer current'));
       expect(
         body.indexOf('await preloadInvoke();'),
         lessThan(body.indexOf('return setCoreRunning(true);')),
