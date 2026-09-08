@@ -77,12 +77,21 @@ void main() {
       final commitAt = body.indexOf('persistAtomically: _persistConfigAtomically');
       final stopAt = body.indexOf('stopTunnel: () => setCoreRunning(false)');
       final startAt = body.indexOf('startTunnel: () async');
-      final applyAt = body.indexOf('coreController.applyFormalConfig(');
+      final startBody = body.substring(startAt);
+      final applyAt = startBody.indexOf('coreController.applyFormalConfig(');
       expect(activationAt, greaterThan(-1));
       expect(commitAt, greaterThan(activationAt));
       expect(stopAt, greaterThan(commitAt));
       expect(startAt, greaterThan(stopAt));
-      expect(applyAt, greaterThan(startAt));
+      expect(applyAt, greaterThan(-1));
+      final restoreAt = body.indexOf('restoreTunnel: () async');
+      final restoreEnd = body.indexOf('startTunnel: () async', restoreAt);
+      final restoreBody = body.substring(restoreAt, restoreEnd);
+      expect(restoreAt, greaterThan(stopAt));
+      expect(
+        restoreBody.indexOf('coreController.applyFormalConfig('),
+        lessThan(restoreBody.indexOf('return setCoreRunning(true);')),
+      );
       final helper = source('lib/common/ios_config_activation.dart');
       expect(
         helper.indexOf('final oldConfigBytes ='),
