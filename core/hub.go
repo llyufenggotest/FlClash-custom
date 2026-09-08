@@ -76,8 +76,22 @@ func handleInitClash(params *InitParams) bool {
 	ensureLogStarted()
 	configMu.Lock()
 	defer configMu.Unlock()
+	cacheName := secondaryCacheFileName
+	if features.IOS && !features.WithLowMemory {
+		processHome, err := os.UserHomeDir()
+		if err == nil {
+			cacheName, err = runnerCacheFileName(params.HomeDir, processHome)
+		}
+		if err != nil {
+			log.Errorln("[APP cache] private path validation failed: %v", err)
+			return false
+		}
+	}
 	sdkVersion.Store(int32(params.Version))
 	constant.SetHomeDir(params.HomeDir)
+	if cacheName != "" {
+		constant.SetCacheFileName(cacheName)
+	}
 	initOwnership(params.HomeDir)
 	if features.IOS && !features.WithLowMemory {
 		constant.SetSaveMatcherCache(true)
@@ -131,6 +145,26 @@ func handleShutdown() bool {
 
 	handleForceGC()
 	return true
+}
+
+func handlePrewarmRuleProvider(params *PrewarmRuleProviderParams) (any, error) {
+	if !isInit.Load() {
+		return nil, fmt.Errorf("not initialized")
+	}
+	if params.Name == "" || len(params.Definition) == 0 || params.TargetPath == "" {
+		return nil, fmt.Errorf("invalid rule provider prewarm arguments")
+	}
+	return executor.PrepareRuleProvider(params.Name, params.Definition, params.TargetPath)
+}
+
+func handleValidateCandidateConfig(params *ValidateCandidateConfigParams) string {
+	if !isInit.Load() {
+		return "not initialized"
+	}
+	if err := validateCandidateConfigAtPath(params.CandidateConfigPath); err != nil {
+		return err.Error()
+	}
+	return ""
 }
 
 func handleValidateConfig(data string) string {

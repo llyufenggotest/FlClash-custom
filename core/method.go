@@ -174,6 +174,33 @@ var methodHandlers = map[CoreMethod]methodHandler{
 	validateConfigMethod: withArguments(func(data *string, response MethodResponse) {
 		response.success(handleValidateConfig(*data))
 	}),
+	prewarmRuleProviderMethod: withArguments(func(params *PrewarmRuleProviderParams, response MethodResponse) {
+		result, err := handlePrewarmRuleProvider(params)
+		if err != nil {
+			response.failure("core_error", err.Error(), nil)
+			return
+		}
+		response.success(result)
+	}),
+	publishRuleGenerationMethod: withArguments(func(params *PublishRuleGenerationParams, response MethodResponse) {
+		result, err := handlePublishRuleGeneration(params)
+		if err != nil {
+			response.failure("core_error", err.Error(), nil)
+			return
+		}
+		response.success(result)
+	}),
+	getPreparedRuleGenerationMethod: withArguments(func(params *GetPreparedRuleGenerationParams, response MethodResponse) {
+		result, err := handleGetPreparedRuleGeneration(params.ProfileID, params.Fingerprint)
+		if err != nil {
+			response.failure("core_error", err.Error(), nil)
+			return
+		}
+		response.success(result)
+	}),
+	validateCandidateConfigAtPathMethod: withArguments(func(params *ValidateCandidateConfigParams, response MethodResponse) {
+		response.success(handleValidateCandidateConfig(params))
+	}),
 	decryptAgeConfigMethod: withArguments(func(params *DecryptAgeConfigParams, response MethodResponse) {
 		response.success(handleDecryptAgeConfig(params))
 	}),

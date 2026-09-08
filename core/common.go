@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -380,30 +381,38 @@ func applyConfig(params *SetupParams) error {
 	defer configMu.Unlock()
 
 	setTestURL(params.TestURL)
-	cfg, err := loadConfig(filepath.Join(constant.Path.HomeDir(), "config.yaml"))
+	nextConfig, err := loadConfig(filepath.Join(constant.Path.HomeDir(), "config.yaml"))
 	if err != nil {
-		// The fallback is what keeps the listeners serving while the host
-		// reports the error, but it applies a config with no proxies in it.
-		// From the UI that is indistinguishable from a subscription that went
-		// dead: the profile still lists every node, every delay test answers
-		// Timeout, and nothing routes. Name the real cause in the log.
-		logError(
-			"config apply failed, falling back to the built-in default - no proxies will be available: %v",
-			err,
-		)
-		fallback, fallbackErr := config.ParseRawConfig(config.DefaultRawConfig())
-		if fallbackErr != nil {
-			return err
-		}
-		cfg = fallback
+		logError("config apply failed; keeping active configuration: %v", err)
+		return err
 	}
-
-	currentConfig = cfg
-	hub.ApplyConfig(cfg)
+	applyDNSListenerOwnership(nextConfig)
+	if err = hub.ApplyConfig(nextConfig); err != nil {
+		return err
+	}
+	currentConfig = nextConfig
 	patchSelectGroup(params.SelectedMap)
-	updateListeners(cfg)
+	updateListeners(nextConfig)
 	reconcileGeoUpdater()
-	return err
+	releaseReloadMemory()
+	return nil
+}
+
+// applyDNSListenerOwnership keeps only the Network Extension bound to profile DNS.
+func applyDNSListenerOwnership(cfg *config.Config) {
+	if !disableDNSListener || cfg == nil || cfg.DNS == nil || cfg.DNS.Listen == "" {
+		return
+	}
+	log.Infoln("[DNS] releasing listener %s; owner is %s", cfg.DNS.Listen, dnsListenerOwner)
+	cfg.DNS.Listen = ""
+}
+
+func releaseReloadMemory() {
+	if !features.WithLowMemory && !features.IOS && !features.Android {
+		return
+	}
+	runtime.GC()
+	debug.FreeOSMemory()
 }
 
 func UnmarshalJson(data []byte, v any) error {
