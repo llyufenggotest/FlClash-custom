@@ -96,6 +96,41 @@ void main() {
       expect(await config.exists(), isFalse);
     });
 
+    test('ownership lost after commit restores the offline snapshot', () async {
+      final directory = await Directory.systemTemp.createTemp('ios-activate-');
+      addTearDown(() => directory.delete(recursive: true));
+      final config = File('${directory.path}/config.yaml');
+      await config.writeAsString('old: config\n');
+      var current = true;
+      var starts = 0;
+
+      await expectLater(
+        commitAndActivateIOSConfig(
+          configPath: config.path,
+          config: 'new: config\n',
+          oldTunnelWasRunning: false,
+          activationGuard: () => current,
+          persistAtomically: (path, value) async {
+            await File(path).writeAsString(value, flush: true);
+            current = false;
+          },
+          stopTunnel: () async => true,
+          startTunnel: () async {
+            starts++;
+            return true;
+          },
+        ),
+        throwsA(isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          contains('no longer current'),
+        )),
+      );
+
+      expect(await config.readAsString(), 'old: config\n');
+      expect(starts, 0);
+    });
+
     test('reports activation and rollback failures together', () async {
       final directory = await Directory.systemTemp.createTemp('ios-activate-');
       addTearDown(() => directory.delete(recursive: true));

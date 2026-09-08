@@ -552,9 +552,13 @@ class SetupAction extends _$SetupAction {
               configPath: configFilePath,
               config: yamlString,
               oldTunnelWasRunning: onlineSwitch,
+              activationGuard: activationGuard,
               persistAtomically: _persistConfigAtomically,
               stopTunnel: () => setCoreRunning(false),
               startTunnel: () async {
+                if (activationGuard != null && !activationGuard()) {
+                  throw StateError('iOS activation request is no longer current');
+                }
                 final applyResult = await coreController.applyFormalConfig(
                   _setupParams,
                 );
