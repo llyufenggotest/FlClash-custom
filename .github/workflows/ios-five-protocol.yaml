@@ -1,0 +1,346 @@
+name: Five Protocol Multi-Platform Build
+on:
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: 'Which platforms to build'
+        default: all
+        type: choice
+        options:
+          - all
+          - ios
+          - all-with-macos
+          - ios-macos
+  push:
+    branches:
+      - five-protocol-ios
+
+permissions:
+  contents: read
+
+env:
+  FLUTTER_VERSION: '3.44.4'
+
+jobs:
+  ios:
+    name: Build unsigned iOS IPA
+    # macos-15 is a different image generation, not an alias of macos-26.
+    # Five consecutive macos-26 requests were never assigned a machine
+    # (each cancelled at exactly 902s), including one with no competing
+    # macOS job at all, so the macos-26 capacity itself is the blocker.
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.5'
+          cache-dependency-path: core/go.sum
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: master
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Setup Xcode
+        run: |
+          # macos-latest and macos-26 ship different Xcode sets, so pick the
+          # newest installed rather than pinning a version that may be absent.
+          latest="$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)"
+          if [ -n "$latest" ]; then sudo xcode-select -s "$latest"; fi
+          xcodebuild -version
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Verify five-protocol and iOS contracts
+        shell: bash
+        run: |
+          (cd core/mihomo && go test ./transport/oppa && go test ./adapter -run 'Test(ParseOppa|ParseTrojanFastup)' -count=1 && go test ./adapter/outbound -run 'Test(Fastup|Vless)' -count=1)
+          # Type-check both memory profiles with cgo off: core/platform only has
+          # ios/android/linux files, so a darwin+cgo resolution finds none and
+          # fails. The real iOS compile happens in `setup.dart ios`, which builds
+          # libclash.a and libclash_lowmem.a for ios/arm64.
+          (cd core && CGO_ENABLED=0 go build ./... && CGO_ENABLED=0 go build -tags with_low_memory ./... && CGO_ENABLED=0 go vet ./... && CGO_ENABLED=0 go test ./... && CGO_ENABLED=0 go test -tags with_low_memory ./...)
+          # The iOS data-path contracts are source-level, so they run under the
+          # host toolchain rather than the ios/arm64 cross build.
+          (cd core && CGO_ENABLED=0 go test ./ -run 'TestStartTunReportsRealResult|TestRuleProviderFirstFetch' -count=1)
+          # The rule-provider deferral is build-tagged: prove both variants
+          # type-check for the platforms that actually consume them.
+          (cd core/mihomo && GOOS=ios GOARCH=arm64 CGO_ENABLED=0 go build -tags with_low_memory ./hub/executor/ && GOOS=android GOARCH=arm64 CGO_ENABLED=0 go build -tags with_low_memory ./hub/executor/ && GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build ./hub/executor/)
+          # ASN.mmdb is mmapped, and iOS charges mapped pages to phys_footprint:
+          # ~20 MB of a ~50 MB budget for a feature low-memory builds disable.
+          # Both variants must hold, so run the guards under each build tag.
+          (cd core/mihomo && CGO_ENABLED=0 go test -tags with_low_memory ./component/mmdb/ ./rules/common/ -run ASN -count=1)
+          (cd core/mihomo && CGO_ENABLED=0 go test -tags with_low_memory ./config/ -run TestProxyServerBypass -count=1)
+          (cd core/mihomo && CGO_ENABLED=0 go test ./config/ -run TestProxyServerBypass -count=1)
+          (cd core/mihomo && CGO_ENABLED=0 go test ./component/mmdb/ ./rules/common/ -run ASN -count=1)
+          # The rule-set budget and the MRS sidecar are a matched pair: the capped
+          # build must refuse to BUILD a huge matcher yet still LOAD one from a
+          # sidecar, so both build variants have to pass the same suite.
+          (cd core/mihomo && CGO_ENABLED=0 go test -tags with_low_memory ./rules/provider/ -count=1)
+          (cd core/mihomo && CGO_ENABLED=0 go test ./rules/provider/ -count=1)
+          python3 scripts/verify_ios_contracts.py
+          python3 scripts/test_necore_diagnostics_behavior.py
+          python3 test/ios_rpc/run.py
+          flutter test test/common/fastup_subscription_test.dart
+          flutter test test/oppa_yaml_test.dart
+          flutter test test/ios_network_extension_audit_test.dart
+          flutter test test/ios_profile_budget_test.dart
+          flutter test test/ios_redundant_reload_test.dart
+          flutter test test/ios_switch_and_foreground_test.dart
+          flutter test test/ios_reclaim_battery_test.dart
+          flutter test test/ios_profile_switch_test.dart
+          flutter test test/ios_delay_concurrency_test.dart
+          flutter test test/ios_database_container_test.dart
+          flutter test test/ios_mtu_override_test.dart
+          flutter test test/ios_provider_message_mailbox_test.dart
+          flutter test test/common/request_rule_provider_test.dart
+          flutter test test/core/rule_generation_preparer_test.dart
+          flutter test test/core/rule_preparation_scheduler_test.dart
+          flutter test test/ios_config_activation_test.dart
+          flutter test test/ios_prepared_config_commit_test.dart
+          flutter test test/core/controller_test.dart
+          flutter test test/setup_test.dart
+          ! git grep -n -E '#sl|MAGIC_SHANLIAN_TRIGGER|GenerateMagicSNI' -- 'core/mihomo/*.go' 'core/mihomo/**/*.go' ':!core/mihomo/**/*_test.go'
+
+      - name: Build unsigned IPA
+        run: dart setup.dart ios --no-codesign --ios-bundle-id com.follow.clash.llyufeng -v
+
+      - name: Verify sideload compatibility dylib
+        env:
+          EXPECTED_SIDELOAD_DYLIB_SHA256: cd903ea15657cbd356398adcb60c8872c41c29b69acc1a5dfb78a49d6e75dea5
+        run: |
+          python3 scripts/verify_ios_sideload_dylib.py
+          python3 scripts/audit_ios_sideload_dylib.py
+          ipa="$(find dist -type f -name '*.ipa' -print -quit)"
+          test -n "$ipa"
+          rm -rf "$RUNNER_TEMP/sideload-ipa"
+          mkdir -p "$RUNNER_TEMP/sideload-ipa"
+          unzip -q "$ipa" -d "$RUNNER_TEMP/sideload-ipa"
+          dylib="$RUNNER_TEMP/sideload-ipa/Payload/Runner.app/Frameworks/Tg_@HelloWorld_1024.dylib"
+          ne_dylib="$RUNNER_TEMP/sideload-ipa/Payload/Runner.app/PlugIns/NECore.appex/Frameworks/Tg_@HelloWorld_1024.dylib"
+          test -f "$dylib"
+          test -x "$dylib"
+          test -f "$ne_dylib"
+          test -x "$ne_dylib"
+          echo "$EXPECTED_SIDELOAD_DYLIB_SHA256  $dylib" | shasum -a 256 -c -
+          echo "$EXPECTED_SIDELOAD_DYLIB_SHA256  $ne_dylib" | shasum -a 256 -c -
+          file "$dylib" | grep -F 'arm64'
+          file "$ne_dylib" | grep -F 'arm64'
+          grep -aF 'Tg_@HelloWorld_1024.dylib' "$RUNNER_TEMP/sideload-ipa/Payload/Runner.app/Runner"
+          grep -aF 'dlopen' "$RUNNER_TEMP/sideload-ipa/Payload/Runner.app/Runner"
+          grep -aF 'Tg_@HelloWorld_1024.dylib' "$RUNNER_TEMP/sideload-ipa/Payload/Runner.app/PlugIns/NECore.appex/NECore"
+          grep -aF 'dlopen' "$RUNNER_TEMP/sideload-ipa/Payload/Runner.app/PlugIns/NECore.appex/NECore"
+
+      - name: Verify IPA exists
+        shell: bash
+        run: |
+          find dist -maxdepth 2 -type f -print
+          test -n "$(find dist -type f -name '*.ipa' -print -quit)"
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v7
+        with:
+          name: FlClash-five-protocol-ios-arm64
+          path: dist/*.ipa
+          if-no-files-found: error
+
+  android:
+    name: Build Android APK (arm64)
+    if: github.event.inputs.platforms == 'all' || github.event.inputs.platforms == 'all-with-macos'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.5'
+          cache-dependency-path: core/go.sum
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: master
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup NDK
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r29
+          add-to-path: true
+          link-to-sdk: true
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      # No signing secrets on this isolated CI account: the Gradle config falls
+      # back to the debug key with a .dev applicationId suffix (hasReleaseSigning
+      # == false), which is exactly what we want for a test build. The APK is
+      # installable and MT-signable, matching the accepted Android acceptance
+      # flow for these forks.
+      - name: Build unsigned arm64 APK
+        run: dart setup.dart android --arch arm64 -v
+
+      - name: Verify APK exists
+        shell: bash
+        run: |
+          find dist -maxdepth 2 -type f -print
+          test -n "$(find dist -type f -name '*.apk' -print -quit)"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: FlClash-five-protocol-android-arm64
+          path: dist/*.apk
+          if-no-files-found: error
+
+  windows:
+    name: Build Windows (x64)
+    if: github.event.inputs.platforms == 'all' || github.event.inputs.platforms == 'all-with-macos'
+    runs-on: windows-2022
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.5'
+          cache-dependency-path: core/go.sum
+
+      - name: Enable git long paths
+        run: git config --global core.longpaths true
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: master
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      # The portable zip is the target that needs no installer toolchain on the
+      # runner, so a packaging dependency cannot mask a real build failure. The
+      # tagged release workflow still produces the exe installer.
+      - name: Build Windows x64 portable
+        run: dart setup.dart windows --targets zip -v
+
+      - name: Verify archive exists
+        shell: bash
+        run: |
+          find dist -maxdepth 2 -type f -print
+          test -n "$(find dist -type f -name '*.zip' -print -quit)"
+
+      - name: Upload Windows build
+        uses: actions/upload-artifact@v7
+        with:
+          name: FlClash-five-protocol-windows-x64
+          path: dist/*.zip
+          if-no-files-found: error
+
+  macos:
+    name: Build macOS
+    # Off by default: these two jobs compete with the iOS job for the same
+    # scarce macOS machines, and their artifacts are already built and
+    # verified. Ask for them explicitly with platforms=all-with-macos.
+    if: github.event.inputs.platforms == 'all-with-macos' || github.event.inputs.platforms == 'ios-macos'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      # Apple Silicon and Intel are separate products, not one universal
+      # binary: `setup.dart` packages the host architecture, so each one needs
+      # its own runner.
+      matrix:
+        include:
+          - os: macos-26
+            arch: arm64
+          - os: macos-26-intel
+            arch: amd64
+      fail-fast: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.5'
+          cache-dependency-path: core/go.sum
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: master
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Setup Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode_26.3.app || sudo xcode-select -s /Applications/Xcode_26.2.app
+          xcodebuild -version
+
+      - name: Get dependencies
+        run: |
+          if ! flutter pub get; then
+            echo "pub get failed; refreshing only window_manager from its current main"
+            rm -rf "$PUB_CACHE/git/cache/window_manager"* "$PUB_CACHE/git/window_manager"*
+            git clone --depth 1 https://github.com/chenx-dust/window_manager.git "$RUNNER_TEMP/window_manager"
+            current_ref="$(git -C "$RUNNER_TEMP/window_manager" rev-parse HEAD)"
+            python3 - "$current_ref" <<'PY'
+          import sys
+          from pathlib import Path
+          p = Path("pubspec.lock")
+          s = p.read_text()
+          old = 'resolved-ref: "7ddbd876f96fca602670e2110348fbcb387950e9"'
+          new = f'resolved-ref: "{sys.argv[1]}"'
+          if old not in s:
+              raise SystemExit("expected stale window_manager lock pin not found")
+          p.write_text(s.replace(old, new, 1))
+          PY
+            flutter pub get
+          fi
+
+      # `setup.dart` installs appdmg itself (_ensureMacosDependencies), so dmg is
+      # the supported packaging path here.
+      - name: Build macOS ${{ matrix.arch }}
+        run: dart setup.dart macos -v
+
+      - name: Verify package exists
+        shell: bash
+        run: |
+          find dist -maxdepth 2 -type f -print
+          test -n "$(find dist -type f -name '*.dmg' -print -quit)"
+
+      - name: Upload macOS build
+        uses: actions/upload-artifact@v7
+        with:
+          name: FlClash-five-protocol-macos-${{ matrix.arch }}
+          path: dist/*.dmg
+          if-no-files-found: error
