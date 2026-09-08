@@ -40,7 +40,11 @@ class _CoreContainerState extends ConsumerState<CoreManager>
     ref.listenManual(currentProfileIdProvider, (prev, next) {
       if (prev == next) return;
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        unawaited(ref.read(setupActionProvider.notifier).fullSetup());
+        unawaited(
+          ref.read(setupActionProvider.notifier).fullSetup(
+            profileSwitched: prev != null,
+          ),
+        );
       });
     });
     ref.listenManual(updateParamsProvider, (prev, next) {

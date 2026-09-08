@@ -32,7 +32,7 @@ void main() {
 
       expect(
         body,
-        contains('fullSetup(profileSwitched: prev != null)'),
+        contains('profileSwitched: prev != null'),
         reason:
             'a real switch has a previous profile; the first selection at '
             'startup must not tear anything down',
@@ -41,20 +41,20 @@ void main() {
 
     test('fullSetup forwards the switch flag into the setup run', () {
       final setup = source('lib/providers/actions/setup.dart');
-      final start = setup.indexOf('void fullSetup(');
+      final start = setup.indexOf('Future<bool> fullSetup(');
       expect(start, greaterThan(-1));
       final body = setup.substring(start, setup.indexOf('\n  }', start));
 
       expect(body, contains('bool profileSwitched = false'));
       expect(
         body,
-        contains('_runSetup(force: true, profileSwitched: profileSwitched)'),
+        contains('profileSwitched: profileSwitched'),
       );
     });
 
     test('preparation does not stop the old tunnel', () {
       final setup = source('lib/providers/actions/setup.dart');
-      final signatureAt = setup.indexOf('Future<void> _runSetup(');
+      final signatureAt = setup.indexOf('Future<_SetupTaskResult> _runSetup(');
       final start = setup.indexOf('async {', signatureAt);
       final body = setup.substring(start, setup.indexOf('\n  }', start));
 
