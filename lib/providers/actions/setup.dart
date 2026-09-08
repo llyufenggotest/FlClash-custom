@@ -40,11 +40,14 @@ class SetupAction extends _$SetupAction {
     return SetupParams(selectedMap: selectedMap, testUrl: testUrl);
   }
 
-  Future<bool> fullSetup() async {
+  Future<bool> fullSetup({bool profileSwitched = false}) async {
     if (!ref.read(initProvider)) return true;
     ref.read(proxiesActionProvider.notifier).cancelDelayTests();
     ref.read(delayDataSourceProvider.notifier).value = {};
-    final setupResult = applyProfile(force: true);
+    final setupResult = applyProfile(
+      force: true,
+      profileSwitched: profileSwitched,
+    );
     ref.read(logsProvider.notifier).value = FixedList(maxLogsLength);
     ref.read(requestsProvider.notifier).value = FixedList(maxRequestsLength);
     try {
