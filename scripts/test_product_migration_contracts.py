@@ -120,6 +120,7 @@ class ProductMigrationContractTest(unittest.TestCase):
         self.assertIn("Process.runSync('llvm-config', ['--libdir'])", rust_hook)
         self.assertIn("on ProcessException", rust_hook)
         self.assertIn("llvmConfig = null", rust_hook)
+        self.assertIn("'/usr/lib/llvm-18/lib'", rust_hook)
         self.assertIn("_containsLibclang", rust_hook)
 
 
