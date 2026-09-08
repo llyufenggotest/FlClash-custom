@@ -465,6 +465,21 @@ class MessageLookup extends MessageLookupByLibrary {
     "download": MessageLookupByLibrary.simpleMessage("Download"),
     "downloadSpeed": MessageLookupByLibrary.simpleMessage("Download speed"),
     "downloadTraffic": MessageLookupByLibrary.simpleMessage("Download traffic"),
+    "dropSingleYamlProfile": MessageLookupByLibrary.simpleMessage(
+      "Please drop one YAML profile at a time.",
+    ),
+    "dropYamlOnly": MessageLookupByLibrary.simpleMessage(
+      "Only .yaml and .yml profiles are supported.",
+    ),
+    "dropYamlProfileToImport": MessageLookupByLibrary.simpleMessage(
+      "Drop YAML profile to import",
+    ),
+    "droppedProfileAccessFailed": MessageLookupByLibrary.simpleMessage(
+      "Unable to access the dropped file.",
+    ),
+    "droppedProfileTooLarge": MessageLookupByLibrary.simpleMessage(
+      "The dropped profile exceeds the 32 MiB limit.",
+    ),
     "edit": MessageLookupByLibrary.simpleMessage("Edit"),
     "editGlobalRules": MessageLookupByLibrary.simpleMessage(
       "Edit global rules",
@@ -703,9 +718,10 @@ class MessageLookup extends MessageLookupByLibrary {
     "inputRuleContent": MessageLookupByLibrary.simpleMessage(
       "Enter the rule content",
     ),
-    "installedAppsPermissionDeniedMessage": MessageLookupByLibrary.simpleMessage(
-      "The app list permission was denied, so installed apps cannot be listed. Please grant it manually in system settings.",
-    ),
+    "installedAppsPermissionDeniedMessage":
+        MessageLookupByLibrary.simpleMessage(
+          "The app list permission was denied, so installed apps cannot be listed. Please grant it manually in system settings.",
+        ),
     "installedAppsPermissionDesc": MessageLookupByLibrary.simpleMessage(
       "This system hides the installed app list until the permission is granted. Authorize it to configure the per-app proxy.",
     ),

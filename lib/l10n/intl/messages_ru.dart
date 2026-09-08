@@ -484,6 +484,21 @@ class MessageLookup extends MessageLookupByLibrary {
       "Скорость скачивания",
     ),
     "downloadTraffic": MessageLookupByLibrary.simpleMessage("Входящий трафик"),
+    "dropSingleYamlProfile": MessageLookupByLibrary.simpleMessage(
+      "Перетаскивайте по одному YAML-профилю за раз.",
+    ),
+    "dropYamlOnly": MessageLookupByLibrary.simpleMessage(
+      "Поддерживаются только профили .yaml и .yml.",
+    ),
+    "dropYamlProfileToImport": MessageLookupByLibrary.simpleMessage(
+      "Перетащите YAML-профиль для импорта",
+    ),
+    "droppedProfileAccessFailed": MessageLookupByLibrary.simpleMessage(
+      "Не удалось получить доступ к перетащенному файлу.",
+    ),
+    "droppedProfileTooLarge": MessageLookupByLibrary.simpleMessage(
+      "Размер профиля превышает ограничение 32 МиБ.",
+    ),
     "edit": MessageLookupByLibrary.simpleMessage("Редактировать"),
     "editGlobalRules": MessageLookupByLibrary.simpleMessage(
       "Редактировать глобальные правила",
@@ -728,9 +743,10 @@ class MessageLookup extends MessageLookupByLibrary {
     "inputRuleContent": MessageLookupByLibrary.simpleMessage(
       "Введите содержимое правила",
     ),
-    "installedAppsPermissionDeniedMessage": MessageLookupByLibrary.simpleMessage(
-      "Разрешение на список приложений отклонено, поэтому установленные приложения недоступны. Предоставьте его вручную в системных настройках.",
-    ),
+    "installedAppsPermissionDeniedMessage":
+        MessageLookupByLibrary.simpleMessage(
+          "Разрешение на список приложений отклонено, поэтому установленные приложения недоступны. Предоставьте его вручную в системных настройках.",
+        ),
     "installedAppsPermissionDesc": MessageLookupByLibrary.simpleMessage(
       "Эта система не выдаёт список установленных приложений без разрешения. Предоставьте его, чтобы настроить прокси для отдельных приложений.",
     ),

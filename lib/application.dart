@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:desktop_drop/desktop_drop.dart';
@@ -94,13 +95,24 @@ class ApplicationState extends ConsumerState<Application> {
     return lowerPath.endsWith('.yaml') || lowerPath.endsWith('.yml');
   }
 
+  Future<Uint8List> _readDroppedProfile(DropItem file) async {
+    final builder = BytesBuilder(copy: false);
+    await for (final chunk in file.openRead()) {
+      if (builder.length + chunk.length > _maxDroppedProfileBytes) {
+        throw MessageException(currentAppLocalizations.droppedProfileTooLarge);
+      }
+      builder.add(chunk);
+    }
+    return builder.takeBytes();
+  }
+
   Future<void> _handleConfigDrop(DropDoneDetails details) async {
     if (mounted && _isDraggingConfig) {
       setState(() => _isDraggingConfig = false);
     }
     if (details.files.length != 1) {
       await dialogs.showMessage(
-        message: const TextSpan(text: 'Please drop one YAML profile at a time.'),
+        message: TextSpan(text: currentAppLocalizations.dropSingleYamlProfile),
         cancelable: false,
       );
       return;
@@ -108,7 +120,7 @@ class ApplicationState extends ConsumerState<Application> {
     final file = details.files.single;
     if (file is DropItemDirectory || !_isYamlFile(file.path)) {
       await dialogs.showMessage(
-        message: const TextSpan(text: 'Only .yaml and .yml profiles are supported.'),
+        message: TextSpan(text: currentAppLocalizations.dropYamlOnly),
         cancelable: false,
       );
       return;
@@ -121,20 +133,16 @@ class ApplicationState extends ConsumerState<Application> {
           scopedAccess = await DesktopDrop.instance
               .startAccessingSecurityScopedResource(bookmark: bookmark!);
           if (!scopedAccess) {
-            throw const MessageException('Unable to access the dropped file.');
+            throw MessageException(
+              currentAppLocalizations.droppedProfileAccessFailed,
+            );
           }
-        }
-        final length = await file.length();
-        if (length > _maxDroppedProfileBytes) {
-          throw const MessageException(
-            'The dropped profile exceeds the 32 MiB limit.',
-          );
         }
         await ref
             .read(profilesActionProvider.notifier)
             .addProfileFromDroppedFile(
               name: file.name,
-              bytes: await file.readAsBytes(),
+              bytes: await _readDroppedProfile(file),
             );
       } finally {
         if (scopedAccess) {
@@ -147,7 +155,7 @@ class ApplicationState extends ConsumerState<Application> {
   }
 
   Widget _buildDesktopDropTarget(Widget child) {
-    if (!system.isDesktop) return child;
+    if (!system.isWindows && !system.isMacOS) return child;
     return DropTarget(
       onDragEntered: (_) {
         if (!_isDraggingConfig) setState(() => _isDraggingConfig = true);
@@ -176,7 +184,7 @@ class ApplicationState extends ConsumerState<Application> {
                         ),
                         const SizedBox(height: 12),
                         Text(
-                          'Drop YAML profile to import',
+                          currentAppLocalizations.dropYamlProfileToImport,
                           style: context.textTheme.titleMedium,
                         ),
                       ],
