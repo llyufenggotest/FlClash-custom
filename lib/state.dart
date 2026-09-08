@@ -69,9 +69,6 @@ class GlobalState {
     required LoadingTag? tag,
     bool silence = false,
   }) async {
-    if (system.isIOS) {
-      silence = true;
-    }
     return globalState.safeRun(
       futureFunction,
       silence: silence,
@@ -106,6 +103,9 @@ class GlobalState {
             : '$title ===> ${compactError(e)}, $s',
         logLevel: LogLevel.warning,
       );
+      if (isCoreUnavailableError(e)) {
+        return null;
+      }
       final message = userFacingErrorMessage(e, currentAppLocalizations);
       if (silence) {
         dialogs.showNotifier(message, level: MessageLevel.error);

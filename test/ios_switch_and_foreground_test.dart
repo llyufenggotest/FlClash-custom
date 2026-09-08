@@ -85,12 +85,12 @@ void main() {
 
     test('loadingRun swallows core-unavailable failures', () {
       final state = source('lib/state.dart');
-      final catchStart = state.indexOf("commonPrint.log('\$title ===> \$e, \$s'");
+      final catchStart = state.indexOf('if (isCoreUnavailableError(e))');
       expect(catchStart, greaterThan(-1));
       final body = state.substring(catchStart, catchStart + 500);
       expect(
         body.indexOf('isCoreUnavailableError(e)'),
-        lessThan(body.indexOf('showNotifier(e.toString()')),
+        lessThan(body.indexOf('dialogs.showNotifier(message')),
         reason: 'the guard must run before the notifier',
       );
     });
