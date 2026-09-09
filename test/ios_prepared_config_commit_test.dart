@@ -74,11 +74,17 @@ void main() {
       final body = setup.substring(start, end);
 
       final activationAt = body.indexOf('commitAndActivateIOSConfig(');
-      final commitAt = body.indexOf('persistAtomically: _persistConfigAtomically');
-      final stopAt = body.indexOf('stopTunnel: () => setCoreRunning(false)');
-      final startAt = body.indexOf('startTunnel: () async');
+      final commitAt = body.indexOf(
+        'persistAtomically: _persistConfigAtomically',
+        activationAt,
+      );
+      final stopAt = body.indexOf(
+        'stopTunnel: () => setCoreRunning(false)',
+        activationAt,
+      );
+      final startAt = body.indexOf('startTunnel: () async', activationAt);
       final startBody = body.substring(startAt);
-      final applyAt = startBody.indexOf('coreController.applyFormalConfig(');
+      final applyAt = startBody.indexOf('final applyResult = await applyFormalConfig()');
       expect(activationAt, greaterThan(-1));
       expect(commitAt, greaterThan(activationAt));
       expect(stopAt, greaterThan(commitAt));
@@ -89,7 +95,7 @@ void main() {
       final restoreBody = body.substring(restoreAt, restoreEnd);
       expect(restoreAt, greaterThan(stopAt));
       final restoreApplyAt = restoreBody.indexOf(
-        'coreController.applyFormalConfig(',
+        'final restoreResult = await applyFormalConfig()',
       );
       final restoreStartAt = restoreBody.indexOf('return setCoreRunning(true);');
       expect(restoreApplyAt, greaterThan(-1));
