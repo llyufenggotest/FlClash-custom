@@ -1,11 +1,66 @@
 import 'dart:io';
 
-typedef IOSConfigPersistence = Future<void> Function(
-  String path,
-  String config,
-);
+typedef IOSConfigPersistence =
+    Future<void> Function(String path, String config);
 typedef IOSTunnelOperation = Future<bool> Function();
+typedef IOSConfigApply = Future<String> Function();
 typedef IOSActivationGuard = bool Function();
+
+Future<void> commitAndHotApplyIOSConfig({
+  required String configPath,
+  required String config,
+  required IOSConfigPersistence persistAtomically,
+  required IOSConfigApply applyConfig,
+  required IOSConfigApply restoreConfig,
+  IOSActivationGuard? activationGuard,
+}) async {
+  void ensureCurrent() {
+    if (activationGuard != null && !activationGuard()) {
+      throw StateError('iOS activation request is no longer current');
+    }
+  }
+
+  ensureCurrent();
+  final formalConfig = File(configPath);
+  final oldConfigExisted = await formalConfig.exists();
+  final oldConfigBytes = oldConfigExisted
+      ? await formalConfig.readAsBytes()
+      : null;
+  await persistAtomically(configPath, config);
+
+  try {
+    ensureCurrent();
+    final result = await applyConfig();
+    if (result.isNotEmpty) {
+      throw StateError(result);
+    }
+    ensureCurrent();
+  } catch (error) {
+    if (oldConfigBytes == null) {
+      if (await formalConfig.exists()) {
+        await formalConfig.delete();
+      }
+    } else {
+      await _restoreConfigAtomically(configPath, oldConfigBytes);
+    }
+    Object? restoreError;
+    try {
+      final result = await restoreConfig();
+      if (result.isNotEmpty) {
+        throw StateError(result);
+      }
+    } catch (error) {
+      restoreError = error;
+    }
+    if (restoreError != null) {
+      throw StateError(
+        'iOS hot config apply failed: $error; old config recovery failed: '
+        '$restoreError',
+      );
+    }
+    rethrow;
+  }
+}
 
 Future<void> commitAndActivateIOSConfig({
   required String configPath,
@@ -115,7 +170,7 @@ Future<void> commitAndActivateIOSConfig({
       '${rollbackErrors.join('; ')}',
     );
   }
-  throw activationError;
+  Error.throwWithStackTrace(activationError, StackTrace.current);
 }
 
 Future<void> _restoreConfigAtomically(String path, List<int> bytes) async {

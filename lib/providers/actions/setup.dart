@@ -46,6 +46,7 @@ class SetupAction extends _$SetupAction {
     ref.read(delayDataSourceProvider.notifier).value = {};
     final setupResult = applyProfile(
       force: true,
+      silence: profileSwitched,
       profileSwitched: profileSwitched,
     );
     ref.read(logsProvider.notifier).value = FixedList(maxLogsLength);
@@ -545,10 +546,11 @@ class SetupAction extends _$SetupAction {
     final profileFailed = realProfile == null;
     final yamlString = realProfile?.yaml ?? '';
     final yamlMd5 = realProfile?.md5 ?? '';
-    final appliedMd5 = globalState.lastConfigMd5 ??
-        await preferences.getAppliedConfigMd5();
+    final appliedMd5 =
+        globalState.lastConfigMd5 ?? await preferences.getAppliedConfigMd5();
     final configFile = File(await appPath.configFilePath);
-    final diskMatches = await configFile.exists() &&
+    final diskMatches =
+        await configFile.exists() &&
         (await configFile.readAsString()).toMd5() == yamlMd5;
     final matchesAppliedConfig =
         !profileFailed && yamlMd5 == appliedMd5 && diskMatches;
@@ -589,17 +591,30 @@ class SetupAction extends _$SetupAction {
               throw StateError('iOS activation request is no longer current');
             }
             final onlineSwitch = _isRunning && preloadInvoke == null;
+            Future<String> applyFormalConfig() {
+              return coreController.applyFormalConfig(_setupParams);
+            }
+
+            if (onlineSwitch) {
+              await commitAndHotApplyIOSConfig(
+                configPath: configFilePath,
+                config: yamlString,
+                activationGuard: activationGuard,
+                persistAtomically: _persistConfigAtomically,
+                applyConfig: applyFormalConfig,
+                restoreConfig: applyFormalConfig,
+              );
+              return;
+            }
             await commitAndActivateIOSConfig(
               configPath: configFilePath,
               config: yamlString,
-              oldTunnelWasRunning: onlineSwitch,
+              oldTunnelWasRunning: false,
               activationGuard: activationGuard,
               persistAtomically: _persistConfigAtomically,
               stopTunnel: () => setCoreRunning(false),
               restoreTunnel: () async {
-                final restoreResult = await coreController.applyFormalConfig(
-                  _setupParams,
-                );
+                final restoreResult = await applyFormalConfig();
                 if (restoreResult.isNotEmpty) {
                   throw MessageException(restoreResult);
                 }
@@ -607,11 +622,11 @@ class SetupAction extends _$SetupAction {
               },
               startTunnel: () async {
                 if (activationGuard != null && !activationGuard()) {
-                  throw StateError('iOS activation request is no longer current');
+                  throw StateError(
+                    'iOS activation request is no longer current',
+                  );
                 }
-                final applyResult = await coreController.applyFormalConfig(
-                  _setupParams,
-                );
+                final applyResult = await applyFormalConfig();
                 if (applyResult.isNotEmpty) {
                   throw MessageException(applyResult);
                 }
@@ -628,6 +643,7 @@ class SetupAction extends _$SetupAction {
               },
             );
           }
+
           final message = await coreController.setupConfig(
             params: _setupParams,
             preparationConfig: system.isIOS ? yamlString : null,
