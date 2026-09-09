@@ -46,15 +46,14 @@ void main() {
       final body = setup.substring(start, setup.indexOf('\n  }', start));
 
       expect(body, contains('bool profileSwitched = false'));
-      expect(
-        body,
-        contains('profileSwitched: profileSwitched'),
-      );
+      expect(body, contains('profileSwitched: profileSwitched'));
     });
 
     test('preparation does not stop the old tunnel', () {
       final setup = source('lib/providers/actions/setup.dart');
-      final signatureAt = setup.indexOf('Future<_SetupTaskResult> _setupConfig(');
+      final signatureAt = setup.indexOf(
+        'Future<_SetupTaskResult> _setupConfig(',
+      );
       final start = setup.indexOf('async {', signatureAt);
       final end = setup.length;
       expect(signatureAt, greaterThan(-1));
@@ -65,7 +64,7 @@ void main() {
       expect(body, isNot(contains('await setCoreRunning(false)')));
     });
 
-    test('every running iOS config change is transactional', () {
+    test('running iOS profile switches hot-apply after preparation', () {
       final setup = source('lib/providers/actions/setup.dart');
       final start = setup.indexOf('Future<void> commitAndActivate()');
       final end = setup.indexOf('\n          final message =', start);
@@ -75,26 +74,20 @@ void main() {
       expect(
         body,
         contains('final onlineSwitch = _isRunning && preloadInvoke == null;'),
-        reason:
-            'any formal config replacement while the tunnel is running must '
-            'stop, commit, restart, and roll back on failure',
       );
-      expect(
-        body,
-        isNot(contains('profileSwitched && _isRunning')),
-        reason: 'ordinary online config edits require the same transaction',
-      );
-      final activationAt = body.indexOf('commitAndActivateIOSConfig(');
-      final commitAt = body.indexOf('persistAtomically: _persistConfigAtomically');
-      final stopAt = body.indexOf('stopTunnel: () => setCoreRunning(false)');
-      final startAt = body.indexOf('startTunnel: () async');
-      expect(activationAt, greaterThan(-1));
-      expect(commitAt, greaterThan(activationAt));
-      expect(stopAt, greaterThan(commitAt));
-      expect(startAt, greaterThan(stopAt));
+      expect(body, contains('if (onlineSwitch)'));
+      final hotApplyAt = body.indexOf('commitAndHotApplyIOSConfig(');
+      final restartAt = body.indexOf('commitAndActivateIOSConfig(');
+      expect(hotApplyAt, greaterThan(-1));
+      expect(restartAt, greaterThan(hotApplyAt));
+      final hotBody = body.substring(hotApplyAt, restartAt);
+      expect(hotBody, contains('applyConfig: applyFormalConfig'));
+      expect(hotBody, contains('restoreConfig: applyFormalConfig'));
+      expect(hotBody, isNot(contains('setCoreRunning(false)')));
+      expect(hotBody, isNot(contains('setCoreRunning(true)')));
     });
 
-    test('initialization keeps stale-request and suspend arbitration', () {
+    test('startup and cold activation keep stale-request arbitration', () {
       final setup = source('lib/providers/actions/setup.dart');
       final start = setup.indexOf('Future<void> commitAndActivate()');
       final end = setup.indexOf('\n          final message =', start);
@@ -143,6 +136,33 @@ void main() {
       );
 
       expect(signature, contains('bool profileSwitched = false'));
+    });
+
+    test('an online iOS switch hot-applies without restarting the tunnel', () {
+      final setup = source('lib/providers/actions/setup.dart');
+      final start = setup.indexOf('Future<void> commitAndActivate()');
+      final end = setup.indexOf('\n          final message =', start);
+      expect(end, greaterThan(start));
+      final body = setup.substring(start, end);
+
+      expect(body, contains('if (onlineSwitch)'));
+      expect(body, contains('commitAndHotApplyIOSConfig('));
+      expect(body, contains('applyConfig: applyFormalConfig'));
+      expect(body, contains('restoreConfig: applyFormalConfig'));
+      expect(
+        body.indexOf('commitAndHotApplyIOSConfig('),
+        lessThan(body.indexOf('commitAndActivateIOSConfig(')),
+      );
+    });
+
+    test('profile switches keep the last proxy page usable while applying', () {
+      final setup = source('lib/providers/actions/setup.dart');
+      final start = setup.indexOf('Future<bool> fullSetup(');
+      final end = setup.indexOf('\n  }', start);
+      expect(end, greaterThan(start));
+      final body = setup.substring(start, end);
+
+      expect(body, contains('silence: profileSwitched'));
     });
   });
 }
