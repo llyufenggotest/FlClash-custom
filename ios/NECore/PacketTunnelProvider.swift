@@ -19,9 +19,14 @@ private enum NECoreSideloadCompatibilityLoader {
       return
     }
     handle = dlopen(dylibURL.path, RTLD_NOW | RTLD_LOCAL)
-    NativeDiagnosticLog.shared.append(
-      handle == nil ? "sideload dylib load failed" : "sideload dylib loaded"
-    )
+    if handle == nil, let message = dlerror() {
+      let detail = String(cString: message)
+      NSLog("[sideload] NE compatibility dylib load failed: %@", detail)
+      NativeDiagnosticLog.shared.append("sideload dylib load failed")
+      NativeDiagnosticLog.shared.append("sideload dylib load failure detail: \(detail)")
+      return
+    }
+    NativeDiagnosticLog.shared.append("sideload dylib loaded")
   }
 }
 

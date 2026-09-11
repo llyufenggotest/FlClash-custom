@@ -170,6 +170,30 @@ void main() {
       verifyNever(() => mock.setupConfig(params));
     });
 
+    test(
+      'isolated preparation preserves the original error when no path exists',
+      () async {
+        const params = SetupParams(selectedMap: {}, testUrl: 'http://x.com');
+        var preloadStarted = false;
+
+        final result = await controller.setupConfig(
+          params: params,
+          preparationConfig: 'rules: []',
+          preparationProfileId: 7,
+          prepareBeforePreload: true,
+          prepareRuleGenerationOverride:
+              ({required String config, required int profileId}) async {
+                throw StateError('publish failed: App Group home mismatch');
+              },
+          preloadInvoke: () async => preloadStarted = true,
+        );
+
+        expect(result, contains('publish failed: App Group home mismatch'));
+        expect(result, isNot(contains('prepared config path is missing')));
+        expect(preloadStarted, isFalse);
+      },
+    );
+
     test('coalesced waiter receives the prepared candidate directly', () async {
       const params = SetupParams(selectedMap: {}, testUrl: 'http://x.com');
       const candidatePath = '/app-group/prewarm/7/generations/id/config.yaml';

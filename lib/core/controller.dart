@@ -227,6 +227,9 @@ class CoreController {
         result = error.toString();
       }
     }
+    if (result.isNotEmpty) {
+      return result;
+    }
     if (isolatedPreparation && preloadInvoke != null) {
       // The isolated stage only publishes immutable artifacts. Runner must
       // still admit the prepared config and publish the NE runtime readiness
