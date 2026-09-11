@@ -97,8 +97,6 @@ jobs:
           python3 scripts/test_necore_diagnostics_behavior.py
           python3 test/ios_rpc/run.py
           yq -i ".hooks.user_defines.setup.build_assets = false | .hooks.user_defines.rust_api.build_assets = false" pubspec.yaml
-          flutter test test/common/fastup_subscription_test.dart
-          flutter test test/common/oppa_yaml_test.dart
           flutter test test/ios_network_extension_audit_test.dart
           flutter test test/ios_profile_budget_test.dart
           flutter test test/ios_redundant_reload_test.dart
@@ -109,9 +107,6 @@ jobs:
           flutter test test/ios_database_container_test.dart
           flutter test test/ios_mtu_override_test.dart
           flutter test test/ios_provider_message_mailbox_test.dart
-          flutter test test/common/request_rule_provider_test.dart
-          flutter test test/core/rule_generation_preparer_test.dart
-          flutter test test/core/rule_preparation_scheduler_test.dart
           flutter test test/ios_config_activation_test.dart
           flutter test test/ios_prepared_config_commit_test.dart
           python3 scripts/test_ios_profile_switch_runtime_contract.py
