@@ -237,8 +237,8 @@ var methodHandlers = map[CoreMethod]methodHandler{
 		response.success(true)
 	}),
 	asyncTestDelayMethod: withArguments(func(params *TestDelayParams, response MethodResponse) {
-		safeGo(response, func() {
-			response.success(handleTestDelay(params))
+		handleAsyncTestDelay(params, func(delay *Delay) {
+			response.success(delay)
 		})
 	}),
 	cancelDelayTestsMethod: withoutArguments(func(response MethodResponse) {
