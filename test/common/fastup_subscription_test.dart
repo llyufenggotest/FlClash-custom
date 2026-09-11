@@ -32,8 +32,16 @@ void main() {
     for (final source in [
       'proxies:\n  - name: Standard\n    type: trojan\n',
       '{not json',
-      jsonEncode({'outbounds': [{'type': 'vmess'}]}),
-      jsonEncode({'outbounds': [{'type': 'trojan', 'password': 'x'}]}),
+      jsonEncode({
+        'outbounds': [
+          {'type': 'vmess'},
+        ],
+      }),
+      jsonEncode({
+        'outbounds': [
+          {'type': 'trojan', 'password': 'x'},
+        ],
+      }),
     ]) {
       expect(convertFastupSubscription(source), source);
       final bytes = Uint8List.fromList(utf8.encode(source));

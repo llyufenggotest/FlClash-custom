@@ -56,7 +56,14 @@ class _OppaProfileDialogState extends State<OppaProfileDialog> {
 
   @override
   void dispose() {
-    for (final controller in [_name, _server, _port, _password, _sni, _preConnect]) {
+    for (final controller in [
+      _name,
+      _server,
+      _port,
+      _password,
+      _sni,
+      _preConnect,
+    ]) {
       controller.dispose();
     }
     super.dispose();
@@ -114,7 +121,9 @@ class _OppaProfileDialogState extends State<OppaProfileDialog> {
               ),
               TextFormField(
                 controller: _preConnect,
-                decoration: const InputDecoration(labelText: 'Pre-connect (0-64)'),
+                decoration: const InputDecoration(
+                  labelText: 'Pre-connect (0-64)',
+                ),
                 validator: (value) {
                   if (value?.trim().isEmpty != false) return null;
                   final count = int.tryParse(value!);

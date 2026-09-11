@@ -32,11 +32,13 @@ void main() {
             return starts > 1;
           },
         ),
-        throwsA(isA<StateError>().having(
-          (error) => error.message,
-          'message',
-          contains('new iOS tunnel did not start'),
-        )),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            contains('new iOS tunnel did not start'),
+          ),
+        ),
       );
 
       expect(await config.readAsBytes(), [0, 1, 2, 255]);
@@ -120,59 +122,68 @@ void main() {
             return true;
           },
         ),
-        throwsA(isA<StateError>().having(
-          (error) => error.message,
-          'message',
-          contains('no longer current'),
-        )),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            contains('no longer current'),
+          ),
+        ),
       );
 
       expect(await config.readAsString(), 'old: config\n');
       expect(starts, 0);
     });
 
-    test('ownership loss after online commit restores through recovery callback', () async {
-      final directory = await Directory.systemTemp.createTemp('ios-activate-');
-      addTearDown(() => directory.delete(recursive: true));
-      final config = File('${directory.path}/config.yaml');
-      await config.writeAsString('old: config\n');
-      var current = true;
-      final events = <String>[];
+    test(
+      'ownership loss after online commit restores through recovery callback',
+      () async {
+        final directory = await Directory.systemTemp.createTemp(
+          'ios-activate-',
+        );
+        addTearDown(() => directory.delete(recursive: true));
+        final config = File('${directory.path}/config.yaml');
+        await config.writeAsString('old: config\n');
+        var current = true;
+        final events = <String>[];
 
-      await expectLater(
-        commitAndActivateIOSConfig(
-          configPath: config.path,
-          config: 'new: config\n',
-          oldTunnelWasRunning: true,
-          activationGuard: () => current,
-          persistAtomically: (path, value) async {
-            events.add('commit');
-            await File(path).writeAsString(value, flush: true);
-            current = false;
-          },
-          stopTunnel: () async {
-            events.add('stop');
-            return true;
-          },
-          startTunnel: () async {
-            events.add('start-new');
-            return true;
-          },
-          restoreTunnel: () async {
-            events.add('restore-old');
-            return true;
-          },
-        ),
-        throwsA(isA<StateError>().having(
-          (error) => error.message,
-          'message',
-          contains('no longer current'),
-        )),
-      );
+        await expectLater(
+          commitAndActivateIOSConfig(
+            configPath: config.path,
+            config: 'new: config\n',
+            oldTunnelWasRunning: true,
+            activationGuard: () => current,
+            persistAtomically: (path, value) async {
+              events.add('commit');
+              await File(path).writeAsString(value, flush: true);
+              current = false;
+            },
+            stopTunnel: () async {
+              events.add('stop');
+              return true;
+            },
+            startTunnel: () async {
+              events.add('start-new');
+              return true;
+            },
+            restoreTunnel: () async {
+              events.add('restore-old');
+              return true;
+            },
+          ),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'message',
+              contains('no longer current'),
+            ),
+          ),
+        );
 
-      expect(await config.readAsString(), 'old: config\n');
-      expect(events, ['stop', 'commit', 'restore-old']);
-    });
+        expect(await config.readAsString(), 'old: config\n');
+        expect(events, ['stop', 'commit', 'restore-old']);
+      },
+    );
 
     test('reports activation and rollback failures together', () async {
       final directory = await Directory.systemTemp.createTemp('ios-activate-');
@@ -194,11 +205,19 @@ void main() {
           },
           startTunnel: () async => false,
         ),
-        throwsA(isA<StateError>()
-            .having((error) => error.message, 'message',
-                contains('new iOS tunnel did not start'))
-            .having((error) => error.message, 'message',
-                contains('failed iOS tunnel did not stop'))),
+        throwsA(
+          isA<StateError>()
+              .having(
+                (error) => error.message,
+                'message',
+                contains('new iOS tunnel did not start'),
+              )
+              .having(
+                (error) => error.message,
+                'message',
+                contains('failed iOS tunnel did not stop'),
+              ),
+        ),
       );
       expect(await config.readAsString(), 'old: config\n');
       expect(stops, 2);

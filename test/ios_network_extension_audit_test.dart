@@ -23,15 +23,18 @@ void main() {
     expect(provider, contains('didStartTun'));
   });
 
-  test('extension stop completes after local cleanup without preference IO', () {
-    final provider = source('ios/NECore/PacketTunnelProvider.swift');
-    final stopStart = provider.indexOf('override func stopTunnel');
-    final messageStart = provider.indexOf('override func handleAppMessage');
-    final stopBody = provider.substring(stopStart, messageStart);
-    expect(stopBody, isNot(contains('loadAllFromPreferences')));
-    expect(stopBody, isNot(contains('saveToPreferences')));
-    expect(stopBody, contains('setupBarrier.stop(completionHandler)'));
-  });
+  test(
+    'extension stop completes after local cleanup without preference IO',
+    () {
+      final provider = source('ios/NECore/PacketTunnelProvider.swift');
+      final stopStart = provider.indexOf('override func stopTunnel');
+      final messageStart = provider.indexOf('override func handleAppMessage');
+      final stopBody = provider.substring(stopStart, messageStart);
+      expect(stopBody, isNot(contains('loadAllFromPreferences')));
+      expect(stopBody, isNot(contains('saveToPreferences')));
+      expect(stopBody, contains('setupBarrier.stop(completionHandler)'));
+    },
+  );
 
   test('Runner owns on-demand preference changes during explicit stop', () {
     final coordinator = source('ios/Runner/Tunnel/TunnelCoordinator.swift');
@@ -47,17 +50,25 @@ void main() {
     expect(service, contains("invokeMethod<String>('getNativeLogs')"));
   });
 
-  test('slow NECore startup is not force-stopped into an on-demand restart loop', () {
-    final coordinator = source('ios/Runner/Tunnel/TunnelCoordinator.swift');
-    expect(coordinator, contains('connectTimeout: TimeInterval = 30'));
-    expect(coordinator, contains('startup still pending after timeout'));
-    final runningStart = coordinator.indexOf('private func reconcileRunningTunnel');
-    final runningEnd = coordinator.indexOf('private func settleBeforeStart');
-    final runningBody = coordinator.substring(runningStart, runningEnd);
-    expect(runningBody, isNot(contains('cleanUpFailedStart')));
-    expect(coordinator, isNot(contains('failed start requested cleanup stop')));
-    expect(coordinator, contains('settle still pending after timeout'));
-  });
+  test(
+    'slow NECore startup is not force-stopped into an on-demand restart loop',
+    () {
+      final coordinator = source('ios/Runner/Tunnel/TunnelCoordinator.swift');
+      expect(coordinator, contains('connectTimeout: TimeInterval = 30'));
+      expect(coordinator, contains('startup still pending after timeout'));
+      final runningStart = coordinator.indexOf(
+        'private func reconcileRunningTunnel',
+      );
+      final runningEnd = coordinator.indexOf('private func settleBeforeStart');
+      final runningBody = coordinator.substring(runningStart, runningEnd);
+      expect(runningBody, isNot(contains('cleanUpFailedStart')));
+      expect(
+        coordinator,
+        isNot(contains('failed start requested cleanup stop')),
+      );
+      expect(coordinator, contains('settle still pending after timeout'));
+    },
+  );
 
   test('start waits through reasserting for stable connected', () {
     final types = source('ios/Runner/Tunnel/TunnelTypes.swift');
@@ -73,7 +84,9 @@ void main() {
     expect(consumeBody, contains('status.isStableConnected'));
     expect(consumeBody, isNot(contains('status.tunnelState == .running')));
 
-    final reconcileStart = coordinator.indexOf('private func reconcileRunningTunnel');
+    final reconcileStart = coordinator.indexOf(
+      'private func reconcileRunningTunnel',
+    );
     final reconcileEnd = coordinator.indexOf('private func settleBeforeStart');
     final reconcileBody = coordinator.substring(reconcileStart, reconcileEnd);
     expect(reconcileBody, contains('status.isStableConnected'));
@@ -81,7 +94,10 @@ void main() {
     expect(reconcileBody, contains('status == .reasserting'));
     expect(reconcileBody, contains('preparedStatus == .reasserting'));
     expect(reconcileBody, isNot(contains('status.tunnelState == .running')));
-    expect(reconcileBody, isNot(contains('preparedStatus.tunnelState == .running')));
+    expect(
+      reconcileBody,
+      isNot(contains('preparedStatus.tunnelState == .running')),
+    );
   });
 
   test('reasserting disconnect and timeout never report start success', () {
@@ -138,20 +154,26 @@ void main() {
     expect(hub, contains('if features.IOS && !features.WithLowMemory {'));
     expect(hub, contains('runnerCacheFileName(params.HomeDir, processHome)'));
     expect(hub, contains('constant.SetCacheFileName(cacheName)'));
-    expect(hub, isNot(contains('constant.SetCacheFileName(secondaryCacheFileName)')));
+    expect(
+      hub,
+      isNot(contains('constant.SetCacheFileName(secondaryCacheFileName)')),
+    );
     expect(path, contains('func SetCacheFileName'));
     expect(path, contains('p.cacheFileName()'));
   });
 
-  test('config reload returns pages to the OS on memory-constrained builds', () {
-    final common = source('core/common.go');
-    expect(common, contains('releaseReloadMemory()'));
-    expect(common, contains('debug.FreeOSMemory()'));
-    final start = common.indexOf('func releaseReloadMemory');
-    final body = common.substring(start, start + 400);
-    expect(body, contains('features.WithLowMemory'));
-    expect(body, contains('features.IOS'));
-  });
+  test(
+    'config reload returns pages to the OS on memory-constrained builds',
+    () {
+      final common = source('core/common.go');
+      expect(common, contains('releaseReloadMemory()'));
+      expect(common, contains('debug.FreeOSMemory()'));
+      final start = common.indexOf('func releaseReloadMemory');
+      final body = common.substring(start, start + 400);
+      expect(body, contains('features.WithLowMemory'));
+      expect(body, contains('features.IOS'));
+    },
+  );
 
   test('native log rotation preserves line boundaries', () {
     for (final path in [

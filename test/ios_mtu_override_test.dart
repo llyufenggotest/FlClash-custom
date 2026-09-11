@@ -14,8 +14,7 @@ void main() {
 
   test('the Network Extension applies the effective MTU consistently', () {
     final provider = source('ios/NECore/PacketTunnelProvider.swift');
-    final network =
-        source('ios/NECore/PacketTunnelNetworkConfiguration.swift');
+    final network = source('ios/NECore/PacketTunnelNetworkConfiguration.swift');
     expect(network, contains('settings.mtu = NSNumber(value: options.mtu)'));
     expect(provider, contains('mtu: vpnOptions.mtu'));
   });

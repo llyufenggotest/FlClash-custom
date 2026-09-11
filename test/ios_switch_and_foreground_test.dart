@@ -39,18 +39,29 @@ void main() {
       );
     });
 
-    test('the fallback is single-shot and reuses the deduplicated envelope', () {
-      final controller = source('ios/Runner/Tunnel/TunnelController.swift');
-      expect(controller, isNot(contains('emptyReplyRetryLimit')));
-      expect(controller, isNot(contains('for attempt in')));
-      expect(controller, contains('return try await sendProviderMessageAttempt(envelope'));
-      expect(controller, contains('return try await sendProviderMessageViaMailbox(envelope'));
-      expect(controller, contains('"requestID": id'));
-    });
+    test(
+      'the fallback is single-shot and reuses the deduplicated envelope',
+      () {
+        final controller = source('ios/Runner/Tunnel/TunnelController.swift');
+        expect(controller, isNot(contains('emptyReplyRetryLimit')));
+        expect(controller, isNot(contains('for attempt in')));
+        expect(
+          controller,
+          contains('return try await sendProviderMessageAttempt(envelope'),
+        );
+        expect(
+          controller,
+          contains('return try await sendProviderMessageViaMailbox(envelope'),
+        );
+        expect(controller, contains('"requestID": id'));
+      },
+    );
 
     test('mailbox exhaustion reports one bounded terminal timeout', () {
       final controller = source('ios/Runner/Tunnel/TunnelController.swift');
-      final mailboxStart = controller.indexOf('private func sendProviderMessageViaMailbox(');
+      final mailboxStart = controller.indexOf(
+        'private func sendProviderMessageViaMailbox(',
+      );
       expect(mailboxStart, greaterThan(-1));
       final mailboxBody = controller.substring(mailboxStart);
       expect(mailboxBody, contains('waiter.finish'));
@@ -102,7 +113,10 @@ void main() {
       final setup = source('lib/providers/actions/setup.dart');
       final skipStart = setup.indexOf('if (skipRedundantReload) {');
       expect(skipStart, greaterThan(-1));
-      final skipEnd = setup.indexOf('return _SetupTaskResult.completed', skipStart);
+      final skipEnd = setup.indexOf(
+        'return _SetupTaskResult.completed',
+        skipStart,
+      );
       expect(skipEnd, greaterThan(skipStart));
       final skipBody = setup.substring(skipStart, skipEnd);
       expect(

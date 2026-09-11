@@ -53,7 +53,9 @@ class AddProfileView extends ConsumerWidget {
       child: const OppaProfileDialog(),
     );
     if (config != null) {
-      unawaited(ref.read(profilesActionProvider.notifier).addOppaProfile(config));
+      unawaited(
+        ref.read(profilesActionProvider.notifier).addOppaProfile(config),
+      );
     }
   }
 

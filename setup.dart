@@ -363,14 +363,19 @@ Future<int> packageIOSNoSign({
     ..['CODE_SIGNING_ALLOWED'] = 'NO'
     ..['CODE_SIGNING_REQUIRED'] = 'NO'
     ..['CODE_SIGN_IDENTITY'] = '';
-  final process = await Process.start('flutter', [
-    if (verbose) '--verbose',
-    'build',
-    'ios',
-    '--release',
-    '--no-codesign',
-    '--dart-define-from-file=env.json',
-  ], workingDirectory: rootDir, environment: noSignEnvironment);
+  final process = await Process.start(
+    'flutter',
+    [
+      if (verbose) '--verbose',
+      'build',
+      'ios',
+      '--release',
+      '--no-codesign',
+      '--dart-define-from-file=env.json',
+    ],
+    workingDirectory: rootDir,
+    environment: noSignEnvironment,
+  );
   process.stdout.listen((data) {
     stdout.write(systemEncoding.decode(data));
   });

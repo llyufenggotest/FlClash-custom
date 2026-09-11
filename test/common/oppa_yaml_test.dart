@@ -37,7 +37,13 @@ void main() {
     for (final config in [
       const OppaProxyConfig(name: 'bad', server: 'x', port: 0, password: 'x'),
       const OppaProxyConfig(name: 'bad', server: 'x', port: 443, password: ''),
-      const OppaProxyConfig(name: 'bad', server: 'x', port: 443, password: 'x', preConnect: 65),
+      const OppaProxyConfig(
+        name: 'bad',
+        server: 'x',
+        port: 443,
+        password: 'x',
+        preConnect: 65,
+      ),
     ]) {
       expect(config.toYaml, throwsArgumentError);
     }
