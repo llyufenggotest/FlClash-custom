@@ -241,6 +241,10 @@ var methodHandlers = map[CoreMethod]methodHandler{
 			response.success(handleTestDelay(params))
 		})
 	}),
+	cancelDelayTestsMethod: withoutArguments(func(response MethodResponse) {
+		cancelDelayTests()
+		response.success(true)
+	}),
 	getConnectionsMethod: withoutArguments(func(response MethodResponse) {
 		response.success(handleGetConnections())
 	}),
