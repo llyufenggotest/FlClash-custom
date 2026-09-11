@@ -125,7 +125,10 @@ void main() {
       expect(listened, isTrue);
       expect(adapter.cancelled, isTrue);
       expect(adapter.closed, isTrue);
-      expect(File(p.join(home.path, 'content-length.raw')).existsSync(), isFalse);
+      expect(
+        File(p.join(home.path, 'content-length.raw')).existsSync(),
+        isFalse,
+      );
     },
   );
 

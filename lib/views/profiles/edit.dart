@@ -546,20 +546,21 @@ class _ProfileFileItem extends StatelessWidget {
                       subtitle: _buildMetadata(context, fileInfo),
                       trailing: readOnly
                           ? const Tooltip(
-                              message: 'XHTTP / BLACKSTONE profiles are read-only',
+                              message:
+                                  'XHTTP / BLACKSTONE profiles are read-only',
                               child: Icon(Icons.lock_outline),
                             )
                           : CommonPopupBox(
-                        popupBuilder: (_) =>
-                            CommonPopupMenu(items: _menuItems(context)),
-                        targetBuilder: (open) {
-                          return IconButton(
-                            tooltip: appLocalizations.more,
-                            onPressed: open,
-                            icon: const Icon(Icons.more_vert),
-                          );
-                        },
-                      ),
+                              popupBuilder: (_) =>
+                                  CommonPopupMenu(items: _menuItems(context)),
+                              targetBuilder: (open) {
+                                return IconButton(
+                                  tooltip: appLocalizations.more,
+                                  onPressed: open,
+                                  icon: const Icon(Icons.more_vert),
+                                );
+                              },
+                            ),
                     ),
                   ),
                 ),

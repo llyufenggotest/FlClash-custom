@@ -235,53 +235,51 @@ rules: [RULE-SET,legacy,DIRECT]
     },
   );
 
-  test(
-    'provider size-limit cannot raise the 32 MiB hard ceiling',
-    () async {
-      var observedLimit = 0;
-      when(
-        () => core.prewarmRuleProvider(
-          name: any(named: 'name'),
-          definition: any(named: 'definition'),
-          targetPath: any(named: 'targetPath'),
-        ),
-      ).thenAnswer((invocation) async {
-        final target = invocation.namedArguments[#targetPath] as String;
-        await File('$target.mrs').writeAsBytes([1, 2, 3]);
-        return {'sidecar': '$target.mrs', 'count': 1};
-      });
-      when(
-        () => core.publishRuleGeneration(
-          profileId: 7,
-          fingerprint: any(named: 'fingerprint'),
-          generation: any(named: 'generation'),
-          stagingPath: any(named: 'stagingPath'),
-          configPath: any(named: 'configPath'),
-          artifacts: any(named: 'artifacts'),
-        ),
-      ).thenAnswer((invocation) async {
-        final staging = invocation.namedArguments[#stagingPath] as String;
-        final generation = invocation.namedArguments[#generation] as String;
-        final profileRoot = Directory(staging).parent.parent.path;
-        final target = p.join(profileRoot, 'generations', generation);
-        await Directory(p.dirname(target)).create(recursive: true);
-        await Directory(staging).rename(target);
-        return {
-          'generation': generation,
-          'config-path': p.join(target, 'config.yaml'),
-        };
-      });
-
-      await RuleGenerationPreparer(
-        core: core,
-        homeDir: () async => home.path,
-        download: (_, _, sizeLimit, destinationPath) async {
-          observedLimit = sizeLimit;
-          return _writeDownload(destinationPath, Uint8List.fromList([1]));
-        },
-      ).prepare(
+  test('provider size-limit cannot raise the 32 MiB hard ceiling', () async {
+    var observedLimit = 0;
+    when(
+      () => core.prewarmRuleProvider(
+        name: any(named: 'name'),
+        definition: any(named: 'definition'),
+        targetPath: any(named: 'targetPath'),
+      ),
+    ).thenAnswer((invocation) async {
+      final target = invocation.namedArguments[#targetPath] as String;
+      await File('$target.mrs').writeAsBytes([1, 2, 3]);
+      return {'sidecar': '$target.mrs', 'count': 1};
+    });
+    when(
+      () => core.publishRuleGeneration(
         profileId: 7,
-        config: '''
+        fingerprint: any(named: 'fingerprint'),
+        generation: any(named: 'generation'),
+        stagingPath: any(named: 'stagingPath'),
+        configPath: any(named: 'configPath'),
+        artifacts: any(named: 'artifacts'),
+      ),
+    ).thenAnswer((invocation) async {
+      final staging = invocation.namedArguments[#stagingPath] as String;
+      final generation = invocation.namedArguments[#generation] as String;
+      final profileRoot = Directory(staging).parent.parent.path;
+      final target = p.join(profileRoot, 'generations', generation);
+      await Directory(p.dirname(target)).create(recursive: true);
+      await Directory(staging).rename(target);
+      return {
+        'generation': generation,
+        'config-path': p.join(target, 'config.yaml'),
+      };
+    });
+
+    await RuleGenerationPreparer(
+      core: core,
+      homeDir: () async => home.path,
+      download: (_, _, sizeLimit, destinationPath) async {
+        observedLimit = sizeLimit;
+        return _writeDownload(destinationPath, Uint8List.fromList([1]));
+      },
+    ).prepare(
+      profileId: 7,
+      config: '''
 rule-providers:
   ads:
     type: http
@@ -292,11 +290,10 @@ rule-providers:
     format: text
 rules: [RULE-SET,ads,DIRECT]
 ''',
-      );
+    );
 
-      expect(observedLimit, 32 * 1024 * 1024);
-    },
-  );
+    expect(observedLimit, 32 * 1024 * 1024);
+  });
 
   test(
     'classical provider over 10000 rules is rejected before publish',

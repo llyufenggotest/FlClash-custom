@@ -52,18 +52,23 @@ void main() {
       expect(body, contains('return baseReclaimPolicy'));
     });
 
-    test('consecutive no-op reclaims escalate threshold and back off cooldown',
-        () {
-      final heartbeat = source('ios/NECore/NativeResourceHeartbeat.swift');
-      expect(heartbeat, contains('ineffectiveStreakLimit'));
-      expect(heartbeat, contains('escalatedReclaimMB'));
-      expect(heartbeat, contains('min(current.cooldown * 2, maxReclaimCooldown)'));
-      expect(
-        heartbeat,
-        contains('max(current.thresholdMB, escalatedReclaimMB)'),
-        reason: 'escalation must never lower the threshold back down',
-      );
-    });
+    test(
+      'consecutive no-op reclaims escalate threshold and back off cooldown',
+      () {
+        final heartbeat = source('ios/NECore/NativeResourceHeartbeat.swift');
+        expect(heartbeat, contains('ineffectiveStreakLimit'));
+        expect(heartbeat, contains('escalatedReclaimMB'));
+        expect(
+          heartbeat,
+          contains('min(current.cooldown * 2, maxReclaimCooldown)'),
+        );
+        expect(
+          heartbeat,
+          contains('max(current.thresholdMB, escalatedReclaimMB)'),
+          reason: 'escalation must never lower the threshold back down',
+        );
+      },
+    );
 
     test('the backstop still fires before the 48 MB death line', () {
       final heartbeat = source('ios/NECore/NativeResourceHeartbeat.swift');
@@ -75,14 +80,8 @@ void main() {
 
     test('the live policy drives the trigger, not the raw constant', () {
       final heartbeat = source('ios/NECore/NativeResourceHeartbeat.swift');
-      expect(
-        heartbeat,
-        contains('policy: self.reclaimPolicy'),
-      );
-      expect(
-        heartbeat,
-        contains('cooldown: policy.cooldown'),
-      );
+      expect(heartbeat, contains('policy: self.reclaimPolicy'));
+      expect(heartbeat, contains('cooldown: policy.cooldown'));
     });
 
     test('the reclaim outcome is observable in the durable log', () {
@@ -123,7 +122,10 @@ void main() {
       // Keyed off the escalated threshold, not the warning one: with a p50 of
       // 38 MB, exempting everything over the 30 MB warning line would exempt
       // 96.5% of samples and defeat the throttle entirely.
-      expect(body, contains('if footprintMB >= escalatedReclaimMB { return true }'));
+      expect(
+        body,
+        contains('if footprintMB >= escalatedReclaimMB { return true }'),
+      );
       expect(
         body,
         isNot(contains('footprintMB >= footprintWarningMB { return true }')),
@@ -185,7 +187,10 @@ void main() {
       expect(code, isNot(contains('Int.max')));
       expect(code, isNot(contains('greatestFiniteMagnitude')));
       // Absence, not an extreme value, is how "nothing logged yet" is modelled.
-      expect(heartbeat, contains('private var lastLoggedUptime: TimeInterval?'));
+      expect(
+        heartbeat,
+        contains('private var lastLoggedUptime: TimeInterval?'),
+      );
       expect(heartbeat, contains('private var lastLoggedFootprintMB: Int?'));
     });
 

@@ -39,7 +39,10 @@ void main() {
     test('prepared YAML path is retained until Runner admits it', () {
       final controller = source('lib/core/controller.dart');
       final setup = source('lib/providers/actions/setup.dart');
-      expect(controller, contains('candidateConfigPath = prepared.configPath;'));
+      expect(
+        controller,
+        contains('candidateConfigPath = prepared.configPath;'),
+      );
       expect(
         controller,
         contains(
@@ -84,7 +87,9 @@ void main() {
       );
       final startAt = body.indexOf('startTunnel: () async', activationAt);
       final startBody = body.substring(startAt);
-      final applyAt = startBody.indexOf('final applyResult = await applyFormalConfig()');
+      final applyAt = startBody.indexOf(
+        'final applyResult = await applyFormalConfig()',
+      );
       expect(activationAt, greaterThan(-1));
       expect(commitAt, greaterThan(activationAt));
       expect(stopAt, greaterThan(commitAt));
@@ -97,7 +102,9 @@ void main() {
       final restoreApplyAt = restoreBody.indexOf(
         'final restoreResult = await applyFormalConfig()',
       );
-      final restoreStartAt = restoreBody.indexOf('return setCoreRunning(true);');
+      final restoreStartAt = restoreBody.indexOf(
+        'return setCoreRunning(true);',
+      );
       expect(restoreApplyAt, greaterThan(-1));
       expect(restoreStartAt, greaterThan(-1));
       expect(restoreApplyAt, lessThan(restoreStartAt));
@@ -123,9 +130,7 @@ void main() {
 
       expect(
         body,
-        contains(
-          r"'$path.tmp.$pid.${DateTime.now().microsecondsSinceEpoch}'",
-        ),
+        contains(r"'$path.tmp.$pid.${DateTime.now().microsecondsSinceEpoch}'"),
       );
       expect(body, contains('writeAsString(config, flush: true)'));
       expect(body, contains('await temporary.rename(path)'));

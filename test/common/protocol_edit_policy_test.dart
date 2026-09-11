@@ -8,11 +8,15 @@ void main() {
       ProtocolEditPolicy.oppa,
     );
     expect(
-      protocolEditPolicyForYaml('proxies:\n  - {name: x, type: vless, network: xhttp}'),
+      protocolEditPolicyForYaml(
+        'proxies:\n  - {name: x, type: vless, network: xhttp}',
+      ),
       ProtocolEditPolicy.readOnly,
     );
     expect(
-      protocolEditPolicyForYaml('proxies:\n  - {name: b, type: trojan, password: token#BLACKSTONE}'),
+      protocolEditPolicyForYaml(
+        'proxies:\n  - {name: b, type: trojan, password: token#BLACKSTONE}',
+      ),
       ProtocolEditPolicy.readOnly,
     );
   });
@@ -20,7 +24,9 @@ void main() {
   test('standard protocols keep the existing editor', () {
     for (final type in ['ss', 'vmess', 'trojan', 'vless']) {
       expect(
-        protocolEditPolicyForYaml('proxies:\n  - {name: standard, type: $type}'),
+        protocolEditPolicyForYaml(
+          'proxies:\n  - {name: standard, type: $type}',
+        ),
         ProtocolEditPolicy.standard,
       );
     }

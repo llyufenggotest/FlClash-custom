@@ -43,14 +43,11 @@ String convertFastupSubscription(String content) {
       'type': 'trojan',
       'server': server,
       'port': port.toInt(),
-      'password': password.endsWith('#fastup')
-          ? password
-          : '$password#fastup',
+      'password': password.endsWith('#fastup') ? password : '$password#fastup',
       'mpw': mpw,
       if (tls['server_name'] case final String value when value.isNotEmpty)
         'sni': value,
-      if (tls['insecure'] is bool)
-        'skip-cert-verify': tls['insecure'] as bool,
+      if (tls['insecure'] is bool) 'skip-cert-verify': tls['insecure'] as bool,
       'udp': true,
     });
   }

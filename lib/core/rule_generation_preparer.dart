@@ -96,11 +96,7 @@ class RuleGenerationPreparer {
         final behavior = definition['behavior']?.toString() ?? 'domain';
         final stableId = _sha256String(entry.key);
         final stagingRaw = p.join(staging.path, 'rules', '$stableId.raw');
-        final download = await _loadProvider(
-          entry.key,
-          definition,
-          stagingRaw,
-        );
+        final download = await _loadProvider(entry.key, definition, stagingRaw);
         if (p.normalize(download.path) != p.normalize(stagingRaw)) {
           throw StateError(
             'rule provider "${entry.key}" wrote outside controlled staging',
@@ -115,9 +111,7 @@ class RuleGenerationPreparer {
         if (behavior == 'classical') {
           final info = await File(download.path).stat();
           if (info.size > _defaultRuleProviderLimit) {
-            throw StateError(
-              'rule provider "${entry.key}" exceeds size-limit',
-            );
+            throw StateError('rule provider "${entry.key}" exceeds size-limit');
           }
           final count = await _classicalRuleCount(download.path, definition);
           if (count > _classicalRuleLimit) {
@@ -268,10 +262,13 @@ class RuleGenerationPreparer {
         var hashClosed = false;
         try {
           final output = File(destinationPath).openWrite();
-          await file.openRead().map((chunk) {
-            hashSink.add(chunk);
-            return chunk;
-          }).pipe(output);
+          await file
+              .openRead()
+              .map((chunk) {
+                hashSink.add(chunk);
+                return chunk;
+              })
+              .pipe(output);
           hashSink.close();
           hashClosed = true;
           return RuleProviderFileDownload(
@@ -351,11 +348,9 @@ Future<int> _classicalRuleCount(
   final format = definition['format']?.toString() ?? 'yaml';
   if (format == 'text') {
     var count = 0;
-    await for (final line
-        in File(path)
-            .openRead()
-            .transform(utf8.decoder)
-            .transform(const LineSplitter())) {
+    await for (final line in File(
+      path,
+    ).openRead().transform(utf8.decoder).transform(const LineSplitter())) {
       final value = line.trim();
       if (value.isNotEmpty && !value.startsWith('#')) {
         count++;

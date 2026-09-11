@@ -24,13 +24,30 @@ void main() {
       {'name': 'c', 'type': 'vless'},
     ],
     'proxy-groups': [
-      {'name': 'auto', 'type': 'url-test', 'interval': 60, 'proxies': ['a', 'b']},
-      {'name': 'pick', 'type': 'select', 'proxies': ['auto']},
-      {'name': 'fb', 'type': 'fallback', 'interval': 30, 'proxies': ['a']},
+      {
+        'name': 'auto',
+        'type': 'url-test',
+        'interval': 60,
+        'proxies': ['a', 'b'],
+      },
+      {
+        'name': 'pick',
+        'type': 'select',
+        'proxies': ['auto'],
+      },
+      {
+        'name': 'fb',
+        'type': 'fallback',
+        'interval': 30,
+        'proxies': ['a'],
+      },
     ],
     'rule-providers': {
       'cn': {'type': 'http', 'interval': 86400, 'url': 'https://x/cn.txt'},
-      'inline': {'type': 'inline', 'payload': ['DOMAIN,a.com']},
+      'inline': {
+        'type': 'inline',
+        'payload': ['DOMAIN,a.com'],
+      },
     },
   };
 
