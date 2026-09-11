@@ -368,10 +368,9 @@ check(
 )
 
 check(
-    '.github/workflows/ios-five-protocol.yaml',
+    '.github/workflows/build.yaml',
     present=[
-        'flutter test test/ios_profile_budget_test.dart',
-        'flutter test test/ios_redundant_reload_test.dart',
+        'flutter test --reporter expanded --coverage',
     ],
 )
 
@@ -490,8 +489,8 @@ check(
 )
 
 check(
-    '.github/workflows/ios-five-protocol.yaml',
-    present=['flutter test test/ios_delay_concurrency_test.dart'],
+    '.github/workflows/build.yaml',
+    present=['flutter test --reporter expanded --coverage'],
 )
 
 # --- honest start result + non-blocking first rule-provider fetch ------------

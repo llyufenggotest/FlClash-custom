@@ -96,19 +96,6 @@ jobs:
           python3 scripts/verify_ios_contracts.py
           python3 scripts/test_necore_diagnostics_behavior.py
           python3 test/ios_rpc/run.py
-          yq -i ".hooks.user_defines.setup.build_assets = false | .hooks.user_defines.rust_api.build_assets = false" pubspec.yaml
-          flutter test test/ios_network_extension_audit_test.dart
-          flutter test test/ios_profile_budget_test.dart
-          flutter test test/ios_redundant_reload_test.dart
-          flutter test test/ios_switch_and_foreground_test.dart
-          flutter test test/ios_reclaim_battery_test.dart
-          flutter test test/ios_profile_switch_test.dart
-          flutter test test/ios_delay_concurrency_test.dart
-          flutter test test/ios_database_container_test.dart
-          flutter test test/ios_mtu_override_test.dart
-          flutter test test/ios_provider_message_mailbox_test.dart
-          flutter test test/ios_config_activation_test.dart
-          flutter test test/ios_prepared_config_commit_test.dart
           python3 scripts/test_ios_profile_switch_runtime_contract.py
           ! git grep -n -E '#sl|MAGIC_SHANLIAN_TRIGGER|GenerateMagicSNI' -- 'core/mihomo/*.go' 'core/mihomo/**/*.go' ':!core/mihomo/**/*_test.go'
 
@@ -298,57 +285,3 @@ jobs:
 
       - name: Setup Go
         uses: actions/setup-go@v6
-        with:
-          go-version: '1.26.5'
-          cache-dependency-path: core/go.sum
-
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: master
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
-
-      - name: Setup Xcode
-        run: |
-          sudo xcode-select -s /Applications/Xcode_26.3.app || sudo xcode-select -s /Applications/Xcode_26.2.app
-          xcodebuild -version
-
-      - name: Get dependencies
-        run: |
-          if ! flutter pub get; then
-            echo "pub get failed; refreshing only window_manager from its current main"
-            rm -rf "$PUB_CACHE/git/cache/window_manager"* "$PUB_CACHE/git/window_manager"*
-            git clone --depth 1 https://github.com/chenx-dust/window_manager.git "$RUNNER_TEMP/window_manager"
-            current_ref="$(git -C "$RUNNER_TEMP/window_manager" rev-parse HEAD)"
-            python3 - "$current_ref" <<'PY'
-          import sys
-          from pathlib import Path
-          p = Path("pubspec.lock")
-          s = p.read_text()
-          old = 'resolved-ref: "7ddbd876f96fca602670e2110348fbcb387950e9"'
-          new = f'resolved-ref: "{sys.argv[1]}"'
-          if old not in s:
-              raise SystemExit("expected stale window_manager lock pin not found")
-          p.write_text(s.replace(old, new, 1))
-          PY
-            flutter pub get
-          fi
-
-      # `setup.dart` installs appdmg itself (_ensureMacosDependencies), so dmg is
-      # the supported packaging path here.
-      - name: Build macOS ${{ matrix.arch }}
-        run: dart setup.dart macos -v
-
-      - name: Verify package exists
-        shell: bash
-        run: |
-          find dist -maxdepth 2 -type f -print
-          test -n "$(find dist -type f -name '*.dmg' -print -quit)"
-
-      - name: Upload macOS build
-        uses: actions/upload-artifact@v7
-        with:
-          name: FlClash-five-protocol-macos-${{ matrix.arch }}
-          path: dist/*.dmg
-          if-no-files-found: error
