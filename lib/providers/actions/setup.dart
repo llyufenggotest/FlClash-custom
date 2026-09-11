@@ -24,6 +24,9 @@ class SetupAction extends _$SetupAction {
   final _listenerScheduler = SerialTaskScheduler();
   _RunRequest? _latestRunRequest;
   DateTime? _startTime;
+  int _profileSwitchGeneration = 0;
+
+  int beginProfileSwitch() => ++_profileSwitchGeneration;
 
   bool get _isRunning => _startTime != null && _startTime!.isBeforeNow;
 
@@ -40,14 +43,25 @@ class SetupAction extends _$SetupAction {
     return SetupParams(selectedMap: selectedMap, testUrl: testUrl);
   }
 
-  Future<bool> fullSetup({bool profileSwitched = false}) async {
+  Future<bool> fullSetup({
+    bool profileSwitched = false,
+    int? profileSwitchGeneration,
+  }) async {
     if (!ref.read(initProvider)) return true;
-    ref.read(proxiesActionProvider.notifier).cancelDelayTests();
+    await ref
+        .read(proxiesActionProvider.notifier)
+        .cancelDelayTests(cancelCoreRequests: system.isIOS && profileSwitched);
     ref.read(delayDataSourceProvider.notifier).value = {};
+    final generation =
+        profileSwitchGeneration ??
+        (profileSwitched ? beginProfileSwitch() : _profileSwitchGeneration);
     final setupResult = applyProfile(
       force: true,
       silence: profileSwitched,
       profileSwitched: profileSwitched,
+      activationGuard: profileSwitched
+          ? () => generation == _profileSwitchGeneration
+          : null,
     );
     ref.read(logsProvider.notifier).value = FixedList(maxLogsLength);
     ref.read(requestsProvider.notifier).value = FixedList(maxRequestsLength);
@@ -337,6 +351,7 @@ class SetupAction extends _$SetupAction {
     bool Function()? activationGuard,
     Future<void> Function()? preloadInvoke,
   }) async {
+    final expectedProfileId = ref.read(currentProfileProvider)?.id;
     final result = await _setupScheduler.run(() {
       return _setupConfig(
         force: force,
@@ -345,8 +360,14 @@ class SetupAction extends _$SetupAction {
         activationGuard: activationGuard,
         preloadInvoke: preloadInvoke,
         onUpdated: () async {
-          await ref.read(proxiesActionProvider.notifier).updateGroups();
-          await ref.read(providersProvider.notifier).syncProviders();
+          if (activationGuard != null && !activationGuard()) return;
+          await ref
+              .read(proxiesActionProvider.notifier)
+              .updateGroups(profileId: expectedProfileId);
+          if (activationGuard != null && !activationGuard()) return;
+          await ref
+              .read(providersProvider.notifier)
+              .syncProviders(profileId: expectedProfileId);
         },
       );
     });

@@ -29,17 +29,25 @@ class ProxiesAction extends _$ProxiesAction {
   void build() {
     ref.listen(coreStatusProvider, (_, next) {
       if (next != CoreStatus.connected) {
-        cancelDelayTests();
+        unawaited(cancelDelayTests());
       }
     });
   }
 
-  void cancelDelayTests() {
+  Future<void> cancelDelayTests({bool cancelCoreRequests = false}) async {
     final cancelledTargets = _pendingDelayTargets.values.toList();
     _delayTestGeneration++;
     _pendingDelayTests.clear();
     _pendingDelayTargets.clear();
     ref.read(pendingDelayTestsProvider.notifier).clear();
+    if (cancelCoreRequests) {
+      // Only asyncTestDelay calls are cancelled; the Tunnel and setup RPC stay.
+      try {
+        await Service.scoped.cancelDelayTests();
+      } catch (error) {
+        commonPrint.log('cancelDelayTests RPC failed: $error');
+      }
+    }
     final delays = ref.read(delayDataSourceProvider.notifier);
     for (final target in cancelledTargets) {
       delays.setDelay(
@@ -81,10 +89,11 @@ class ProxiesAction extends _$ProxiesAction {
     return ref.read(currentProfileProvider)?.selectedMap[groupName] ?? '';
   }
 
-  Future<void> updateGroups() async {
+  Future<void> updateGroups({int? profileId}) async {
     try {
       commonPrint.log('updateGroups');
-      final profileId = ref.read(currentProfileProvider)?.id;
+      final expectedProfileId =
+          profileId ?? ref.read(currentProfileProvider)?.id;
       final groups = await retry<List<Group>>(
         task: () async {
           final sortType = ref.read(
@@ -114,13 +123,20 @@ class ProxiesAction extends _$ProxiesAction {
         },
         retryIf: (res) => res.isEmpty,
       );
+      if (ref.read(currentProfileProvider)?.id != expectedProfileId) {
+        commonPrint.log('updateGroups: dropping stale profile result');
+        return;
+      }
       if (groups.isEmpty && ref.read(groupsProvider).isNotEmpty) {
         commonPrint.log('updateGroups: ignoring transient empty result');
         return;
       }
       ref.read(groupsProvider.notifier).value = groups;
       if (groups.isNotEmpty) {
-        _removeUnavailableSelections(profileId: profileId, groups: groups);
+        _removeUnavailableSelections(
+          profileId: expectedProfileId,
+          groups: groups,
+        );
       }
     } catch (e) {
       // The Core failure path already runs inside the retry task above; a
@@ -433,7 +449,7 @@ class ProxiesAction extends _$ProxiesAction {
       if (error is CoreMethodException &&
           error.isCoreUnavailable &&
           generation == _delayTestGeneration) {
-        cancelDelayTests();
+        unawaited(cancelDelayTests());
         rethrow;
       }
       if (generation == _delayTestGeneration) {

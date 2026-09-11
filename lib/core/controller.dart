@@ -143,7 +143,8 @@ class CoreController {
     Future<RuleGenerationPreparation> Function({
       required String config,
       required int profileId,
-    })? prepareRuleGenerationOverride,
+    })?
+    prepareRuleGenerationOverride,
     @visibleForTesting bool? prepareBeforePreload,
     @visibleForTesting
     Duration rulePreparationTimeout = const Duration(seconds: 60),
@@ -155,12 +156,15 @@ class CoreController {
       final profileId = preparationProfileId;
       if (prepareFirst && config != null && profileId != null) {
         try {
+          final fingerprint = sha256.convert(utf8.encode(config)).toString();
           final prepareOperation =
               prepareRuleGenerationOverride ?? prepareRuleGeneration;
-          final prepared = await prepareOperation(
-            config: config,
-            profileId: profileId,
+          final prepared = await preparedGenerationScheduler.prepare(
+            jsonEncode({'profile-id': profileId, 'fingerprint': fingerprint}),
+            () => prepareOperation(config: config, profileId: profileId),
           );
+          // This assignment runs in every waiter, including a connect that
+          // joined an import-time prewarm already in flight.
           candidateConfigPath = prepared.configPath;
           await persistPreparedConfig?.call(prepared.config);
           return '';
@@ -174,7 +178,7 @@ class CoreController {
     Future<String> prepare() {
       final config = preparationConfig;
       final profileId = preparationProfileId;
-      if (config == null || profileId == null) {
+      if (config == null || profileId == null || prepareFirst) {
         return preparation();
       }
       final fingerprint = sha256.convert(utf8.encode(config)).toString();

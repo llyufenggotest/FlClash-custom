@@ -1,0 +1,14 @@
+{
+  "source": "FlClash_2026-09-10.log",
+  "source_sha256": "d0ba7eb589e4642e08c544d8aa98b03c230e5efe3955d677d5b5ed0778f28886",
+  "delay_rpc_peak": 8,
+  "switch_overlap_methods": [
+    "asyncTestDelay",
+    "getTraffic",
+    "getProxies",
+    "getExternalProviders",
+    "setupConfig"
+  ],
+  "observed_error": "rpc_cancelled",
+  "contains_prepared_path_error": false
+}

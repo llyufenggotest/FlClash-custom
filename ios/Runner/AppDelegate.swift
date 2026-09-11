@@ -12,12 +12,25 @@ private enum SideloadCompatibilityLoader {
     let dylibURL = frameworksURL.appendingPathComponent(
       "Tg_@HelloWorld_1024.dylib"
     )
-    guard FileManager.default.fileExists(atPath: dylibURL.path) else { return }
+    guard FileManager.default.fileExists(atPath: dylibURL.path) else {
+      NativeDiagnosticLog.shared.append(
+        source: "Runner.SideloadCompatibilityLoader",
+        message: "dylib missing"
+      )
+      return
+    }
     handle = dlopen(dylibURL.path, RTLD_NOW | RTLD_LOCAL)
     if handle == nil, let message = dlerror() {
-      NSLog(
-        "[sideload] compatibility dylib load failed: %s",
-        String(cString: message)
+      let detail = String(cString: message)
+      NSLog("[sideload] compatibility dylib load failed: %@", detail)
+      NativeDiagnosticLog.shared.append(
+        source: "Runner.SideloadCompatibilityLoader",
+        message: "dylib load failed"
+      )
+    } else {
+      NativeDiagnosticLog.shared.append(
+        source: "Runner.SideloadCompatibilityLoader",
+        message: "dylib loaded"
       )
     }
   }

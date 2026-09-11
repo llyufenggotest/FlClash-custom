@@ -65,6 +65,11 @@ class Service {
     return CoreMethodResponse.fromJson(dataJson);
   }
 
+  Future<bool> cancelDelayTests() async {
+    if (!system.isIOS) return true;
+    return await methodChannel.invokeMethod<bool>('cancelDelayTests') ?? false;
+  }
+
   Future<bool> start(SharedState state) async {
     return await methodChannel.invokeMethod<bool>(
           'start',

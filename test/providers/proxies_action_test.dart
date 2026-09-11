@@ -483,7 +483,7 @@ void main() {
 
       final first = action.proxyDelayTest(_proxy);
       await Future<void>.delayed(Duration.zero);
-      action.cancelDelayTests();
+      await action.cancelDelayTests();
       final second = action.proxyDelayTest(_proxy);
       await Future<void>.delayed(Duration.zero);
 

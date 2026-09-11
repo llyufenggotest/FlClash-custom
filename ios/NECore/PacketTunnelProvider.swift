@@ -14,8 +14,14 @@ private enum NECoreSideloadCompatibilityLoader {
     let dylibURL = frameworksURL.appendingPathComponent(
       "Tg_@HelloWorld_1024.dylib"
     )
-    guard FileManager.default.fileExists(atPath: dylibURL.path) else { return }
+    guard FileManager.default.fileExists(atPath: dylibURL.path) else {
+      NativeDiagnosticLog.shared.append("sideload dylib missing")
+      return
+    }
     handle = dlopen(dylibURL.path, RTLD_NOW | RTLD_LOCAL)
+    NativeDiagnosticLog.shared.append(
+      handle == nil ? "sideload dylib load failed" : "sideload dylib loaded"
+    )
   }
 }
 
