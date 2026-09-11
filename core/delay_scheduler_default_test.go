@@ -32,7 +32,12 @@ func TestDefaultSchedulerQueuesWithoutRejecting(t *testing.T) {
 	done := make(chan error, 300)
 	var rejected atomic.Int32
 	for i := 0; i < 300; i++ {
-		scheduleDelayTest(time.Second, func(ctx context.Context) { done <- ctx.Err() }, func() { rejected.Add(1) })
+		scheduleDelayTest(
+			time.Second,
+			func(ctx context.Context) { done <- ctx.Err() },
+			func() { rejected.Add(1) },
+			func(recovered any) { t.Errorf("unexpected panic: %v", recovered) },
+		)
 	}
 	// Waiting time must not consume the per-probe timeout.
 	time.Sleep(1100 * time.Millisecond)
@@ -67,11 +72,15 @@ func TestDefaultSchedulerProfileSwitchCancelsQueuedAndActive(t *testing.T) {
 		entered <- ctx
 		<-ctx.Done()
 		activeDone <- ctx.Err()
-	}, func() { t.Error("unexpected rejection") })
+	}, func() { t.Error("unexpected rejection") }, func(recovered any) {
+		t.Errorf("unexpected panic: %v", recovered)
+	})
 	<-entered
 	scheduleDelayTest(time.Minute, func(ctx context.Context) {
 		queuedRan <- struct{}{}
-	}, func() { queuedRejected <- struct{}{} })
+	}, func() { queuedRejected <- struct{}{} }, func(recovered any) {
+		t.Errorf("unexpected panic: %v", recovered)
+	})
 
 	cancelDelayTests()
 	select {
@@ -101,6 +110,8 @@ func TestDefaultSchedulerNewGenerationRunsAfterCancellation(t *testing.T) {
 	done := make(chan error, 1)
 	scheduleDelayTest(time.Second, func(ctx context.Context) { done <- ctx.Err() }, func() {
 		t.Error("unexpected rejection")
+	}, func(recovered any) {
+		t.Errorf("unexpected panic: %v", recovered)
 	})
 	select {
 	case err := <-done:

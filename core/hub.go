@@ -344,7 +344,11 @@ func reportMissingDelayTestProxy(name string) {
 	logError("delay test: %q is not part of the applied config", name)
 }
 
-func handleAsyncTestDelay(params *TestDelayParams, fn func(*Delay)) {
+func handleAsyncTestDelay(params *TestDelayParams, fn func(*Delay), panicked ...func(any)) {
+	panicHandler := func(recovered any) { panic(recovered) }
+	if len(panicked) != 0 && panicked[0] != nil {
+		panicHandler = panicked[0]
+	}
 	request := *params
 	scheduleDelayTest(delayTestTimeout(request.Timeout), func(ctx context.Context) {
 		testUrl := request.TestUrl
@@ -370,7 +374,7 @@ func handleAsyncTestDelay(params *TestDelayParams, fn func(*Delay)) {
 			testUrl = currentTestURL()
 		}
 		fn(&Delay{Name: request.ProxyName, Url: testUrl, Value: -1})
-	})
+	}, panicHandler)
 }
 
 func handleTestDelay(params *TestDelayParams) *Delay {

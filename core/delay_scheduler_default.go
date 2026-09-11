@@ -44,9 +44,19 @@ func cancelDelayTests() {
 	manualProbeMu.Unlock()
 }
 
-func scheduleDelayTest(timeout time.Duration, run func(context.Context), rejected func()) {
+func scheduleDelayTest(
+	timeout time.Duration,
+	run func(context.Context),
+	rejected func(),
+	panicHandler func(any),
+) {
 	generationContext, generation := manualProbeSnapshot()
 	go func() {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				panicHandler(recovered)
+			}
+		}()
 		select {
 		case manualProbeSlots <- struct{}{}:
 			defer func() { <-manualProbeSlots }()
