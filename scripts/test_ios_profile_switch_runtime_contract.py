@@ -27,6 +27,9 @@ class IOSProfileSwitchRuntimeContract(unittest.TestCase):
         )
         self.assertIn("manualProbeCtx", default_scheduler)
         self.assertIn("manualProbeStop()", default_scheduler)
+        go_methods = (ROOT / "core/method.go").read_text(encoding="utf-8")
+        self.assertIn("handleAsyncTestDelay(params", go_methods)
+        self.assertNotIn("response.success(handleTestDelay(params))", go_methods)
         self.assertNotIn("func cancelDelayTests() {}", default_scheduler)
         self.assertIn(
             'rpcTasks.removeValue(forKey: token)?.cancel()', service
