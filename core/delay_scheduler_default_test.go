@@ -62,6 +62,7 @@ func TestDefaultSchedulerProfileSwitchCancelsQueuedAndActive(t *testing.T) {
 	entered := make(chan context.Context, 1)
 	activeDone := make(chan error, 1)
 	queuedRan := make(chan struct{}, 1)
+	queuedRejected := make(chan struct{}, 1)
 	scheduleDelayTest(time.Minute, func(ctx context.Context) {
 		entered <- ctx
 		<-ctx.Done()
@@ -70,7 +71,7 @@ func TestDefaultSchedulerProfileSwitchCancelsQueuedAndActive(t *testing.T) {
 	<-entered
 	scheduleDelayTest(time.Minute, func(ctx context.Context) {
 		queuedRan <- struct{}{}
-	}, func() { t.Error("unexpected rejection") })
+	}, func() { queuedRejected <- struct{}{} })
 
 	cancelDelayTests()
 	select {
@@ -80,6 +81,11 @@ func TestDefaultSchedulerProfileSwitchCancelsQueuedAndActive(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("active probe was not canceled")
+	}
+	select {
+	case <-queuedRejected:
+	case <-time.After(time.Second):
+		t.Fatal("queued probe callback was not completed")
 	}
 	time.Sleep(50 * time.Millisecond)
 	select {

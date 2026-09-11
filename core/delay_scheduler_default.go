@@ -51,9 +51,11 @@ func scheduleDelayTest(timeout time.Duration, run func(context.Context), rejecte
 		case manualProbeSlots <- struct{}{}:
 			defer func() { <-manualProbeSlots }()
 		case <-generationContext.Done():
+			rejected()
 			return
 		}
 		if generationContext.Err() != nil || !manualProbeGenerationCurrent(generation) {
+			rejected()
 			return
 		}
 		ctx, cancel := context.WithTimeout(generationContext, timeout)
