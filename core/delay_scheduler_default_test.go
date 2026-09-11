@@ -9,17 +9,31 @@ import (
 	"time"
 )
 
-func TestDefaultSchedulerQueuesWithoutRejectingOrCanceling(t *testing.T) {
-	old := manualProbeSlots
-	manualProbeSlots = make(chan struct{}, 1)
-	defer func() { manualProbeSlots = old }()
+func withDefaultProbeScheduler(t *testing.T, slots int) {
+	t.Helper()
+	oldSlots := manualProbeSlots
+	manualProbeMu.Lock()
+	oldCtx, oldStop, oldGen := manualProbeCtx, manualProbeStop, manualProbeGen
+	manualProbeSlots = make(chan struct{}, slots)
+	manualProbeCtx, manualProbeStop = context.WithCancel(context.Background())
+	manualProbeMu.Unlock()
+	t.Cleanup(func() {
+		cancelDelayTests()
+		manualProbeMu.Lock()
+		manualProbeSlots = oldSlots
+		manualProbeCtx, manualProbeStop, manualProbeGen = oldCtx, oldStop, oldGen
+		manualProbeMu.Unlock()
+	})
+}
+
+func TestDefaultSchedulerQueuesWithoutRejecting(t *testing.T) {
+	withDefaultProbeScheduler(t, 1)
 	manualProbeSlots <- struct{}{}
 	done := make(chan error, 300)
 	var rejected atomic.Int32
 	for i := 0; i < 300; i++ {
 		scheduleDelayTest(time.Second, func(ctx context.Context) { done <- ctx.Err() }, func() { rejected.Add(1) })
 	}
-	cancelDelayTests()
 	// Waiting time must not consume the per-probe timeout.
 	time.Sleep(1100 * time.Millisecond)
 	select {
@@ -38,24 +52,56 @@ func TestDefaultSchedulerQueuesWithoutRejectingOrCanceling(t *testing.T) {
 			t.Fatal("queued probe lost")
 		}
 	}
-	// Drain the final worker before restoring the package variable.
-	manualProbeSlots <- struct{}{}
-	<-manualProbeSlots
 	if rejected.Load() != 0 {
 		t.Fatalf("rejected %d probes", rejected.Load())
 	}
 }
 
-func TestDefaultSchedulerStopDoesNotCancelActive(t *testing.T) {
+func TestDefaultSchedulerProfileSwitchCancelsQueuedAndActive(t *testing.T) {
+	withDefaultProbeScheduler(t, 1)
 	entered := make(chan context.Context, 1)
-	unblock := make(chan struct{})
-	done := make(chan struct{})
-	scheduleDelayTest(time.Minute, func(ctx context.Context) { entered <- ctx; <-unblock; close(done) }, func() { t.Error("unexpected rejection") })
-	ctx := <-entered
+	activeDone := make(chan error, 1)
+	queuedRan := make(chan struct{}, 1)
+	scheduleDelayTest(time.Minute, func(ctx context.Context) {
+		entered <- ctx
+		<-ctx.Done()
+		activeDone <- ctx.Err()
+	}, func() { t.Error("unexpected rejection") })
+	<-entered
+	scheduleDelayTest(time.Minute, func(ctx context.Context) {
+		queuedRan <- struct{}{}
+	}, func() { t.Error("unexpected rejection") })
+
 	cancelDelayTests()
-	if ctx.Err() != nil {
-		t.Fatalf("stop canceled legacy probe: %v", ctx.Err())
+	select {
+	case err := <-activeDone:
+		if err != context.Canceled {
+			t.Fatalf("active probe error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("active probe was not canceled")
 	}
-	close(unblock)
-	<-done
+	time.Sleep(50 * time.Millisecond)
+	select {
+	case <-queuedRan:
+		t.Fatal("queued stale probe ran after cancellation")
+	default:
+	}
+}
+
+func TestDefaultSchedulerNewGenerationRunsAfterCancellation(t *testing.T) {
+	withDefaultProbeScheduler(t, 1)
+	cancelDelayTests()
+	done := make(chan error, 1)
+	scheduleDelayTest(time.Second, func(ctx context.Context) { done <- ctx.Err() }, func() {
+		t.Error("unexpected rejection")
+	})
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("new generation inherited cancellation: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("new generation did not run")
+	}
 }
