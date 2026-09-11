@@ -55,11 +55,12 @@ class SetupAction extends _$SetupAction {
     final generation =
         profileSwitchGeneration ??
         (profileSwitched ? beginProfileSwitch() : _profileSwitchGeneration);
+    final ownsProfileSelection = profileSwitchGeneration != null;
     final setupResult = applyProfile(
       force: true,
       silence: profileSwitched,
       profileSwitched: profileSwitched,
-      activationGuard: profileSwitched
+      activationGuard: ownsProfileSelection
           ? () => generation == _profileSwitchGeneration
           : null,
     );

@@ -19,6 +19,9 @@ void main() {
 
       expect(body, contains('cancelDelayTests(cancelCoreRequests: true)'));
       expect(body, contains('beginProfileSwitch()'));
+      final setup = source('lib/providers/actions/setup.dart');
+      expect(setup, contains('final ownsProfileSelection ='));
+      expect(setup, contains('activationGuard: ownsProfileSelection'));
       expect(
         body.indexOf('cancelDelayTests(cancelCoreRequests: true)'),
         lessThan(body.indexOf('fullSetup(')),
