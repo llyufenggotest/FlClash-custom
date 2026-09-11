@@ -217,12 +217,14 @@ void main() {
         );
       }
 
+      final persisted = <String>[];
       final first = controller.setupConfig(
         params: params,
         preparationConfig: 'rules: []',
         preparationProfileId: 7,
         prepareBeforePreload: true,
         prepareRuleGenerationOverride: prepare,
+        persistPreparedConfig: (config) async => persisted.add('first:$config'),
       );
       final second = controller.setupConfig(
         params: params,
@@ -230,6 +232,8 @@ void main() {
         preparationProfileId: 7,
         prepareBeforePreload: true,
         prepareRuleGenerationOverride: prepare,
+        persistPreparedConfig: (config) async =>
+            persisted.add('second:$config'),
         preloadInvoke: () async {},
       );
       await Future<void>.delayed(Duration.zero);
@@ -238,7 +242,11 @@ void main() {
 
       expect(await first, '');
       expect(await second, '');
-      verify(() => mock.validateCandidateConfigAtPath(candidatePath)).called(2);
+      expect(
+        persisted,
+        containsAll(['first:mode: direct', 'second:mode: direct']),
+      );
+      verify(() => mock.validateCandidateConfigAtPath(candidatePath)).called(1);
     });
 
     test('connect reuses an in-flight subscription prewarm', () async {
