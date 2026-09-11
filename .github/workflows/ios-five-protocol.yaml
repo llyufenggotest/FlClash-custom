@@ -100,7 +100,9 @@ jobs:
           ! git grep -n -E '#sl|MAGIC_SHANLIAN_TRIGGER|GenerateMagicSNI' -- 'core/mihomo/*.go' 'core/mihomo/**/*.go' ':!core/mihomo/**/*_test.go'
 
       - name: Build unsigned IPA
-        run: dart setup.dart ios --no-codesign --ios-bundle-id com.follow.clash.llyufeng -v
+        run: |
+          yq -i '.hooks.user_defines.setup.build_assets = true | .hooks.user_defines.rust_api.build_assets = true' pubspec.yaml
+          dart setup.dart ios --no-codesign --ios-bundle-id com.follow.clash.llyufeng -v
 
       - name: Verify sideload compatibility dylib
         env:
