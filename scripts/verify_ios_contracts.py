@@ -273,7 +273,7 @@ check(
 # shares one budget across manual, group and provider-health-check entry points.
 # Contracts moved to build-tag-specific scheduler and to the new ApplyConfig/preflight flow.
 check('core/delay_scheduler_extension.go', present=['manualProbes = probelimit.New(delayBatchConcurrency*5, 0)', 'manualProbes.CancelAll()', 'probelimit.Default.CancelAll()', 'manualProbes.Acquire(ctx)', 'defer release()'])
-check('core/delay_scheduler_default.go', present=['manualProbeSlots = make(chan struct{}, delayBatchConcurrency)', 'func cancelDelayTests() {}'])
+check('core/delay_scheduler_default.go', present=['manualProbeSlots = make(chan struct{}, delayBatchConcurrency)', 'manualProbeCtx', 'manualProbeStop()', 'manualProbeGenerationCurrent'])
 check('core/mihomo/adapter/adapter.go', present=['ctx, release, err = probelimit.Default.Acquire(ctx)', 'if probelimit.Enabled && ctx.Err() == context.Canceled {'])
 check('core/mihomo/hub/executor/executor.go', present=['loadProvider(providers)'])
 check('core/mihomo/rules/provider/lowmem_budget_lowmem.go', present=['maxLowMemoryRuleCount = extensionRawRuleBudget'])
