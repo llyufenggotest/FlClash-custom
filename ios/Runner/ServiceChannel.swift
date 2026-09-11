@@ -116,12 +116,19 @@ final class ServiceChannel {
         result(rpcError(data, code: "network_extension_busy"))
         return
       }
-      let token = rpcCancellationScope.register(route: nil)
+      let method = rpcMethod(in: data)
+      let token = rpcCancellationScope.register(route: nil, method: method)
       let response = ServiceRPCResponse { result($0) }
       rpcResponses[token] = response
-      let timeoutNanoseconds = rpcMethod(in: data) == "setupConfig"
-        ? UInt64(65_000_000_000)
-        : UInt64(16_000_000_000)
+      let timeoutNanoseconds: UInt64
+      switch method {
+      case "setupConfig":
+        timeoutNanoseconds = 65_000_000_000
+      case "asyncTestDelay":
+        timeoutNanoseconds = 45_000_000_000
+      default:
+        timeoutNanoseconds = 16_000_000_000
+      }
       let deadline = Task { @MainActor [weak self] in
         do { try await Task.sleep(nanoseconds: timeoutNanoseconds) }
         catch { return }
@@ -141,6 +148,16 @@ final class ServiceChannel {
         rpcResponses.removeValue(forKey: token)
         response.finish(value)
       }
+    case "cancelDelayTests":
+      let cancelledCount = rpcCancellationScope.delayTestCount
+      rpcCancellationScope.cancelDelayTestRequests { token in
+        rpcTasks[token]?.cancel()
+        rpcResponses.removeValue(forKey: token)?.finish(
+          #"{"result":null,"error":{"code":"rpc_cancelled","message":"delay test cancelled for profile switch","details":null}}"#
+        )
+      }
+      log("cancelDelayTests cancelled=\(cancelledCount)")
+      result(true)
     case "start":
       guard saveSharedState(call) else {
         result(false)
@@ -252,14 +269,19 @@ final class ServiceRPCCancellationScope {
   private struct Entry {
     var route: CoreRoute?
     let stopGeneration: UInt64
+    let method: String?
   }
 
   private var entries: [UUID: Entry] = [:]
   private var stopGeneration: UInt64 = 0
 
-  func register(route: CoreRoute?) -> UUID {
+  func register(route: CoreRoute?, method: String? = nil) -> UUID {
     let token = UUID()
-    entries[token] = Entry(route: route, stopGeneration: stopGeneration)
+    entries[token] = Entry(
+      route: route,
+      stopGeneration: stopGeneration,
+      method: method
+    )
     return token
   }
 
@@ -286,7 +308,22 @@ final class ServiceRPCCancellationScope {
     }
   }
 
+  func cancelDelayTestRequests(_ cancel: (UUID) -> Void) {
+    let tokens = entries.compactMap { token, entry in
+      entry.method == "asyncTestDelay" ? token : nil
+    }
+    for token in tokens {
+      entries.removeValue(forKey: token)
+      cancel(token)
+    }
+  }
+
   func contains(_ token: UUID) -> Bool { entries[token] != nil }
+  var delayTestCount: Int {
+    entries.values.reduce(into: 0) { count, entry in
+      if entry.method == "asyncTestDelay" { count += 1 }
+    }
+  }
   var isEmpty: Bool { entries.isEmpty }
 }
 

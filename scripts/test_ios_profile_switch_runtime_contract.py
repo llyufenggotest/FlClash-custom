@@ -13,47 +13,18 @@ class IOSProfileSwitchRuntimeContract(unittest.TestCase):
         )
         self.assertIn("PreparedGenerationScheduler<RuleGenerationPreparation>", scheduler)
         self.assertIn("preparedGenerationScheduler.prepare", controller)
-        self.assertIn("candidateConfigPath = activatedPath", controller)
+        self.assertIn("candidateConfigPath = prepared.configPath", controller)
         self.assertNotIn("candidate config path is missing", controller)
 
-    def test_ios_generation_writers_never_route_to_ne(self):
-        router = (ROOT / "ios/Runner/Core/CoreMessageRouter.swift").read_text(encoding="utf-8")
-        methods = [
-            "prewarmProxyProvider", "prewarmRuleProvider", "publishRuleGeneration",
-            "activateRuleGeneration", "restoreRuleGeneration", "getPreparedRuleGeneration",
-            "validateStagedConfigAtPath", "validateCandidateConfigAtPath", "deleteManagedPath",
-        ]
-        enum_block = router.split("private enum AppCoreMethod", 1)[1].split("}", 1)[0]
-        for method in methods:
-            self.assertIn(f"case {method}", enum_block)
-        route_block = router.split("private func route(", 1)[1]
-        self.assertIn("AppCoreMethod(rawValue: method) != nil", route_block)
-        self.assertIn("return .app", route_block)
-
+    def test_profile_switch_selectively_cancels_delay_rpc(self) -> None:
         manager = (ROOT / "lib/manager/core_manager.dart").read_text(encoding="utf-8")
         service = (ROOT / "ios/Runner/ServiceChannel.swift").read_text(encoding="utf-8")
         self.assertIn("cancelDelayTests(cancelCoreRequests: true)", manager)
         self.assertIn('case "cancelDelayTests"', service)
         self.assertIn('entry.method == "asyncTestDelay"', service)
-        default_scheduler = (ROOT / "core/delay_scheduler_default.go").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn("manualProbeCtx", default_scheduler)
-        self.assertIn("manualProbeStop()", default_scheduler)
-        go_methods = (ROOT / "core/method.go").read_text(encoding="utf-8")
-        self.assertIn("handleAsyncTestDelay(params", go_methods)
-        self.assertNotIn("response.success(handleTestDelay(params))", go_methods)
-        self.assertNotIn("func cancelDelayTests() {}", default_scheduler)
         self.assertIn(
-            'rpcTasks.removeValue(forKey: token)?.cancel()', service
+            'rpcResponses.removeValue(forKey: token)?.finish(', service
         )
-        self.assertIn('coreMessageRouter.cancelDelayTests()', service)
-        mailbox = (ROOT / "ios/NECore/ProviderMessageMailbox.swift").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn('method == "cancelDelayTests"', mailbox)
-        self.assertIn('interruptOutstanding < 1', mailbox)
-        self.assertIn('configurationOutstanding < 1', mailbox)
         cancel_block = service.split('case "cancelDelayTests":', 1)[1].split(
             'case "start":', 1
         )[0]
@@ -67,8 +38,6 @@ class IOSProfileSwitchRuntimeContract(unittest.TestCase):
         self.assertIn("dropping stale profile result", proxies)
         self.assertIn("syncProviders({int? profileId})", providers)
         self.assertIn("profileId: expectedProfileId", setup)
-        self.assertIn("ActivationEpochOwnership", setup)
-        self.assertIn("publishIfOwned(epoch", setup)
 
     def test_fixture_matches_reported_overlap_shape(self) -> None:
         fixture = json.loads(

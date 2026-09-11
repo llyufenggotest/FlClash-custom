@@ -24,6 +24,9 @@ class SetupAction extends _$SetupAction {
   final _listenerScheduler = SerialTaskScheduler();
   _RunRequest? _latestRunRequest;
   DateTime? _startTime;
+  int _profileSwitchGeneration = 0;
+
+  int beginProfileSwitch() => ++_profileSwitchGeneration;
 
   bool get _isRunning => _startTime != null && _startTime!.isBeforeNow;
 
@@ -40,11 +43,26 @@ class SetupAction extends _$SetupAction {
     return SetupParams(selectedMap: selectedMap, testUrl: testUrl);
   }
 
-  Future<bool> fullSetup() async {
+  Future<bool> fullSetup({
+    bool profileSwitched = false,
+    int? profileSwitchGeneration,
+  }) async {
     if (!ref.read(initProvider)) return true;
-    ref.read(proxiesActionProvider.notifier).cancelDelayTests();
+    await ref
+        .read(proxiesActionProvider.notifier)
+        .cancelDelayTests(cancelCoreRequests: system.isIOS && profileSwitched);
     ref.read(delayDataSourceProvider.notifier).value = {};
-    final setupResult = applyProfile(force: true);
+    final generation =
+        profileSwitchGeneration ??
+        (profileSwitched ? beginProfileSwitch() : _profileSwitchGeneration);
+    final setupResult = applyProfile(
+      force: true,
+      silence: profileSwitched,
+      profileSwitched: profileSwitched,
+      activationGuard: profileSwitched
+          ? () => generation == _profileSwitchGeneration
+          : null,
+    );
     ref.read(logsProvider.notifier).value = FixedList(maxLogsLength);
     ref.read(requestsProvider.notifier).value = FixedList(maxRequestsLength);
     try {
@@ -133,6 +151,8 @@ class SetupAction extends _$SetupAction {
       try {
         applied = await applyProfile(
           force: true,
+          activationGuard: () =>
+              _isCurrent(request) && !ref.read(suspendProvider),
           preloadInvoke: () => _setCoreRunning(request),
         );
       } catch (_) {
@@ -165,6 +185,10 @@ class SetupAction extends _$SetupAction {
     }
     if (!_isCurrent(request)) {
       return true;
+    }
+    if (system.isIOS) {
+      globalState.lastConfigMd5 = null;
+      await preferences.setAppliedConfigMd5(null);
     }
     resetCoreTraffic();
     ref.read(trafficsProvider.notifier).clear();
@@ -261,6 +285,44 @@ class SetupAction extends _$SetupAction {
     });
   }
 
+  @protected
+  bool get rulePrewarmEnabled => system.isIOS;
+
+  /// Prepares external rule-provider artifacts without activating the profile.
+  Future<bool> prewarmProfile(Profile profile) async {
+    if (!rulePrewarmEnabled) {
+      return false;
+    }
+    final setupState = await ref.read(setupStateProvider(profile.id).future);
+    final patchConfig = ref.read(patchClashConfigProvider);
+    final rendered = await getProfile(
+      setupState: setupState,
+      patchConfig: patchConfig,
+    );
+    if (rendered.yaml.isEmpty) {
+      return false;
+    }
+    final parsed = loadYaml(rendered.yaml);
+    final ruleProviders = parsed is YamlMap ? parsed['rule-providers'] : null;
+    final hasExternalRuleProvider =
+        ruleProviders is YamlMap &&
+        ruleProviders.values.any(
+          (value) => value is YamlMap && value['type'] != 'inline',
+        );
+    if (!hasExternalRuleProvider) {
+      return false;
+    }
+    final result = await _core.setupConfig(
+      params: _setupParams,
+      preparationConfig: rendered.yaml,
+      preparationProfileId: profile.id,
+    );
+    if (result.isNotEmpty) {
+      throw MessageException(result);
+    }
+    return true;
+  }
+
   // False means building the profile, the config write, or the Core setup
   // step failed; a profile that fails to build is still pushed to the Core
   // as the empty config so it never keeps serving the previous one.
@@ -268,11 +330,15 @@ class SetupAction extends _$SetupAction {
   Future<bool> applyProfile({
     bool silence = false,
     bool force = false,
+    bool profileSwitched = false,
+    bool Function()? activationGuard,
     Future<void> Function()? preloadInvoke,
   }) async {
     final result = await _runSetup(
       force: force,
       silence: silence,
+      profileSwitched: profileSwitched,
+      activationGuard: activationGuard,
       preloadInvoke: preloadInvoke,
     );
     return result != _SetupTaskResult.failed;
@@ -281,16 +347,27 @@ class SetupAction extends _$SetupAction {
   Future<_SetupTaskResult> _runSetup({
     bool silence = false,
     bool force = false,
+    bool profileSwitched = false,
+    bool Function()? activationGuard,
     Future<void> Function()? preloadInvoke,
   }) async {
+    final expectedProfileId = ref.read(currentProfileProvider)?.id;
     final result = await _setupScheduler.run(() {
       return _setupConfig(
         force: force,
         silence: silence,
+        profileSwitched: profileSwitched,
+        activationGuard: activationGuard,
         preloadInvoke: preloadInvoke,
         onUpdated: () async {
-          await ref.read(proxiesActionProvider.notifier).updateGroups();
-          await ref.read(providersProvider.notifier).syncProviders();
+          if (activationGuard != null && !activationGuard()) return;
+          await ref
+              .read(proxiesActionProvider.notifier)
+              .updateGroups(profileId: expectedProfileId);
+          if (activationGuard != null && !activationGuard()) return;
+          await ref
+              .read(providersProvider.notifier)
+              .syncProviders(profileId: expectedProfileId);
         },
       );
     });
@@ -442,9 +519,23 @@ class SetupAction extends _$SetupAction {
     return fallback;
   }
 
+  Future<void> _persistConfigAtomically(String path, String config) async {
+    final temporary = File(
+      '$path.tmp.$pid.${DateTime.now().microsecondsSinceEpoch}',
+    );
+    try {
+      await temporary.writeAsString(config, flush: true);
+      await temporary.rename(path);
+    } finally {
+      await temporary.safeDelete();
+    }
+  }
+
   Future<_SetupTaskResult> _setupConfig({
     bool force = false,
     bool silence = false,
+    bool profileSwitched = false,
+    bool Function()? activationGuard,
     Future<void> Function()? preloadInvoke,
     FutureOr Function()? onUpdated,
   }) async {
@@ -476,7 +567,22 @@ class SetupAction extends _$SetupAction {
     final profileFailed = realProfile == null;
     final yamlString = realProfile?.yaml ?? '';
     final yamlMd5 = realProfile?.md5 ?? '';
-    if (!profileFailed && yamlMd5 == globalState.lastConfigMd5 && !force) {
+    final appliedMd5 =
+        globalState.lastConfigMd5 ?? await preferences.getAppliedConfigMd5();
+    final configFile = File(await appPath.configFilePath);
+    final diskMatches =
+        await configFile.exists() &&
+        (await configFile.readAsString()).toMd5() == yamlMd5;
+    final matchesAppliedConfig =
+        !profileFailed && yamlMd5 == appliedMd5 && diskMatches;
+    final skipRedundantReload =
+        !profileSwitched &&
+        matchesAppliedConfig &&
+        (!force || (system.isIOS && _isRunning));
+    if (skipRedundantReload) {
+      globalState.lastConfigMd5 = yamlMd5;
+      await preloadInvoke?.call();
+      await onUpdated?.call();
       return _SetupTaskResult.completed;
     }
     if (system.isAndroid) {
@@ -491,14 +597,79 @@ class SetupAction extends _$SetupAction {
       () async {
         try {
           final configFilePath = await appPath.configFilePath;
-          await File(configFilePath).safeWriteAsString(yamlString);
+          if (!system.isIOS) {
+            await File(configFilePath).safeWriteAsString(yamlString);
+          }
           final profileId = profile?.id;
           if (profileId != null) {
             await appPath.ensureProviderDirs(profileId);
           }
-          final message = await _core.setupConfig(
+          final coreController = _core;
+          Future<void> commitAndActivate() async {
+            // _start marks local state running before initialization. A supplied
+            // activation guard owns stale-request and suspend arbitration.
+            if (activationGuard != null && !activationGuard()) {
+              throw StateError('iOS activation request is no longer current');
+            }
+            final onlineSwitch = _isRunning && preloadInvoke == null;
+            Future<String> applyFormalConfig() {
+              return coreController.applyFormalConfig(_setupParams);
+            }
+
+            if (onlineSwitch) {
+              await commitAndHotApplyIOSConfig(
+                configPath: configFilePath,
+                config: yamlString,
+                activationGuard: activationGuard,
+                persistAtomically: _persistConfigAtomically,
+                applyConfig: applyFormalConfig,
+                restoreConfig: applyFormalConfig,
+              );
+              return;
+            }
+            await commitAndActivateIOSConfig(
+              configPath: configFilePath,
+              config: yamlString,
+              oldTunnelWasRunning: false,
+              activationGuard: activationGuard,
+              persistAtomically: _persistConfigAtomically,
+              stopTunnel: () => setCoreRunning(false),
+              restoreTunnel: () async {
+                final restoreResult = await applyFormalConfig();
+                if (restoreResult.isNotEmpty) {
+                  throw MessageException(restoreResult);
+                }
+                return setCoreRunning(true);
+              },
+              startTunnel: () async {
+                if (activationGuard != null && !activationGuard()) {
+                  throw StateError(
+                    'iOS activation request is no longer current',
+                  );
+                }
+                final applyResult = await applyFormalConfig();
+                if (applyResult.isNotEmpty) {
+                  throw MessageException(applyResult);
+                }
+                if (preloadInvoke != null) {
+                  // A stale or suspended initialization deliberately no-ops in
+                  // _setCoreRunning; that is successful intent arbitration.
+                  await preloadInvoke();
+                  return true;
+                }
+                if (!onlineSwitch) {
+                  return true;
+                }
+                return setCoreRunning(true);
+              },
+            );
+          }
+
+          final message = await coreController.setupConfig(
             params: _setupParams,
-            preloadInvoke: preloadInvoke,
+            preparationConfig: system.isIOS ? yamlString : null,
+            preparationProfileId: system.isIOS ? profileId : null,
+            preloadInvoke: system.isIOS ? commitAndActivate : preloadInvoke,
           );
           if (message.isNotEmpty) {
             throw MessageException(message);
@@ -510,7 +681,9 @@ class SetupAction extends _$SetupAction {
           }
           rethrow;
         }
-        globalState.lastConfigMd5 = yamlMd5;
+        final appliedYamlMd5 = (await configFile.readAsString()).toMd5();
+        globalState.lastConfigMd5 = appliedYamlMd5;
+        await preferences.setAppliedConfigMd5(appliedYamlMd5);
         ref.read(checkIpNumProvider.notifier).add();
         await onUpdated?.call();
       },
