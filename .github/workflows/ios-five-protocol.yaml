@@ -115,8 +115,8 @@ jobs:
           flutter test test/ios_config_activation_test.dart
           flutter test test/ios_prepared_config_commit_test.dart
           python3 scripts/test_ios_profile_switch_runtime_contract.py
-          flutter test test/core/controller_test.dart
-          flutter test test/profile_switch_cancellation_test.dart
+          flutter test test/core/controller_test.dart --no-pub
+          flutter test test/profile_switch_cancellation_test.dart --no-pub
           flutter test test/setup_test.dart
           ! git grep -n -E '#sl|MAGIC_SHANLIAN_TRIGGER|GenerateMagicSNI' -- 'core/mihomo/*.go' 'core/mihomo/**/*.go' ':!core/mihomo/**/*_test.go'
 
