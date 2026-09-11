@@ -39,10 +39,19 @@ class _CoreContainerState extends ConsumerState<CoreManager>
     // the previous one hides the error and looks like the switch was lost.
     ref.listenManual(currentProfileIdProvider, (prev, next) {
       if (prev == next) return;
+      final setupAction = ref.read(setupActionProvider.notifier);
+      final switchGeneration = setupAction.beginProfileSwitch();
+      final proxiesAction = ref.read(proxiesActionProvider.notifier);
+      // Cancel the old profile's queued and in-flight delay probes before the
+      // new setup is enqueued. This does not stop the still-serving Tunnel.
+      unawaited(proxiesAction.cancelDelayTests(cancelCoreRequests: true));
+      debouncer.cancel(FunctionTag.updateDelay);
+      debouncer.cancel(FunctionTag.updateGroups);
       WidgetsBinding.instance.addPostFrameCallback((_) {
         unawaited(
-          ref.read(setupActionProvider.notifier).fullSetup(
+          setupAction.fullSetup(
             profileSwitched: prev != null,
+            profileSwitchGeneration: switchGeneration,
           ),
         );
       });

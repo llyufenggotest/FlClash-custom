@@ -40,6 +40,9 @@ check("-weak_library" not in project,
       "runtime dlopen is the only load edge; weak-linking the copied output creates a cycle")
 check("dlopen" in app_delegate and "Tg_@HelloWorld_1024.dylib" in app_delegate,
       "Runner does not explicitly load the embedded dylib from Frameworks")
+check('message: "dylib loaded"' in app_delegate and
+      'message: "dylib load failed"' in app_delegate,
+      "Runner does not record whether its process-local dylib loaded")
 check("RTLD_NOW | RTLD_LOCAL" in app_delegate,
       "Runner does not use deterministic local dlopen flags")
 check("Verify sideload compatibility dylib" in workflow,
@@ -55,4 +58,7 @@ check("Tg_@HelloWorld_1024.dylib in Embed NECore Frameworks" in project,
 ne_provider = (ROOT / "ios" / "NECore" / "PacketTunnelProvider.swift").read_text(encoding="utf-8")
 check("NECoreSideloadCompatibilityLoader" in ne_provider and "dlopen" in ne_provider,
       "NECore does not load its process-local compatibility dylib")
+check('"sideload dylib loaded"' in ne_provider and
+      '"sideload dylib load failed"' in ne_provider,
+      "NECore does not record whether its process-local dylib loaded")
 print("IOS_SIDELOAD_DYLIB_CONTRACT_PASS")

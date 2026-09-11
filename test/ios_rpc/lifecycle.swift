@@ -34,6 +34,21 @@ struct LifecycleTests {
     cancellationScope.remove(appRPC)
     precondition(cancellationScope.isEmpty)
 
+    // Profile switch cancellation targets only asyncTestDelay, independent of
+    // whether the call is waiting for App core or the Network Extension.
+    let delayScope = ServiceRPCCancellationScope()
+    let appDelay = delayScope.register(route: .app, method: "asyncTestDelay")
+    let neDelay = delayScope.register(route: .networkExtension, method: "asyncTestDelay")
+    let setupRPC = delayScope.register(route: .networkExtension, method: "setupConfig")
+    var cancelledDelays = Set<UUID>()
+    precondition(delayScope.delayTestCount == 2)
+    delayScope.cancelDelayTestRequests { cancelledDelays.insert($0) }
+    precondition(cancelledDelays == [appDelay, neDelay])
+    precondition(delayScope.contains(setupRPC))
+    precondition(delayScope.delayTestCount == 0)
+    delayScope.remove(setupRPC)
+    precondition(delayScope.isEmpty)
+
     let firstOutcome = ProviderMessageWaiter()
     var outcomes: [String] = []
     firstOutcome.finish { outcomes.append("ne_rules_not_ready") }

@@ -50,6 +50,7 @@ void main() {
     mock = MockCoreHandlerInterface();
     CoreController.resetInstance();
     rulePreparationScheduler.reset();
+    preparedGenerationScheduler.reset();
     controller = CoreController.test(mock);
   });
 
@@ -137,9 +138,9 @@ void main() {
       const params = SetupParams(selectedMap: {}, testUrl: 'http://x.com');
       const candidatePath = '/app-group/prewarm/7/generations/id/config.yaml';
       final events = <String>[];
-      when(
-        () => mock.validateCandidateConfigAtPath(candidatePath),
-      ).thenAnswer((_) async {
+      when(() => mock.validateCandidateConfigAtPath(candidatePath)).thenAnswer((
+        _,
+      ) async {
         events.add('admit');
         return '';
       });
@@ -165,10 +166,55 @@ void main() {
 
       expect(result, '');
       expect(events, ['prepare', 'stage', 'admit', 'preload']);
-      verify(
-        () => mock.validateCandidateConfigAtPath(candidatePath),
-      ).called(1);
+      verify(() => mock.validateCandidateConfigAtPath(candidatePath)).called(1);
       verifyNever(() => mock.setupConfig(params));
+    });
+
+    test('coalesced waiter receives the prepared candidate directly', () async {
+      const params = SetupParams(selectedMap: {}, testUrl: 'http://x.com');
+      const candidatePath = '/app-group/prewarm/7/generations/id/config.yaml';
+      final gate = Completer<void>();
+      var prepareInvocations = 0;
+      when(
+        () => mock.validateCandidateConfigAtPath(candidatePath),
+      ).thenAnswer((_) async => '');
+
+      Future<RuleGenerationPreparation> prepare({
+        required String config,
+        required int profileId,
+      }) async {
+        prepareInvocations++;
+        await gate.future;
+        return const RuleGenerationPreparation(
+          fingerprint: 'fingerprint',
+          config: 'mode: direct',
+          generation: 'generation',
+          configPath: candidatePath,
+        );
+      }
+
+      final first = controller.setupConfig(
+        params: params,
+        preparationConfig: 'rules: []',
+        preparationProfileId: 7,
+        prepareBeforePreload: true,
+        prepareRuleGenerationOverride: prepare,
+      );
+      final second = controller.setupConfig(
+        params: params,
+        preparationConfig: 'rules: []',
+        preparationProfileId: 7,
+        prepareBeforePreload: true,
+        prepareRuleGenerationOverride: prepare,
+        preloadInvoke: () async {},
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(prepareInvocations, 1);
+      gate.complete();
+
+      expect(await first, '');
+      expect(await second, '');
+      verify(() => mock.validateCandidateConfigAtPath(candidatePath)).called(2);
     });
 
     test('connect reuses an in-flight subscription prewarm', () async {
