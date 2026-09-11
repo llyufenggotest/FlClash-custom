@@ -15,7 +15,12 @@ func cancelDelayTests() {
 	probelimit.Default.CancelAll()
 }
 
-func scheduleDelayTest(timeout time.Duration, run func(context.Context), rejected func()) {
+func scheduleDelayTest(
+	timeout time.Duration,
+	run func(context.Context),
+	rejected func(),
+	panicHandler func(any),
+) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	ctx, release, err := manualProbes.Acquire(ctx)
 	if err != nil {
@@ -26,6 +31,11 @@ func scheduleDelayTest(timeout time.Duration, run func(context.Context), rejecte
 	go func() {
 		defer cancel()
 		defer release()
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				panicHandler(recovered)
+			}
+		}()
 		run(ctx)
 	}()
 }

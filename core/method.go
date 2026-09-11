@@ -239,6 +239,9 @@ var methodHandlers = map[CoreMethod]methodHandler{
 	asyncTestDelayMethod: withArguments(func(params *TestDelayParams, response MethodResponse) {
 		handleAsyncTestDelay(params, func(delay *Delay) {
 			response.success(delay)
+		}, func(recovered any) {
+			logError("panic in async delay handler: %v\n%s", recovered, stackTrace())
+			response.failure("internal_error", fmt.Sprintf("internal panic: %v", recovered), nil)
 		})
 	}),
 	cancelDelayTestsMethod: withoutArguments(func(response MethodResponse) {
