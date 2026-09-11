@@ -130,8 +130,13 @@ final class ProviderMessageMailbox {
       return
     }
     prune()
+    let method = ((try? JSONSerialization.jsonObject(with: payload)) as? [String: Any])?["method"] as? String
+    // The cancellation control RPC must enter even when all eight probe slots
+    // are occupied, otherwise a profile switch cannot release those probes.
+    let isDelayCancellation = method == "cancelDelayTests"
     let retained = entries.values.reduce(0) { $0 + $1.data.count + ($1.response?.count ?? 0) }
-    guard outstanding < maxOutstanding, entries.count < maxEntries,
+    guard (outstanding < maxOutstanding || isDelayCancellation),
+      outstanding < maxOutstanding + 1, entries.count < maxEntries,
       retained + payload.count <= maxRetainedBytes else {
       completion(error(payload, code: "network_extension_busy")); return
     }

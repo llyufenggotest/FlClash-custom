@@ -44,6 +44,9 @@ void main() {
       expect(goMethods, contains('cancelDelayTestsMethod: withoutArguments'));
       expect(router, contains('func cancelDelayTests() async'));
       expect(router, contains('CoreRoute.app, CoreRoute.networkExtension'));
+      final mailbox = source('ios/NECore/ProviderMessageMailbox.swift');
+      expect(mailbox, contains('method == "cancelDelayTests"'));
+      expect(mailbox, contains('outstanding < maxOutstanding + 1'));
     });
 
     test('late proxy and provider refreshes are generation guarded', () {
