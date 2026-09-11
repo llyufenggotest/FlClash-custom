@@ -174,10 +174,20 @@ jobs:
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;${NDK_VERSION}"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
 
+      - name: Resolve NDK path
+        shell: bash
+        run: |
+          ndk_path='${{ steps.ndk.outputs.ndk-path }}'
+          if [ -z "$ndk_path" ] || [ ! -d "$ndk_path" ]; then
+            ndk_path="$ANDROID_HOME/ndk/${NDK_VERSION}"
+          fi
+          test -d "$ndk_path" || { echo "NDK not found at $ndk_path" >&2; exit 1; }
+          echo "RESOLVED_ANDROID_NDK_HOME=$ndk_path" >> "$GITHUB_ENV"
+
       - name: Validate the Android core library
         working-directory: core
         env:
-          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path || env.ANDROID_NDK_HOME }}
+          ANDROID_NDK_HOME: ${{ env.RESOLVED_ANDROID_NDK_HOME }}
         run: |
           # Nothing else compiles the `android && cgo` files before a `v*` tag.
           CC="$(echo "$ANDROID_NDK_HOME"/toolchains/llvm/prebuilt/*/bin/aarch64-linux-android21-clang)"
