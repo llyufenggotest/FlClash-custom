@@ -36,6 +36,16 @@ void main() {
       },
     );
 
+    test('Core exposes cancellation for queued and active probes', () {
+      final goConstants = source('core/constant.go');
+      final goMethods = source('core/method.go');
+      final router = source('ios/Runner/Core/CoreMessageRouter.swift');
+      expect(goConstants, contains('cancelDelayTestsMethod'));
+      expect(goMethods, contains('cancelDelayTestsMethod: withoutArguments'));
+      expect(router, contains('func cancelDelayTests() async'));
+      expect(router, contains('CoreRoute.app, CoreRoute.networkExtension'));
+    });
+
     test('late proxy and provider refreshes are generation guarded', () {
       final proxies = source('lib/providers/actions/proxies.dart');
       final providers = source('lib/providers/app.dart');

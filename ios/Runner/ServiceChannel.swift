@@ -151,13 +151,18 @@ final class ServiceChannel {
     case "cancelDelayTests":
       let cancelledCount = rpcCancellationScope.delayTestCount
       rpcCancellationScope.cancelDelayTestRequests { token in
-        rpcTasks[token]?.cancel()
+        rpcTasks.removeValue(forKey: token)?.cancel()
         rpcResponses.removeValue(forKey: token)?.finish(
           #"{"result":null,"error":{"code":"rpc_cancelled","message":"delay test cancelled for profile switch","details":null}}"#
         )
       }
-      log("cancelDelayTests cancelled=\(cancelledCount)")
-      result(true)
+      Task {
+        // Cancel both app-core and NE-core probe contexts before allowing the
+        // new setup to enter the control plane. The Tunnel remains running.
+        await coreMessageRouter.cancelDelayTests()
+        log("cancelDelayTests cancelled=\(cancelledCount)")
+        result(true)
+      }
     case "start":
       guard saveSharedState(call) else {
         result(false)

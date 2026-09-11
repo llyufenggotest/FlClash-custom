@@ -23,8 +23,9 @@ class IOSProfileSwitchRuntimeContract(unittest.TestCase):
         self.assertIn('case "cancelDelayTests"', service)
         self.assertIn('entry.method == "asyncTestDelay"', service)
         self.assertIn(
-            'rpcResponses.removeValue(forKey: token)?.finish(', service
+            'rpcTasks.removeValue(forKey: token)?.cancel()', service
         )
+        self.assertIn('coreMessageRouter.cancelDelayTests()', service)
         cancel_block = service.split('case "cancelDelayTests":', 1)[1].split(
             'case "start":', 1
         )[0]

@@ -167,6 +167,17 @@ final class CoreMessageRouter {
     }
   }
 
+  func cancelDelayTests() async {
+    let methodCall = #"{"method":"cancelDelayTests","arguments":null}"#
+    for route in [CoreRoute.app, CoreRoute.networkExtension] {
+      do {
+        _ = try await sendCoreMessage(Data(methodCall.utf8), route: route)
+      } catch {
+        log("cancelDelayTests route=\(route) failed=\(error.localizedDescription)")
+      }
+    }
+  }
+
   func shutdownAppCore() async -> Bool {
     let methodCall = #"{"method":"shutdown","arguments":null}"#
     do {
