@@ -82,6 +82,20 @@ class ProductMigrationContractTest(unittest.TestCase):
         database = self.read("lib/providers/database.dart")
         setup = self.read("lib/providers/actions/setup.dart")
 
+        self.assertIn("bool Function()? postCommitGuard", actions)
+        self.assertIn("if (postCommitGuard != null && !postCommitGuard())", actions)
+        commit_start = actions.index("Future<void> _commitPreparedProfile")
+        commit_end = actions.index("Future<void> putPreparedProfile", commit_start)
+        commit = actions[commit_start:commit_end]
+        db_put = commit.index("await ref.read(profilesProvider.notifier).putAsync(profile)")
+        after_db_put = commit[db_put:]
+        self.assertNotIn(
+            "if (commitGuard != null && !commitGuard())",
+            after_db_put,
+        )
+        update_start = actions.index("Future<void> updateProfile")
+        update_end = actions.index("Future<void> _addPreparedProfile", update_start)
+        self.assertIn("postCommitGuard:", actions[update_start:update_end])
         self.assertIn("Future<void> putPreparedProfile", actions)
         self.assertIn("await putPreparedProfile(prepared.profile, prepared.content)", actions)
         self.assertIn("candidateYaml: candidateYaml", actions)
