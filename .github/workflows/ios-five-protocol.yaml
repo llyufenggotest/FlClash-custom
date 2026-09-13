@@ -149,7 +149,7 @@ jobs:
 
   android:
     name: Build Android APK (arm64)
-    if: github.event.inputs.platforms == 'all' || github.event.inputs.platforms == 'all-with-macos'
+    if: github.event_name == 'push' || github.event.inputs.platforms == 'all' || github.event.inputs.platforms == 'all-with-macos'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -215,7 +215,7 @@ jobs:
 
   windows:
     name: Build Windows (x64)
-    if: github.event.inputs.platforms == 'all' || github.event.inputs.platforms == 'all-with-macos'
+    if: github.event_name == 'push' || github.event.inputs.platforms == 'all' || github.event.inputs.platforms == 'all-with-macos'
     runs-on: windows-2022
     timeout-minutes: 90
     steps:
@@ -264,10 +264,9 @@ jobs:
 
   macos:
     name: Build macOS
-    # Off by default: these two jobs compete with the iOS job for the same
-    # scarce macOS machines, and their artifacts are already built and
-    # verified. Ask for them explicitly with platforms=all-with-macos.
-    if: github.event.inputs.platforms == 'all-with-macos' || github.event.inputs.platforms == 'ios-macos'
+    # Build both desktop architectures on branch pushes too; a push run must
+    # represent the complete five-platform candidate rather than iOS only.
+    if: github.event_name == 'push' || github.event.inputs.platforms == 'all-with-macos' || github.event.inputs.platforms == 'ios-macos'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     strategy:

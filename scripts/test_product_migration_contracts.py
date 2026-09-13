@@ -132,6 +132,8 @@ class ProductMigrationContractTest(unittest.TestCase):
         ndk_marker = f"NDK_VERSION: '{ndk.group(1)}'"
         self.assertIn(ndk_marker, release_workflow)
         self.assertIn(ndk_marker, matrix_workflow)
+        self.assertIn("github.event_name == 'push'", matrix_workflow)
+        self.assertEqual(matrix_workflow.count("github.event_name == 'push'"), 3)
         self.assertIn("NDK_RELEASE: r28c", matrix_workflow)
         self.assertIn("ndk-version: ${{ env.NDK_RELEASE }}", matrix_workflow)
         self.assertIn(
