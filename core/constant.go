@@ -222,6 +222,7 @@ const (
 	resetTrafficMethod                   CoreMethod = "resetTraffic"
 	asyncTestDelayMethod                 CoreMethod = "asyncTestDelay"
 	cancelDelayTestsMethod               CoreMethod = "cancelDelayTests"
+	setProfileSwitchProbeBarrierMethod   CoreMethod = "setProfileSwitchProbeBarrier"
 	getConnectionsMethod                 CoreMethod = "getConnections"
 	closeConnectionsMethod               CoreMethod = "closeConnections"
 	resetConnectionsMethod               CoreMethod = "resetConnections"

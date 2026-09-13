@@ -41,7 +41,14 @@ final class TunnelController {
   /// `maxConcurrentDelayTests` in lib/common/constant.dart.
   private let maxInFlightProviderMessages = 8
   private var inFlightProviderMessages = 0
+  private var inFlightInterruptMessages = 0
+  private let maxInFlightInterruptMessages = 1
+  private var inFlightConfigurationMessages = 0
+  private let maxInFlightConfigurationMessages = 1
   private var providerMessageWaiters: [(UUID, CheckedContinuation<Void, Error>)] = []
+  private var interruptMessageWaiters: [(UUID, CheckedContinuation<Void, Error>)] = []
+  private var configurationMessageWaiters: [(UUID, CheckedContinuation<Void, Error>)] = []
+  private var mailboxOnlySession: String?
   private var nextProviderMessageSequence: UInt64 = 0
   private let logger = Logger(
     subsystem: Bundle.main.bundleIdentifier ?? "com.follow.clash",
@@ -128,10 +135,61 @@ final class TunnelController {
     try await coordinator.reloadOnDemandRules()
   }
 
-  /// Suspends until a provider-message slot frees up. `@MainActor` isolation is
-  /// what makes the counter safe: every mutation happens on the main actor.
-  private func acquireProviderMessageSlot() async throws {
+  /// Suspends until a provider-message slot frees up. Profile-switch control
+  /// traffic has a dedicated Runner slot, matching the ninth receiver slot in
+  /// ProviderMessageMailbox, so it cannot queue behind eight probe calls.
+  private enum ProviderMessageLane {
+    case normal
+    case interrupt
+    case configuration
+  }
+
+  private func acquireProviderMessageSlot(lane: ProviderMessageLane) async throws {
     try Task.checkCancellation()
+    if lane == .interrupt {
+      while inFlightInterruptMessages >= maxInFlightInterruptMessages {
+        guard interruptMessageWaiters.count < 8 else {
+          throw ProviderMessageError(code: "network_extension_busy", message: "interrupt RPC queue is full")
+        }
+        let id = UUID()
+        try await withTaskCancellationHandler(operation: {
+          try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            interruptMessageWaiters.append((id, continuation))
+          }
+        }, onCancel: {
+          Task { @MainActor in
+            if let index = self.interruptMessageWaiters.firstIndex(where: { $0.0 == id }) {
+              self.interruptMessageWaiters.remove(at: index).1.resume(throwing: CancellationError())
+            }
+          }
+        })
+        try Task.checkCancellation()
+      }
+      inFlightInterruptMessages += 1
+      return
+    }
+    if lane == .configuration {
+      while inFlightConfigurationMessages >= maxInFlightConfigurationMessages {
+        guard configurationMessageWaiters.count < 8 else {
+          throw ProviderMessageError(code: "network_extension_busy", message: "configuration RPC queue is full")
+        }
+        let id = UUID()
+        try await withTaskCancellationHandler(operation: {
+          try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            configurationMessageWaiters.append((id, continuation))
+          }
+        }, onCancel: {
+          Task { @MainActor in
+            if let index = self.configurationMessageWaiters.firstIndex(where: { $0.0 == id }) {
+              self.configurationMessageWaiters.remove(at: index).1.resume(throwing: CancellationError())
+            }
+          }
+        })
+        try Task.checkCancellation()
+      }
+      inFlightConfigurationMessages += 1
+      return
+    }
     while inFlightProviderMessages >= maxInFlightProviderMessages {
       guard providerMessageWaiters.count < 64 else {
         throw ProviderMessageError(code: "network_extension_busy", message: "RPC queue is full")
@@ -153,31 +211,65 @@ final class TunnelController {
     inFlightProviderMessages += 1
   }
 
-  private func releaseProviderMessageSlot() {
+  private func releaseProviderMessageSlot(lane: ProviderMessageLane) {
+    if lane == .interrupt {
+      inFlightInterruptMessages = max(0, inFlightInterruptMessages - 1)
+      guard !interruptMessageWaiters.isEmpty else { return }
+      interruptMessageWaiters.removeFirst().1.resume()
+      return
+    }
+    if lane == .configuration {
+      inFlightConfigurationMessages = max(0, inFlightConfigurationMessages - 1)
+      guard !configurationMessageWaiters.isEmpty else { return }
+      configurationMessageWaiters.removeFirst().1.resume()
+      return
+    }
     inFlightProviderMessages = max(0, inFlightProviderMessages - 1)
     guard !providerMessageWaiters.isEmpty else { return }
-    // Resume one waiter per released slot; it re-checks the counter in its own
-    // loop iteration, so a spurious wake cannot over-admit.
     providerMessageWaiters.removeFirst().1.resume()
+  }
+
+  private func providerMessageMethod(_ data: Data) -> String? {
+    (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["method"] as? String
+  }
+
+  private func providerMessageLane(_ method: String?, explicitControl: Bool) -> ProviderMessageLane {
+    if explicitControl || method == "cancelDelayTests" || method == "setProfileSwitchProbeBarrier" {
+      return .interrupt
+    }
+    if method == "setupConfig" || method == "updateConfig" {
+      return .configuration
+    }
+    return .normal
   }
 
   // A nil reply is ambiguous, not proof of non-execution. Both transports
   // carry the exact same session/request/deadline and use one receiver cache.
   private let emptyReplyRetryCode = "empty_response_retryable"
 
-  func sendProviderMessage(_ data: Data) async throws -> String {
-    try await acquireProviderMessageSlot()
-    defer { releaseProviderMessageSlot() }
+  func sendProviderMessage(_ data: Data, control explicitControl: Bool = false) async throws -> String {
+    let method = providerMessageMethod(data)
+    let lane = providerMessageLane(method, explicitControl: explicitControl)
+    let timeout = method == "setupConfig" ? 65.0 : 16.0
+    let deadline = Date().addingTimeInterval(timeout)
+    try await acquireProviderMessageSlot(lane: lane)
+    defer { releaseProviderMessageSlot(lane: lane) }
+    guard deadline > Date() else {
+      throw ProviderMessageError(code: "network_extension_timeout", message: "RPC expired while queued")
+    }
     try Task.checkCancellation()
     guard let root = sharedStateStore.providerMessageMailboxDirectory(),
       let session = try? String(contentsOf: root.appendingPathComponent("current-session"), encoding: .utf8),
       UUID(uuidString: session) != nil else {
+      mailboxOnlySession = nil
       throw ProviderMessageError(code: "network_extension_unavailable", message: "RPC session is not ready")
+    }
+    if mailboxOnlySession != nil && mailboxOnlySession != session {
+      mailboxOnlySession = nil
     }
     let directory = root.appendingPathComponent(session)
     let id = UUID().uuidString
     let lease = directory.appendingPathComponent(id + ".lease")
-    let deadline = Date().addingTimeInterval(16)
     let envelope = try JSONSerialization.data(withJSONObject: [
       "rpcVersion": 1, "session": session, "requestID": id,
       "deadline": deadline.timeIntervalSince1970, "payload": data.base64EncodedString(),
@@ -190,11 +282,19 @@ final class TunnelController {
     }
     nextProviderMessageSequence &+= 1
     let sequence = nextProviderMessageSequence
+    if mailboxOnlySession == session {
+      log("provider message mailbox-only seq=\(sequence) method=\(method ?? "unknown")")
+      return try await sendProviderMessageViaMailbox(envelope, directory: directory, id: id, deadline: deadline)
+    }
     do {
       return try await sendProviderMessageAttempt(envelope, sequence: sequence, attempt: 1)
     } catch let error as ProviderMessageError
       where error.code == emptyReplyRetryCode || error.code == "network_extension_timeout" {
       try Task.checkCancellation()
+      if error.code == emptyReplyRetryCode {
+        mailboxOnlySession = session
+        log("provider message transport locked mailbox-only session=\(session)")
+      }
       return try await sendProviderMessageViaMailbox(envelope, directory: directory, id: id, deadline: deadline)
     }
   }

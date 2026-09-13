@@ -6,9 +6,15 @@ import Darwin
 /// publication, NOT a Go operation that has already started.
 final class ProviderMessageMailbox {
   typealias Reply = (Data?) -> Void
+  private enum Lane {
+    case normal
+    case interrupt
+    case configuration
+  }
   private struct Entry {
     let data: Data
     let deadline: TimeInterval
+    let lane: Lane
     var callbacks: [Reply]
     var response: Data?
     var completed = false
@@ -24,6 +30,8 @@ final class ProviderMessageMailbox {
   // Never release a slot on client timeout/stop: only the actual core callback
   // releases it. Hung Go handlers therefore cannot be replaced without bound.
   private var outstanding = 0
+  private var interruptOutstanding = 0
+  private var configurationOutstanding = 0
   private let maxOutstanding = 8
   private let maxEntries = 256
   private let maxBytes = 8 * 1024 * 1024
@@ -82,6 +90,9 @@ final class ProviderMessageMailbox {
       gc?.cancel(); gc = nil
       let callbacks = entries.values.flatMap { $0.callbacks }
       entries.removeAll()
+      outstanding = 0
+      interruptOutstanding = 0
+      configurationOutstanding = 0
       if let root, let session {
         try? FileManager.default.removeItem(at: root.appendingPathComponent("current-session"))
         try? FileManager.default.removeItem(at: root.appendingPathComponent(session))
@@ -115,7 +126,7 @@ final class ProviderMessageMailbox {
       let id = envelope["requestID"] as? String, UUID(uuidString: id) != nil,
       let deadline = envelope["deadline"] as? TimeInterval,
       deadline > Date().timeIntervalSince1970,
-      deadline <= Date().timeIntervalSince1970 + 30,
+      deadline <= Date().timeIntervalSince1970 + 70,
       let encoded = envelope["payload"] as? String,
       let payload = Data(base64Encoded: encoded),
       let directory, validFile(directory.appendingPathComponent(id + ".lease"), limit: 0)
@@ -131,22 +142,37 @@ final class ProviderMessageMailbox {
     }
     prune()
     let method = ((try? JSONSerialization.jsonObject(with: payload)) as? [String: Any])?["method"] as? String
-    // The cancellation control RPC must enter even when all eight probe slots
-    // are occupied, otherwise a profile switch cannot release those probes.
-    let isDelayCancellation = method == "cancelDelayTests"
+    let lane: Lane
+    if method == "cancelDelayTests" || method == "setProfileSwitchProbeBarrier" {
+      lane = .interrupt
+    } else if method == "setupConfig" || method == "updateConfig" {
+      lane = .configuration
+    } else {
+      lane = .normal
+    }
+    let laneAvailable = lane == .normal
+      ? outstanding < maxOutstanding
+      : lane == .interrupt ? interruptOutstanding < 1 : configurationOutstanding < 1
     let retained = entries.values.reduce(0) { $0 + $1.data.count + ($1.response?.count ?? 0) }
-    guard (outstanding < maxOutstanding || isDelayCancellation),
-      outstanding < maxOutstanding + 1, entries.count < maxEntries,
+    guard laneAvailable, entries.count < maxEntries,
       retained + payload.count <= maxRetainedBytes else {
       completion(error(payload, code: "network_extension_busy")); return
     }
-    entries[id] = Entry(data: payload, deadline: deadline, callbacks: [completion])
-    outstanding += 1
+    entries[id] = Entry(data: payload, deadline: deadline, lane: lane, callbacks: [completion])
+    switch lane {
+    case .normal: outstanding += 1
+    case .interrupt: interruptOutstanding += 1
+    case .configuration: configurationOutstanding += 1
+    }
     markResponsive()
     invoke(payload) { response in
       self.queue.async {
-        self.outstanding -= 1
         guard self.session == token, var entry = self.entries[id] else { return }
+        switch entry.lane {
+        case .normal: self.outstanding = max(0, self.outstanding - 1)
+        case .interrupt: self.interruptOutstanding = max(0, self.interruptOutstanding - 1)
+        case .configuration: self.configurationOutstanding = max(0, self.configurationOutstanding - 1)
+        }
         let retained = self.entries.values.reduce(0) { $0 + $1.data.count + ($1.response?.count ?? 0) }
         if let response, retained + response.count <= self.maxRetainedBytes {
           entry.response = response
@@ -212,7 +238,12 @@ final class ProviderMessageMailbox {
       let modified = try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
       // Covers caller death, missing leases and replies published just before
       // cancellation. Never expire a dedup key before its request deadline.
-      if modified == nil || now - modified!.timeIntervalSince1970 > 30 {
+      guard let modified else {
+        try? fm.removeItem(at: file)
+        continue
+      }
+      let age = now - modified.timeIntervalSince1970
+      if age > 75 {
         try? fm.removeItem(at: file)
       }
     }

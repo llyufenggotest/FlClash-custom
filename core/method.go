@@ -10,6 +10,11 @@ import (
 	"github.com/metacubex/mihomo/component/age"
 )
 
+type ProfileSwitchProbeBarrierParams struct {
+	Token     string `json:"token"`
+	Suspended bool   `json:"suspended"`
+}
+
 type MethodCall struct {
 	ID        string          `json:"id,omitempty"`
 	Method    CoreMethod      `json:"method"`
@@ -247,6 +252,9 @@ var methodHandlers = map[CoreMethod]methodHandler{
 	cancelDelayTestsMethod: withoutArguments(func(response MethodResponse) {
 		cancelDelayTests()
 		response.success(true)
+	}),
+	setProfileSwitchProbeBarrierMethod: withArguments(func(params *ProfileSwitchProbeBarrierParams, response MethodResponse) {
+		response.success(setProfileSwitchProbeBarrier(params.Token, params.Suspended))
 	}),
 	getConnectionsMethod: withoutArguments(func(response MethodResponse) {
 		response.success(handleGetConnections())

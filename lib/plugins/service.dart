@@ -70,6 +70,18 @@ class Service {
     return await methodChannel.invokeMethod<bool>('cancelDelayTests') ?? false;
   }
 
+  Future<bool> setProfileSwitchProbeBarrier({
+    required String token,
+    required bool suspended,
+  }) async {
+    if (!system.isIOS) return true;
+    return await methodChannel.invokeMethod<bool>(
+          'setProfileSwitchProbeBarrier',
+          {'token': token, 'suspended': suspended},
+        ) ??
+        false;
+  }
+
   Future<bool> start(SharedState state) async {
     return await methodChannel.invokeMethod<bool>(
           'start',

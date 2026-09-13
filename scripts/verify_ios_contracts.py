@@ -467,10 +467,13 @@ check(
     present=[
         'private let maxInFlightProviderMessages = 8',
         'private var inFlightProviderMessages = 0',
-        'func acquireProviderMessageSlot() async',
-        'func releaseProviderMessageSlot()',
-        'await acquireProviderMessageSlot()',
-        'defer { releaseProviderMessageSlot() }',
+        'func acquireProviderMessageSlot(lane: ProviderMessageLane) async',
+        'func releaseProviderMessageSlot(lane: ProviderMessageLane)',
+        'await acquireProviderMessageSlot(lane: lane)',
+        'defer { releaseProviderMessageSlot(lane: lane) }',
+        'private let maxInFlightInterruptMessages = 1',
+        'private let maxInFlightConfigurationMessages = 1',
+        'mailboxOnlySession',
         # Admission control is meant to make this budget hold, not be swapped
         # for a longer one.
         'providerMessageTimeout: TimeInterval = 8',

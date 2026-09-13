@@ -39,7 +39,8 @@ class IOSProfileSwitchRuntimeContract(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn('method == "cancelDelayTests"', mailbox)
-        self.assertIn('outstanding < maxOutstanding + 1', mailbox)
+        self.assertIn('interruptOutstanding < 1', mailbox)
+        self.assertIn('configurationOutstanding < 1', mailbox)
         cancel_block = service.split('case "cancelDelayTests":', 1)[1].split(
             'case "start":', 1
         )[0]

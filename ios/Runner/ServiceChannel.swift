@@ -163,6 +163,23 @@ final class ServiceChannel {
         log("cancelDelayTests cancelled=\(cancelledCount)")
         result(true)
       }
+    case "setProfileSwitchProbeBarrier":
+      guard let arguments = call.arguments as? [String: Any],
+        let token = arguments["token"] as? String,
+        !token.isEmpty,
+        token.count <= 96,
+        let suspended = arguments["suspended"] as? Bool else {
+        result(false)
+        return
+      }
+      Task {
+        let success = await coreMessageRouter.setProfileSwitchProbeBarrier(
+          token: token,
+          suspended: suspended
+        )
+        log("setProfileSwitchProbeBarrier token=\(token) suspended=\(suspended) success=\(success)")
+        result(success)
+      }
     case "start":
       guard saveSharedState(call) else {
         result(false)

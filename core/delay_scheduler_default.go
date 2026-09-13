@@ -50,6 +50,11 @@ func scheduleDelayTest(
 	rejected func(),
 	panicHandler func(any),
 ) {
+	epoch, blocked := profileSwitchProbeAdmissionSnapshot()
+	if blocked {
+		rejected()
+		return
+	}
 	generationContext, generation := manualProbeSnapshot()
 	go func() {
 		defer func() {
@@ -64,7 +69,9 @@ func scheduleDelayTest(
 			rejected()
 			return
 		}
-		if generationContext.Err() != nil || !manualProbeGenerationCurrent(generation) {
+		if generationContext.Err() != nil ||
+			!manualProbeGenerationCurrent(generation) ||
+			!profileSwitchProbeAdmissionCurrent(epoch) {
 			rejected()
 			return
 		}
