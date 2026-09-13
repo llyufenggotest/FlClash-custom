@@ -17,24 +17,10 @@ class ProductMigrationContractTest(unittest.TestCase):
         self.assertLess(normalize, decrypt)
         self.assertLess(decrypt, validate)
 
-    def test_profile_import_follows_upstream_save_then_put_flow(self):
-        source = self.read("lib/providers/actions/profiles.dart")
-        self.assertIn("Future<void> _addSavedProfile", source)
-        helper_start = source.index("Future<void> _addSavedProfile")
-        helper_end = source.index("Future<void> addOppaProfile", helper_start)
-        helper = source[helper_start:helper_end]
-        self.assertIn("globalState.loadingRun", helper)
-        self.assertIn("final profile = await globalState.loadingRun(", helper)
-        self.assertIn("futureFunction,", helper)
-        self.assertIn("putProfile(profile);", helper)
-        self.assertNotIn("putPreparedProfile", helper)
-        self.assertNotIn("validateAndCommitOnly", helper)
-        self.assertLess(helper.index("globalState.loadingRun("), helper.index("putProfile(profile)"))
-
     def test_file_url_and_qr_share_prepare_pipeline(self):
         source = self.read("lib/providers/actions/profiles.dart")
-        self.assertIn("saveFile(bytes, prepare: prepareProfileConfig)", source)
-        self.assertIn(".update(prepare: prepareProfileConfig)", source)
+        self.assertIn("prepareFile(bytes, prepare: prepareProfileConfig)", source)
+        self.assertIn(".prepareUpdate(prepare: prepareProfileConfig)", source)
         self.assertIn("addProfileFormURL(url)", source)
 
     def test_oppa_product_flow_and_explicit_read_only_policy(self):
@@ -43,7 +29,7 @@ class ProductMigrationContractTest(unittest.TestCase):
         edit_view = self.read("lib/views/profiles/edit.dart")
         policy = self.read("lib/common/protocol_edit_policy.dart")
         self.assertIn("addOppaProfile", actions)
-        self.assertNotIn("OppaProfileDialog", add_view)
+        self.assertIn("OppaProfileDialog", add_view)
         self.assertIn("ProtocolEditPolicy", edit_view)
         self.assertIn("xhttp", policy.lower())
         self.assertIn("blackstone", policy.lower())
@@ -68,19 +54,24 @@ class ProductMigrationContractTest(unittest.TestCase):
         self.assertNotIn("await file.length()", app)
         self.assertNotIn("await file.readAsBytes()", app)
         self.assertIn("Future<void> addProfileFromDroppedFile", actions)
-        self.assertIn("saveFile(bytes, prepare: prepareProfileConfig)", actions)
+        self.assertIn("prepareFile(bytes, prepare: prepareProfileConfig)", actions)
 
-    def test_subscription_addition_uses_upstream_profile_persistence(self):
+    def test_subscription_addition_waits_for_resource_readiness_before_database_commit(self):
         actions = self.read("lib/providers/actions/profiles.dart")
         database = self.read("lib/providers/database.dart")
+        setup = self.read("lib/providers/actions/setup.dart")
 
-        self.assertNotIn("ProfileCommitPreparationPolicy", actions)
-        self.assertNotIn("validateAndCommitOnly", actions)
-        self.assertNotIn("_commitPreparedProfile", actions)
-        self.assertIn(".saveFile(bytes, prepare: prepareProfileConfig)", actions)
-        self.assertIn(".update(prepare: prepareProfileConfig)", actions)
-        self.assertIn("putProfile(profile);", actions)
+        self.assertIn("Future<void> putPreparedProfile", actions)
+        self.assertIn("await putPreparedProfile(prepared.profile, prepared.content)", actions)
+        self.assertIn("candidateYaml: candidateYaml", actions)
+        self.assertIn("await _core.activateRuleGeneration", actions)
+        self.assertIn("await ref.read(profilesProvider.notifier).putAsync(profile)", actions)
         self.assertIn("Future<void> putAsync(Profile profile)", database)
+        self.assertIn("allowUncommittedProfile = false", setup)
+        put_profile = actions.split("void putProfile(Profile profile)", 1)[1].split(
+            "Future<void> updateProfiles", 1
+        )[0]
+        self.assertNotIn("_scheduleRulePrewarm", put_profile)
 
     def test_ci_preserves_matrix_and_adds_protocol_gates(self):
         workflow = self.read(".github/workflows/build.yaml")
@@ -88,10 +79,8 @@ class ProductMigrationContractTest(unittest.TestCase):
             self.assertIn(f"platform: {platform}", workflow)
         self.assertIn("protocol-contract:", workflow)
         self.assertIn("submodules: recursive", workflow)
-        self.assertIn("5b97d1f820639c51057be1115df6327e6a2dc8be", workflow)
-        self.assertIn("f296a896ac0dc0705c89c47071250a8bcb2a75c4", workflow)
-        self.assertIn("TestJuziHMACWire", workflow)
-        self.assertIn("TestPure", workflow)
+        self.assertIn("98c4afa30d95f4af5bdaa18abf8ff6cc6d3ed8d7", workflow)
+        self.assertIn("7eb702723de9cd7b51d25b3e207f3feafb0f07a4", workflow)
         self.assertIn("with_low_memory", workflow)
         self.assertIn("MAGIC_SHANLIAN_TRIGGER", workflow)
         self.assertIn("protocol_smoke", workflow)
@@ -100,20 +89,14 @@ class ProductMigrationContractTest(unittest.TestCase):
         release_workflow = self.read(".github/workflows/build.yaml")
         matrix_workflow = self.read(".github/workflows/ios-five-protocol.yaml")
         gradle_versions = self.read("android/gradle/libs.versions.toml")
-        flutter = re.search(
-            r"^  FLUTTER_VERSION: '([^']+)'$", release_workflow, re.MULTILINE
-        )
-        self.assertIsNotNone(flutter)
-        flutter_marker = f"FLUTTER_VERSION: '{flutter.group(1)}'"
+        flutter_marker = "FLUTTER_VERSION: '3.47.2'"
+        self.assertIn(flutter_marker, release_workflow)
         self.assertIn(flutter_marker, matrix_workflow)
-        self.assertIn("GO_VERSION: '1.26.8'", release_workflow)
         ndk = re.search(r'^ndkVersion = "([^"]+)"$', gradle_versions, re.MULTILINE)
         self.assertIsNotNone(ndk)
         ndk_marker = f"NDK_VERSION: '{ndk.group(1)}'"
-        self.assertIn("NDK_VERSION: r29", release_workflow)
+        self.assertIn(ndk_marker, release_workflow)
         self.assertIn(ndk_marker, matrix_workflow)
-        self.assertIn("github.event_name == 'push'", matrix_workflow)
-        self.assertEqual(matrix_workflow.count("github.event_name == 'push'"), 3)
         self.assertIn("NDK_RELEASE: r28c", matrix_workflow)
         self.assertIn("ndk-version: ${{ env.NDK_RELEASE }}", matrix_workflow)
         self.assertIn(

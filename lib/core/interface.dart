@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:fl_clash/common/common.dart';
+import 'package:fl_clash/core/rule_generation_preparation.dart';
 import 'package:fl_clash/models/models.dart';
 
 import 'desktop/model.dart';

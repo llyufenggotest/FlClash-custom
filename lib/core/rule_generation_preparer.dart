@@ -6,6 +6,7 @@ import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/core/interface.dart';
+import 'package:fl_clash/core/rule_generation_preparation.dart';
 import 'package:path/path.dart' as p;
 import 'package:yaml/yaml.dart';
 
@@ -19,20 +20,6 @@ typedef RuleProviderDownload =
       int sizeLimit,
       String destinationPath,
     );
-
-class RuleGenerationPreparation {
-  final String fingerprint;
-  final String config;
-  final String generation;
-  final String configPath;
-
-  const RuleGenerationPreparation({
-    required this.fingerprint,
-    required this.config,
-    required this.generation,
-    required this.configPath,
-  });
-}
 
 class RuleGenerationPreparer {
   final CoreInterface core;
