@@ -12,6 +12,38 @@ import 'package:yaml/yaml.dart';
 
 const _defaultRuleProviderLimit = 32 * 1024 * 1024;
 const _classicalRuleLimit = 10000;
+const _providerDownloadConcurrency = 4;
+
+class _AsyncLimiter {
+  final int limit;
+  int _active = 0;
+  final List<Completer<void>> _waiters = [];
+
+  _AsyncLimiter(this.limit);
+
+  Future<T> run<T>(Future<T> Function() operation) async {
+    if (_active >= limit) {
+      final waiter = Completer<void>();
+      _waiters.add(waiter);
+      await waiter.future;
+    }
+    _active++;
+    try {
+      return await operation();
+    } finally {
+      _active--;
+      if (_waiters.isNotEmpty) {
+        _waiters.removeAt(0).complete();
+      }
+    }
+  }
+}
+
+final _providerPreparationLimiter = _AsyncLimiter(
+  _providerDownloadConcurrency,
+);
+final Map<String, Future<void>> _providerCacheFlights = {};
+int _cacheNonce = 0;
 
 typedef RuleProviderDownload =
     Future<RuleProviderFileDownload> Function(
@@ -25,13 +57,18 @@ class RuleGenerationPreparer {
   final CoreInterface core;
   final RuleProviderDownload _download;
   final Future<String> Function() _homeDir;
+  final void Function(RulePreparationProgress progress)? _onProgress;
+  int _activeProfileId = 0;
+  late final String _operationId = '${pid}_${DateTime.now().microsecondsSinceEpoch}';
 
   RuleGenerationPreparer({
     required this.core,
     RuleProviderDownload? download,
     Future<String> Function()? homeDir,
+    void Function(RulePreparationProgress progress)? onProgress,
   }) : _download = download ?? _downloadWithSharedRequest,
-       _homeDir = homeDir ?? (() => appPath.homeDirPath);
+       _homeDir = homeDir ?? (() => appPath.homeDirPath),
+       _onProgress = onProgress;
 
   Future<RuleGenerationPreparation?> findPrepared({
     required int profileId,
@@ -57,6 +94,7 @@ class RuleGenerationPreparer {
     required int profileId,
     required String config,
   }) async {
+    _activeProfileId = profileId;
     final fingerprint = _sha256String(config);
     final existing = await findPrepared(profileId: profileId, config: config);
     if (existing != null) return existing;
@@ -75,81 +113,191 @@ class RuleGenerationPreparer {
     await staging.create(recursive: true);
 
     try {
-      final preparedProxies = <_PreparedProxyProvider>[];
+      final limiter = _providerPreparationLimiter;
       final proxyProviders = _stringMap(document['proxy-providers']);
-      for (final entry in proxyProviders.entries) {
+      final proxyEntries = proxyProviders.entries.where((entry) {
         final definition = _stringMap(entry.value);
-        final type = definition['type']?.toString() ?? '';
-        if (type == 'inline') continue;
-        final stableId = _sha256String(entry.key);
-        final stagingRaw = p.join(staging.path, 'proxies', '$stableId.yaml');
-        final result = await core.prewarmProxyProvider(
-          name: entry.key,
-          definition: definition,
-          targetPath: stagingRaw,
-          timeoutMilliseconds: const Duration(seconds: 20).inMilliseconds,
-        );
-        final actualPath = result['path']?.toString();
-        final digest = result['digest']?.toString();
-        final count = result['count'];
-        if (actualPath == null ||
-            p.normalize(actualPath) != p.normalize(stagingRaw) ||
-            digest == null ||
-            digest.isEmpty ||
-            count is! num ||
-            count <= 0) {
-          throw StateError('proxy provider "${entry.key}" was not fully validated');
-        }
-        if (await _fileSHA256(actualPath) != digest.toLowerCase()) {
-          throw StateError('proxy provider "${entry.key}" digest mismatch');
-        }
-        preparedProxies.add(
-          _PreparedProxyProvider(entry.key, definition, actualPath, digest),
-        );
-      }
-
-      final prepared = <_PreparedProvider>[];
-      for (final entry in providers.entries) {
-        final definition = _stringMap(entry.value);
-        final type = definition['type']?.toString() ?? '';
-        if (type == 'inline') continue;
-        final behavior = definition['behavior']?.toString() ?? 'domain';
-        final stableId = _sha256String(entry.key);
-        final stagingRaw = p.join(staging.path, 'rules', '$stableId.raw');
-        final download = await _loadProvider(entry.key, definition, stagingRaw);
-        if (p.normalize(download.path) != p.normalize(stagingRaw)) {
-          throw StateError(
-            'rule provider "${entry.key}" wrote outside controlled staging',
+        return definition['type']?.toString() != 'inline';
+      }).toList();
+      final proxyResultsFuture = _mapWithLimit(proxyEntries, (entry) async {
+        return limiter.run(() async {
+          final definition = _stringMap(entry.value);
+          final stableId = _sha256String(entry.key);
+          final stagingRaw = p.join(
+            staging.path,
+            'proxies',
+            '$stableId.yaml',
           );
-        }
-        final actualDigest = await _fileSHA256(download.path);
-        if (actualDigest != download.sha256.toLowerCase()) {
-          throw StateError(
-            'rule provider "${entry.key}" download digest mismatch',
+          final cacheRoot = p.join(home, 'prewarm', 'cache');
+          _progress(
+            RulePreparationPhase.queued,
+            kind: 'proxy',
+            name: entry.key,
+            path: stagingRaw,
           );
-        }
-        if (behavior == 'classical') {
-          final info = await File(download.path).stat();
-          if (info.size > _defaultRuleProviderLimit) {
-            throw StateError('rule provider "${entry.key}" exceeds size-limit');
-          }
-          final count = await _classicalRuleCount(download.path, definition);
-          if (count > _classicalRuleLimit) {
-            throw StateError(
-              'rule provider "${entry.key}" exceeds classical rule limit of $_classicalRuleLimit ($count rules)',
+          final cached = await _readCachedProvider(
+            cacheRoot,
+            definition,
+            stagingRaw,
+            kind: 'proxy',
+          );
+          Map<String, dynamic> result;
+          if (cached != null) {
+            _progress(
+              RulePreparationPhase.cacheHit,
+              kind: 'proxy',
+              name: entry.key,
+              path: stagingRaw,
+            );
+            final cachedDefinition = <String, dynamic>{
+              ...definition,
+              'type': 'file',
+              'path': cached.path,
+            }
+              ..remove('url')
+              ..remove('interval');
+            result = await core.prewarmProxyProvider(
+              name: entry.key,
+              definition: cachedDefinition,
+              targetPath: stagingRaw,
+              timeoutMilliseconds: const Duration(seconds: 20).inMilliseconds,
+            );
+          } else {
+            _progress(
+              RulePreparationPhase.downloading,
+              kind: 'proxy',
+              name: entry.key,
+              path: stagingRaw,
+            );
+            result = await core.prewarmProxyProvider(
+              name: entry.key,
+              definition: definition,
+              targetPath: stagingRaw,
+              timeoutMilliseconds: const Duration(seconds: 20).inMilliseconds,
             );
           }
-        }
-        prepared.add(
-          _PreparedProvider(
+          final actualPath = result['path']?.toString();
+          final digest = result['digest']?.toString();
+          final count = result['count'];
+          if (actualPath == null ||
+              p.normalize(actualPath) != p.normalize(stagingRaw) ||
+              digest == null ||
+              digest.isEmpty ||
+              count is! num ||
+              count <= 0) {
+            throw StateError(
+              'proxy provider "${entry.key}" was not fully validated',
+            );
+          }
+          if (await _fileSHA256(actualPath) != digest.toLowerCase()) {
+            throw StateError('proxy provider "${entry.key}" digest mismatch');
+          }
+          if (cached == null) {
+            final info = await File(actualPath).stat();
+            await _writeCachedProvider(
+              cacheRoot,
+              definition,
+              RuleProviderFileDownload(
+                path: actualPath,
+                length: info.size,
+                sha256: digest,
+                headers: Headers(),
+              ),
+              kind: 'proxy',
+            );
+          }
+          _progress(
+            RulePreparationPhase.complete,
+            kind: 'proxy',
+            name: entry.key,
+            path: actualPath,
+          );
+          return _PreparedProxyProvider(
+            entry.key,
+            definition,
+            actualPath,
+            digest,
+          );
+        });
+      });
+
+      final ruleEntries = providers.entries.where((entry) {
+        final definition = _stringMap(entry.value);
+        return definition['type']?.toString() != 'inline';
+      }).toList();
+      final preparedResultsFuture = _mapWithLimit(ruleEntries, (entry) async {
+        return limiter.run(() async {
+          final definition = _stringMap(entry.value);
+          final behavior = definition['behavior']?.toString() ?? 'domain';
+          final stableId = _sha256String(entry.key);
+          final stagingRaw = p.join(staging.path, 'rules', '$stableId.raw');
+          _progress(
+            RulePreparationPhase.queued,
+            kind: 'rule',
+            name: entry.key,
+            path: stagingRaw,
+          );
+          _progress(
+            RulePreparationPhase.downloading,
+            kind: 'rule',
+            name: entry.key,
+            path: stagingRaw,
+          );
+          final download = await _loadProvider(
+            entry.key,
+            definition,
+            stagingRaw,
+            cacheRoot: p.join(home, 'prewarm', 'cache'),
+          );
+          if (p.normalize(download.path) != p.normalize(stagingRaw)) {
+            throw StateError(
+              'rule provider "${entry.key}" wrote outside controlled staging',
+            );
+          }
+          final actualDigest = await _fileSHA256(download.path);
+          if (actualDigest != download.sha256.toLowerCase()) {
+            throw StateError(
+              'rule provider "${entry.key}" download digest mismatch',
+            );
+          }
+          if (behavior == 'classical') {
+            final info = await File(download.path).stat();
+            if (info.size > _defaultRuleProviderLimit) {
+              throw StateError(
+                'rule provider "${entry.key}" exceeds size-limit',
+              );
+            }
+            final count = await _classicalRuleCount(
+              download.path,
+              definition,
+            );
+            if (count > _classicalRuleLimit) {
+              throw StateError(
+                'rule provider "${entry.key}" exceeds classical rule limit of $_classicalRuleLimit ($count rules)',
+              );
+            }
+          }
+          _progress(
+            RulePreparationPhase.complete,
+            kind: 'rule',
+            name: entry.key,
+            path: download.path,
+          );
+          return _PreparedProvider(
             entry.key,
             definition,
             download.path,
             download.sha256,
             compileMRS: behavior != 'classical',
-          ),
-        );
-      }
+          );
+        });
+      });
+      final settled = await _settleBoth(
+        proxyResultsFuture,
+        preparedResultsFuture,
+      );
+      final preparedProxies = settled.$1;
+      final prepared = settled.$2;
 
       final identity = jsonEncode({
         'version': 2,
@@ -182,10 +330,18 @@ class RuleGenerationPreparer {
         final finalRaw = p.join(finalRoot, 'rules', '$stableId.raw');
         Map<String, dynamic> artifact;
         if (provider.compileMRS) {
-          final result = await core.prewarmRuleProvider(
+          _progress(
+            RulePreparationPhase.compiling,
+            kind: 'rule',
             name: provider.name,
-            definition: provider.definition,
-            targetPath: stagingRaw,
+            path: stagingRaw,
+          );
+          final result = await limiter.run(
+            () => core.prewarmRuleProvider(
+              name: provider.name,
+              definition: provider.definition,
+              targetPath: stagingRaw,
+            ),
           );
           final stagingMRS = result['sidecar']?.toString() ?? '$stagingRaw.mrs';
           artifact = {
@@ -236,6 +392,26 @@ class RuleGenerationPreparer {
       final finalConfig = await encodeYamlTask(document);
       final stagingConfig = p.join(staging.path, 'config.yaml');
       await File(stagingConfig).writeAsString(finalConfig, flush: true);
+      _progress(
+        RulePreparationPhase.validating,
+        kind: 'generation',
+        name: generation,
+        path: stagingConfig,
+      );
+      final validation = await core.validateStagedConfigAtPath(
+        profileId: profileId,
+        stagingPath: staging.path,
+        candidateConfigPath: stagingConfig,
+      );
+      if (validation.isNotEmpty) {
+        throw StateError('candidate configuration is invalid: $validation');
+      }
+      _progress(
+        RulePreparationPhase.commit,
+        kind: 'generation',
+        name: generation,
+        path: stagingConfig,
+      );
       final published = await core.publishRuleGeneration(
         profileId: profileId,
         fingerprint: fingerprint,
@@ -248,23 +424,37 @@ class RuleGenerationPreparer {
       if (configPath == null || configPath.isEmpty) {
         throw StateError('core did not publish a rule generation config');
       }
+      _progress(
+        RulePreparationPhase.complete,
+        kind: 'generation',
+        name: generation,
+        path: configPath,
+      );
       return RuleGenerationPreparation(
         fingerprint: fingerprint,
         config: await File(configPath).readAsString(),
         generation: generation,
         configPath: configPath,
       );
-    } catch (_) {
+    } catch (error, stackTrace) {
+      _progress(
+        RulePreparationPhase.error,
+        kind: 'generation',
+        name: '$profileId',
+        path: staging.path,
+        error: error,
+      );
       if (await staging.exists()) await staging.delete(recursive: true);
-      rethrow;
+      Error.throwWithStackTrace(error, stackTrace);
     }
   }
 
   Future<RuleProviderFileDownload> _loadProvider(
     String name,
     Map<String, dynamic> definition,
-    String destinationPath,
-  ) async {
+    String destinationPath, {
+    required String cacheRoot,
+  }) async {
     final type = definition['type']?.toString();
     switch (type) {
       case 'http':
@@ -283,12 +473,28 @@ class RuleGenerationPreparer {
             'rule provider "$name" has an invalid HTTP URL',
           );
         }
-        return _download(
-          url,
-          _headers(definition['header']),
-          _sizeLimit(definition),
+        final cached = await _readCachedProvider(
+          cacheRoot,
+          definition,
           destinationPath,
         );
+        if (cached != null) return cached;
+        RuleProviderFileDownload downloaded;
+        try {
+          downloaded = await _download(
+            url,
+            _headers(definition['header']),
+            _sizeLimit(definition),
+            destinationPath,
+          );
+        } on Object catch (error) {
+          throw StateError(
+            'rule provider "$name" download failed: ${compactError(error)}',
+          );
+        }
+        final verified = await _verifyDownload(downloaded);
+        await _writeCachedProvider(cacheRoot, definition, verified);
+        return verified;
       case 'file':
         final path = definition['path']?.toString() ?? '';
         if (path.isEmpty || !p.isAbsolute(path)) {
@@ -334,6 +540,210 @@ class RuleGenerationPreparer {
     }
   }
 
+  Future<RuleProviderFileDownload> _verifyDownload(
+    RuleProviderFileDownload download,
+  ) async {
+    final digest = await _fileSHA256(download.path);
+    if (digest != download.sha256.toLowerCase()) {
+      throw StateError('download digest mismatch');
+    }
+    return download;
+  }
+
+  Future<RuleProviderFileDownload?> _readCachedProvider(
+    String root,
+    Map<String, dynamic> definition,
+    String destinationPath, {
+    String kind = 'rule',
+  }) async {
+    final identity = _providerIdentity(definition, kind: kind);
+    final metadata = File(p.join(root, '$identity.json'));
+    if (!await metadata.exists()) return null;
+    try {
+      final record = jsonDecode(await metadata.readAsString());
+      if (record is! Map || record['identity'] != identity) return null;
+      final cachedAt = DateTime.tryParse(record['cached-at']?.toString() ?? '');
+      final intervalSeconds = int.tryParse(
+        definition['interval']?.toString() ?? '',
+      ) ?? 86400;
+      if (cachedAt == null ||
+          intervalSeconds <= 0 ||
+          DateTime.now().difference(cachedAt) >= Duration(seconds: intervalSeconds)) {
+        return null;
+      }
+      final digest = record['sha256']?.toString().toLowerCase();
+      if (digest == null || digest.length != 64) return null;
+      final source = File(p.join(root, '$digest.raw'));
+      final info = await source.stat();
+      if (info.type != FileSystemEntityType.file ||
+          info.size > _sizeLimit(definition) ||
+          await _fileSHA256(source.path) != digest) {
+        return null;
+      }
+      await File(destinationPath).parent.create(recursive: true);
+      final temporaryDestination = File(
+        '${destinationPath}.tmp.$pid.${DateTime.now().microsecondsSinceEpoch}.${_cacheNonce++}',
+      );
+      try {
+        await source.copy(temporaryDestination.path);
+        if (await _fileSHA256(temporaryDestination.path) != digest) {
+          return null;
+        }
+        if (await File(destinationPath).exists()) {
+          await File(destinationPath).delete();
+        }
+        await temporaryDestination.rename(destinationPath);
+      } finally {
+        if (await temporaryDestination.exists()) {
+          await temporaryDestination.delete();
+        }
+      }
+      return RuleProviderFileDownload(
+        path: destinationPath,
+        length: info.size,
+        sha256: digest,
+        headers: Headers(),
+      );
+    } on Object {
+      return null;
+    }
+  }
+
+  Future<void> _writeCachedProvider(
+    String root,
+    Map<String, dynamic> definition,
+    RuleProviderFileDownload download, {
+    String kind = 'rule',
+  }) async {
+    final directory = Directory(root);
+    await directory.create(recursive: true);
+    final digest = download.sha256.toLowerCase();
+    final identity = _providerIdentity(definition, kind: kind);
+    final flightKey = '$root|$identity';
+    final existingFlight = _providerCacheFlights[flightKey];
+    if (existingFlight != null) {
+      await existingFlight;
+      return;
+    }
+    final completer = Completer<void>();
+    _providerCacheFlights[flightKey] = completer.future;
+    try {
+      final source = File(p.join(root, '$digest.raw'));
+      final sourceValid = await source.exists() &&
+          await _fileSHA256(source.path) == digest;
+      if (!sourceValid) {
+        if (await source.exists()) await source.delete();
+        final temporarySource = File(
+          '${source.path}.tmp.$pid.${DateTime.now().microsecondsSinceEpoch}.${_cacheNonce++}',
+        );
+        try {
+          await File(download.path).copy(temporarySource.path);
+          if (await _fileSHA256(temporarySource.path) != digest) {
+            throw StateError('cache blob digest mismatch');
+          }
+          await temporarySource.rename(source.path);
+        } finally {
+          if (await temporarySource.exists()) await temporarySource.delete();
+        }
+      }
+      final metadata = File(p.join(root, '$identity.json'));
+      final temporary = File(
+        '${metadata.path}.tmp.$pid.${DateTime.now().microsecondsSinceEpoch}.${_cacheNonce++}',
+      );
+      try {
+        await temporary.writeAsString(
+          jsonEncode({
+            'identity': identity,
+            'sha256': digest,
+            'cached-at': DateTime.now().toUtc().toIso8601String(),
+          }),
+          flush: true,
+        );
+        if (await metadata.exists()) await metadata.delete();
+        await temporary.rename(metadata.path);
+      } finally {
+        if (await temporary.exists()) await temporary.delete();
+      }
+      completer.complete();
+    } catch (error, stack) {
+      if (!completer.isCompleted) completer.completeError(error, stack);
+      Error.throwWithStackTrace(error, stack);
+    } finally {
+      if (identical(_providerCacheFlights[flightKey], completer.future)) {
+        _providerCacheFlights.remove(flightKey);
+      }
+    }
+  }
+
+  String _providerIdentity(
+    Map<String, dynamic> definition, {
+    String kind = 'rule',
+  }) {
+    final headers = _headers(definition['header']).entries.toList()
+      ..sort((left, right) => left.key.compareTo(right.key));
+    return _sha256String(
+      jsonEncode({
+        'version': 1,
+        'kind': kind,
+        'type': definition['type']?.toString() ?? '',
+        'path': definition['path']?.toString() ?? '',
+        'url': definition['url']?.toString() ?? '',
+        'header-sha256': _sha256String(
+          jsonEncode({for (final entry in headers) entry.key: entry.value}),
+        ),
+        'behavior': definition['behavior']?.toString() ?? 'domain',
+        'format': definition['format']?.toString() ?? 'yaml',
+        'size-limit': _sizeLimit(definition),
+        'compiler': 'MRS-SC02',
+      }),
+    );
+  }
+
+  Future<List<T>> _mapWithLimit<T, E>(
+    List<E> items,
+    Future<T> Function(E item) operation,
+  ) async {
+    if (items.isEmpty) return <T>[];
+    final results = List<T?>.filled(items.length, null);
+    var next = 0;
+    Future<void> worker() async {
+      while (true) {
+        final index = next;
+        if (index >= items.length) return;
+        next = index + 1;
+        results[index] = await operation(items[index]);
+      }
+    }
+    final workers = List.generate(
+      items.length < _providerDownloadConcurrency
+          ? items.length
+          : _providerDownloadConcurrency,
+      (_) => worker(),
+    );
+    await Future.wait(workers);
+    return results.cast<T>();
+  }
+
+  void _progress(
+    RulePreparationPhase phase, {
+    required String kind,
+    required String name,
+    required String path,
+    Object? error,
+  }) {
+    _onProgress?.call(
+      RulePreparationProgress(
+        profileId: _activeProfileId,
+        operationId: _operationId,
+        phase: phase,
+        kind: kind,
+        name: name,
+        path: path,
+        error: error,
+      ),
+    );
+  }
+
   static Future<RuleProviderFileDownload> _downloadWithSharedRequest(
     String url,
     Map<String, String> headers,
@@ -347,6 +757,27 @@ class RuleGenerationPreparer {
       destinationPath: destinationPath,
     );
   }
+}
+
+Future<(A, B)> _settleBoth<A, B>(Future<A> first, Future<B> second) async {
+  A? firstValue;
+  B? secondValue;
+  Object? firstError;
+  StackTrace? firstStack;
+  await Future.wait<void>([
+    first.then<void>((value) => firstValue = value).catchError((Object error, StackTrace stack) {
+      firstError ??= error;
+      firstStack ??= stack;
+    }),
+    second.then<void>((value) => secondValue = value).catchError((Object error, StackTrace stack) {
+      firstError ??= error;
+      firstStack ??= stack;
+    }),
+  ]);
+  if (firstError != null) {
+    Error.throwWithStackTrace(firstError!, firstStack!);
+  }
+  return (firstValue as A, secondValue as B);
 }
 
 class _PreparedProxyProvider {

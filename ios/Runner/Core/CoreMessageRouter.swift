@@ -29,9 +29,13 @@ final class CoreCallbackResponse<Value>: @unchecked Sendable {
 
 private enum AppCoreMethod: String {
   case initClash
+  case prewarmProxyProvider
   case prewarmRuleProvider
   case publishRuleGeneration
+  case activateRuleGeneration
+  case restoreRuleGeneration
   case getPreparedRuleGeneration
+  case validateStagedConfigAtPath
   case validateCandidateConfigAtPath
   case getIsInit
   case validateConfig
@@ -388,8 +392,12 @@ final class CoreMessageRouter {
       let isSetup = {
         let name = methodCallName(data)
         return name == ConfigurationCoreMethod.setupConfig.rawValue ||
+          name == AppCoreMethod.prewarmProxyProvider.rawValue ||
           name == AppCoreMethod.prewarmRuleProvider.rawValue ||
-          name == AppCoreMethod.publishRuleGeneration.rawValue
+          name == AppCoreMethod.publishRuleGeneration.rawValue ||
+          name == AppCoreMethod.activateRuleGeneration.rawValue ||
+          name == AppCoreMethod.restoreRuleGeneration.rawValue ||
+          name == AppCoreMethod.validateStagedConfigAtPath.rawValue
       }()
       guard !isSetup || !appSetupOutstanding else {
         throw CoreRoutingError(code: "app_core_busy", message: "iOS rule preparation is still running")

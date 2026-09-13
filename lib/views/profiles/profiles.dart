@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:fl_clash/common/common.dart';
+import 'package:fl_clash/core/rule_generation_preparation.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/providers.dart';
@@ -13,11 +14,29 @@ import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path/path.dart' as p;
 
 import 'add.dart';
 import 'edit.dart';
 import 'preview.dart';
 
+String _localizedPhase(AppLocalizations l10n, RulePreparationPhase phase) => switch (phase) {
+  RulePreparationPhase.queued => l10n.loading,
+  RulePreparationPhase.downloading => l10n.download,
+  RulePreparationPhase.cacheHit => l10n.resources,
+  RulePreparationPhase.validating => l10n.loading,
+  RulePreparationPhase.compiling => l10n.loading,
+  RulePreparationPhase.commit => l10n.loading,
+  RulePreparationPhase.complete => l10n.resources,
+  RulePreparationPhase.error => l10n.tip,
+};
+
+String _localizedKind(AppLocalizations l10n, String kind) => switch (kind) {
+  'proxy' => l10n.proxyProviders,
+  'rule' => l10n.rule,
+  'generation' => l10n.resources,
+  _ => l10n.resources,
+};
 class ProfilesView extends ConsumerStatefulWidget {
   const ProfilesView({super.key});
 
@@ -114,6 +133,10 @@ class _ProfilesViewState extends ConsumerState<ProfilesView> {
       builder: (_, ref, _) {
         final appLocalizations = context.appLocalizations;
         final isLoading = ref.watch(loadingProvider(LoadingTag.profiles));
+        final preparationProgress = ref.watch(rulePreparationProgressProvider);
+        final progress = preparationProgress.isEmpty
+            ? null
+            : preparationProgress.values.last;
         final state = ref.watch(profilesStateProvider);
         final spacing = 14.mAp;
         return CommonScaffold(
@@ -121,17 +144,54 @@ class _ProfilesViewState extends ConsumerState<ProfilesView> {
           title: appLocalizations.profiles,
           floatingActionButton: _buildFAB(),
           actions: _buildActions(state.profiles),
-          body: NullStatusSwitcher(
-            isEmpty: state.profiles.isEmpty,
-            nullStatus: NullStatus(
-              label: appLocalizations.nullProfileDesc,
-              illustration: NullStatusIllustration.profile,
-            ),
-            child: _ProfilesGrid(
-              profiles: state.profiles,
-              currentProfileId: state.currentProfileId,
-              spacing: spacing,
-            ),
+          body: Column(
+            children: [
+              if (progress != null)
+                              Semantics(
+                  liveRegion: true,
+                  child: Material(
+                    color: context.colorScheme.secondaryContainer,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 10,
+                      ),
+                      child: Row(
+                        children: [
+                          const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              '${appLocalizations.rulePreparationProgress}: '
+                              '${_localizedPhase(appLocalizations, progress!.phase)} · '
+                              '${_localizedKind(appLocalizations, progress.kind)}/${progress.name} · '
+                              '${p.basename(progress.path)}',
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              Expanded(
+                child: NullStatusSwitcher(
+                  isEmpty: state.profiles.isEmpty,
+                  nullStatus: NullStatus(
+                    label: appLocalizations.nullProfileDesc,
+                    illustration: NullStatusIllustration.profile,
+                  ),
+                  child: _ProfilesGrid(
+                    profiles: state.profiles,
+                    currentProfileId: state.currentProfileId,
+                    spacing: spacing,
+                  ),
+                ),
+              ),
+            ],
           ),
         );
       },

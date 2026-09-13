@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/core/controller.dart';
 import 'package:fl_clash/core/interface.dart';
+import 'package:fl_clash/core/rule_generation_preparation.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/l10n/l10n.dart';
 import 'package:fl_clash/models/models.dart';
@@ -125,6 +126,7 @@ class TestSetupAction extends SetupAction {
     bool silence = false,
     bool force = false,
     bool profileSwitched = false,
+    bool allowRuleGenerationPreparation = false,
     bool Function()? activationGuard,
     Future<void> Function()? preloadInvoke,
   }) async {
@@ -173,6 +175,25 @@ void main() {
   void markInitialized() {
     container.read(initProvider.notifier).value = true;
   }
+
+  group('rule preparation progress provider', () {
+    test('publishes and clears the latest per-resource event', () {
+      const progress = RulePreparationProgress(
+        phase: RulePreparationPhase.downloading,
+        kind: 'rule-provider',
+        name: 'ads',
+        path: '/rules/ads.yaml',
+      );
+
+      container
+          .read(rulePreparationProgressProvider.notifier)
+          .update(progress);
+      expect(container.read(rulePreparationProgressProvider), same(progress));
+
+      container.read(rulePreparationProgressProvider.notifier).clear();
+      expect(container.read(rulePreparationProgressProvider), isNull);
+    });
+  });
 
   group('setRunning gating', () {
     test('ignores a start request before initialization completes', () async {

@@ -373,11 +373,27 @@ class SetupAction extends _$SetupAction {
     if (!requiresPreparation) {
       return null;
     }
-    final preparation = await _core.prepareRuleGeneration(
-      config: rendered.yaml,
-      profileId: profile.id,
-    );
-    return preparation;
+    RulePreparationProgress? lastProgress;
+    try {
+      final preparation = await _core.prepareRuleGeneration(
+        config: rendered.yaml,
+        profileId: profile.id,
+        onProgress: (progress) {
+          lastProgress = progress;
+          ref
+              .read(rulePreparationProgressProvider.notifier)
+              .update(progress);
+        },
+      );
+      return preparation;
+    } finally {
+      final progress = lastProgress;
+      if (progress != null) {
+        ref
+            .read(rulePreparationProgressProvider.notifier)
+            .clear(key: progress.key);
+      }
+    }
   }
 
   // False means building the profile, the config write, or the Core setup
@@ -388,6 +404,7 @@ class SetupAction extends _$SetupAction {
     bool silence = false,
     bool force = false,
     bool profileSwitched = false,
+    bool allowRuleGenerationPreparation = false,
     bool Function()? activationGuard,
     Future<void> Function()? preloadInvoke,
   }) async {
@@ -395,6 +412,7 @@ class SetupAction extends _$SetupAction {
       force: force,
       silence: silence,
       profileSwitched: profileSwitched,
+      allowRuleGenerationPreparation: allowRuleGenerationPreparation,
       activationGuard: activationGuard,
       preloadInvoke: preloadInvoke,
     );
@@ -405,6 +423,7 @@ class SetupAction extends _$SetupAction {
     bool silence = false,
     bool force = false,
     bool profileSwitched = false,
+    bool allowRuleGenerationPreparation = false,
     bool Function()? activationGuard,
     Future<void> Function()? preloadInvoke,
   }) async {
@@ -424,6 +443,7 @@ class SetupAction extends _$SetupAction {
         force: force,
         silence: silence,
         profileSwitched: profileSwitched,
+        allowRuleGenerationPreparation: allowRuleGenerationPreparation,
         activationGuard: activationGuard,
         preloadInvoke: preloadInvoke,
         onUpdated: () async {
@@ -619,6 +639,7 @@ class SetupAction extends _$SetupAction {
     bool force = false,
     bool silence = false,
     bool profileSwitched = false,
+    bool allowRuleGenerationPreparation = false,
     bool Function()? activationGuard,
     Future<void> Function()? preloadInvoke,
     FutureOr Function()? onUpdated,
@@ -699,6 +720,16 @@ class SetupAction extends _$SetupAction {
           if (profileId != null) {
             await appPath.ensureProviderDirs(profileId);
           }
+          final parsedSetupConfig = loadYaml(yamlString);
+          bool hasExternalProvider(Object? providers) =>
+              providers is YamlMap &&
+              providers.values.any(
+                (value) => value is YamlMap && value['type'] != 'inline',
+              );
+          final requiresCommittedGeneration =
+              parsedSetupConfig is YamlMap &&
+              (hasExternalProvider(parsedSetupConfig['rule-providers']) ||
+                  hasExternalProvider(parsedSetupConfig['proxy-providers']));
           if (activationGuard != null && !activationGuard()) {
             commonPrint.log('dropping stale setup after provider directory preparation');
             setupStale = true;
@@ -783,8 +814,9 @@ class SetupAction extends _$SetupAction {
 
           final message = await coreController.setupConfig(
             params: _setupParams,
-            preparationConfig: system.isIOS ? yamlString : null,
-            preparationProfileId: system.isIOS ? profileId : null,
+            preparationConfig: requiresCommittedGeneration ? yamlString : null,
+            preparationProfileId: requiresCommittedGeneration ? profileId : null,
+            allowRuleGenerationPreparation: allowRuleGenerationPreparation,
             preloadInvoke: system.isIOS ? commitAndActivate : preloadInvoke,
           );
           if (message.isNotEmpty) {

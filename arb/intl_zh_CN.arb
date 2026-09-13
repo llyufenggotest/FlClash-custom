@@ -765,5 +765,6 @@
   "tailscaleNeedsMachineAuth": "需要批准设备",
   "networking": "组网",
   "networkingDesc": "查看点对点组网状态",
-  "networkingNoOutbounds": "当前配置中没有点对点组网出站"
+  "networkingNoOutbounds": "当前配置中没有点对点组网出站",
+  "rulePreparationProgress": "正在准备规则资源"
 }

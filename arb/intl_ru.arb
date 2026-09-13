@@ -765,5 +765,6 @@
   "tailscaleNeedsMachineAuth": "Требуется одобрение устройства",
   "networking": "Оверлейные сети",
   "networkingDesc": "Просмотр состояния P2P-сетей",
-  "networkingNoOutbounds": "В текущей конфигурации нет исходящих P2P-подключений"
+  "networkingNoOutbounds": "В текущей конфигурации нет исходящих P2P-подключений",
+  "rulePreparationProgress": "Подготовка ресурсов правил"
 }

@@ -36,3 +36,35 @@ part 'actions/profiles.dart';
 part 'actions/geo_resource.dart';
 part 'actions/updating.dart';
 part 'generated/action.g.dart';
+
+/// Latest per-resource preparation event shown on the Profiles page.
+/// A manual provider keeps this transient UI state independent of generated
+/// action providers and is cleared by every operation in a finally block.
+class RulePreparationProgressNotifier
+    extends Notifier<Map<String, RulePreparationProgress>> {
+  @override
+  Map<String, RulePreparationProgress> build() => const {};
+
+  void update(RulePreparationProgress progress) {
+    state = {...state, progress.key: progress};
+  }
+
+  void clear({String? key, int? profileId}) {
+    if (key == null && profileId == null) {
+      state = {};
+      return;
+    }
+    final next = {...state};
+    if (key != null) next.remove(key);
+    if (profileId != null) {
+      next.removeWhere((entryKey, value) => value.profileId == profileId);
+    }
+    state = next;
+  }
+}
+
+final rulePreparationProgressProvider =
+    NotifierProvider<RulePreparationProgressNotifier,
+        Map<String, RulePreparationProgress>>(
+      RulePreparationProgressNotifier.new,
+    );

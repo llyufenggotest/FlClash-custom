@@ -82,6 +82,12 @@ mixin CoreInterface {
     required String fingerprint,
   });
 
+  Future<String> validateStagedConfigAtPath({
+    required int profileId,
+    required String stagingPath,
+    required String candidateConfigPath,
+  });
+
   Future<String> validateCandidateConfigAtPath(String candidateConfigPath);
 
   Future<String> setupConfig(SetupParams setupParams);
@@ -390,6 +396,23 @@ abstract class CoreHandlerInterface with CoreInterface {
           arguments: {'profile-id': profileId, 'fingerprint': fingerprint},
         ) ??
         {};
+  }
+
+  @override
+  Future<String> validateStagedConfigAtPath({
+    required int profileId,
+    required String stagingPath,
+    required String candidateConfigPath,
+  }) async {
+    return await _invokeMethod<String>(
+          method: CoreMethod.validateStagedConfigAtPath,
+          arguments: {
+            'profile-id': profileId,
+            'staging-path': stagingPath,
+            'candidate-config-path': candidateConfigPath,
+          },
+        ) ??
+        '';
   }
 
   @override

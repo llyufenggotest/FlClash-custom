@@ -833,6 +833,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "routes": MessageLookupByLibrary.simpleMessage("路由"),
     "ru": MessageLookupByLibrary.simpleMessage("俄语"),
     "rule": MessageLookupByLibrary.simpleMessage("规则"),
+    "rulePreparationProgress": MessageLookupByLibrary.simpleMessage(
+      "正在准备规则资源",
+    ),
     "ruleActionAndDesc": MessageLookupByLibrary.simpleMessage("逻辑规则 AND"),
     "ruleActionDomainDesc": MessageLookupByLibrary.simpleMessage("匹配完整域名"),
     "ruleActionDomainKeywordDesc": MessageLookupByLibrary.simpleMessage(

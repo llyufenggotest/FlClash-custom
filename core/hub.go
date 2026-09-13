@@ -188,6 +188,16 @@ func handleValidateCandidateConfig(params *ValidateCandidateConfigParams) string
 	return ""
 }
 
+func handleValidateStagedConfig(params *ValidateStagedConfigParams) string {
+	if !isInit.Load() {
+		return "not initialized"
+	}
+	if err := validateStagedConfigAtPath(params); err != nil {
+		return err.Error()
+	}
+	return ""
+}
+
 func handleValidateConfig(data string) string {
 	if _, err := config.UnmarshalRawConfig([]byte(data)); err != nil {
 		return err.Error()
