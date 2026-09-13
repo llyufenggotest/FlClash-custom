@@ -185,6 +185,12 @@ void main() {
       const params = SetupParams(selectedMap: {}, testUrl: 'http://x.com');
       const candidatePath = '/app-group/prewarm/7/generations/id/config.yaml';
       final events = <String>[];
+      when(
+        () => mock.activateRuleGeneration(
+          profileId: 7,
+          generation: 'generation',
+        ),
+      ).thenAnswer((_) async => {'config-path': candidatePath});
       when(() => mock.validateCandidateConfigAtPath(candidatePath)).thenAnswer((
         _,
       ) async {
@@ -242,11 +248,22 @@ void main() {
           .thenAnswer((_) async => {'config-path': path});
       when(() => mock.restoreRuleGeneration(profileId: 7, failedGeneration: 'g'))
           .thenAnswer((_) async => const {});
+      when(
+        () => mock.validateCandidateConfigAtPath(path),
+      ).thenAnswer((_) async => '');
       final result = await controller.setupConfig(
-        params: params, preparationConfig: 'rules: []', preparationProfileId: 7,
+        params: params,
+        preparationConfig: 'rules: []',
+        preparationProfileId: 7,
         prepareBeforePreload: true,
-        prepareRuleGenerationOverride: ({required config, required profileId}) async =>
-            const RuleGenerationPreparation(fingerprint: 'f', config: 'x', generation: 'g', configPath: path),
+        prepareRuleGenerationOverride:
+            ({required config, required profileId}) async =>
+                const RuleGenerationPreparation(
+                  fingerprint: 'f',
+                  config: 'x',
+                  generation: 'g',
+                  configPath: path,
+                ),
         preloadInvoke: () async => throw StateError('preload failed'),
       );
       expect(result, contains('preload failed'));
@@ -302,6 +319,13 @@ void main() {
       const candidatePath = '/app-group/prewarm/7/generations/id/config.yaml';
       final gate = Completer<void>();
       var prepareInvocations = 0;
+      when(
+        () => mock.activateRuleGeneration(
+          profileId: 7,
+          generation: 'generation',
+        ),
+      ).thenAnswer((_) async => {'config-path': candidatePath});
+      when(() => mock.setupConfig(params)).thenAnswer((_) async => '');
       when(
         () => mock.validateCandidateConfigAtPath(candidatePath),
       ).thenAnswer((_) async => '');

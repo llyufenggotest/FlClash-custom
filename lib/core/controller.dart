@@ -346,9 +346,9 @@ class CoreController {
     }
     try {
       await preloadInvoke?.call();
-    } on Object {
+    } on Object catch (error) {
       await restoreActivatedGeneration();
-      rethrow;
+      return error.toString();
     }
     return result;
   }
