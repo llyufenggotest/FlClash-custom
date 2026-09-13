@@ -88,6 +88,39 @@ class RuleGenerationPreparer {
     await staging.create(recursive: true);
 
     try {
+      final preparedProxies = <_PreparedProxyProvider>[];
+      final proxyProviders = _stringMap(document['proxy-providers']);
+      for (final entry in proxyProviders.entries) {
+        final definition = _stringMap(entry.value);
+        final type = definition['type']?.toString() ?? '';
+        if (type == 'inline') continue;
+        final stableId = _sha256String(entry.key);
+        final stagingRaw = p.join(staging.path, 'proxies', '$stableId.yaml');
+        final result = await core.prewarmProxyProvider(
+          name: entry.key,
+          definition: definition,
+          targetPath: stagingRaw,
+          timeoutMilliseconds: const Duration(seconds: 20).inMilliseconds,
+        );
+        final actualPath = result['path']?.toString();
+        final digest = result['digest']?.toString();
+        final count = result['count'];
+        if (actualPath == null ||
+            p.normalize(actualPath) != p.normalize(stagingRaw) ||
+            digest == null ||
+            digest.isEmpty ||
+            count is! num ||
+            count <= 0) {
+          throw StateError('proxy provider "${entry.key}" was not fully validated');
+        }
+        if (await _fileSHA256(actualPath) != digest.toLowerCase()) {
+          throw StateError('proxy provider "${entry.key}" digest mismatch');
+        }
+        preparedProxies.add(
+          _PreparedProxyProvider(entry.key, definition, actualPath, digest),
+        );
+      }
+
       final prepared = <_PreparedProvider>[];
       for (final entry in providers.entries) {
         final definition = _stringMap(entry.value);
@@ -136,6 +169,14 @@ class RuleGenerationPreparer {
         'compiler': 'MRS-SC02',
         'profile-id': profileId,
         'fingerprint': fingerprint,
+        'proxy-providers': [
+          for (final provider in preparedProxies)
+            {
+              'name': provider.name,
+              'definition': provider.definition,
+              'raw-sha256': provider.rawSha256,
+            },
+        ],
         'providers': [
           for (final provider in prepared)
             {
@@ -161,7 +202,7 @@ class RuleGenerationPreparer {
           );
           final stagingMRS = result['sidecar']?.toString() ?? '$stagingRaw.mrs';
           artifact = {
-            'name': provider.name,
+            'name': 'rule:${provider.name}',
             'raw-path': stagingRaw,
             'raw-sha256': provider.rawSha256,
             'mrs-path': stagingMRS,
@@ -169,7 +210,7 @@ class RuleGenerationPreparer {
           };
         } else {
           artifact = {
-            'name': provider.name,
+            'name': 'rule:${provider.name}',
             'raw-path': stagingRaw,
             'raw-sha256': provider.rawSha256,
           };
@@ -185,6 +226,25 @@ class RuleGenerationPreparer {
         providers[provider.name] = mapping;
         artifacts.add(artifact);
       }
+      for (final provider in preparedProxies) {
+        final stableId = _sha256String(provider.name);
+        final finalRaw = p.join(finalRoot, 'proxies', '$stableId.yaml');
+        final mapping = _stringMap(proxyProviders[provider.name]);
+        mapping
+          ..['type'] = 'file'
+          ..['path'] = finalRaw
+          ..remove('url')
+          ..remove('proxy')
+          ..remove('interval')
+          ..remove('size-limit');
+        proxyProviders[provider.name] = mapping;
+        artifacts.add({
+          'name': 'proxy:${provider.name}',
+          'raw-path': provider.rawPath,
+          'raw-sha256': provider.rawSha256,
+        });
+      }
+      document['proxy-providers'] = proxyProviders;
       document['rule-providers'] = providers;
       final finalConfig = await encodeYamlTask(document);
       final stagingConfig = p.join(staging.path, 'config.yaml');
@@ -300,6 +360,19 @@ class RuleGenerationPreparer {
       destinationPath: destinationPath,
     );
   }
+}
+
+class _PreparedProxyProvider {
+  final String name;
+  final Map<String, dynamic> definition;
+  final String rawPath;
+  final String rawSha256;
+  const _PreparedProxyProvider(
+    this.name,
+    this.definition,
+    this.rawPath,
+    this.rawSha256,
+  );
 }
 
 class _PreparedProvider {

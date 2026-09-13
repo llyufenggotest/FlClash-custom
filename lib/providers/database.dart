@@ -117,12 +117,16 @@ class Profiles extends _$Profiles {
     );
   }
 
-  void put(Profile profile) {
+  Future<void> putAsync(Profile profile) {
     final newProfile = state.optimizeLabel(profile);
-    _optimistic(
+    return _optimisticAsync(
       state.copyAndPut(newProfile, (item) => item.id == newProfile.id),
       () => database.profiles.put(newProfile.toCompanion()),
     );
+  }
+
+  void put(Profile profile) {
+    unawaited(putAsync(profile).catchError(_reportOptimisticFailure));
   }
 
   Future<void> del(int id) {

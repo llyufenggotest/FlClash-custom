@@ -54,6 +54,89 @@ func enableRuleGenerationTests(t *testing.T) {
 	t.Cleanup(func() { isInit.Store(old) })
 }
 
+func publishAndActivate(t *testing.T, params *PublishRuleGenerationParams) (RuleGenerationResult, error) {
+	t.Helper()
+	result, err := handlePublishRuleGeneration(params)
+	if err != nil {
+		return result, err
+	}
+	return handleActivateRuleGeneration(&ActivateRuleGenerationParams{ProfileID: params.ProfileID, Generation: params.Generation})
+}
+
+func TestRestoreRuleGenerationUsesCompareAndSwap(t *testing.T) {
+	enableRuleGenerationTests(t)
+	oldHome := C.Path.HomeDir()
+	C.SetHomeDir(t.TempDir())
+	t.Cleanup(func() { C.SetHomeDir(oldHome) })
+	fingerA := strings.Repeat("a", 64)
+	fingerB := strings.Repeat("b", 64)
+	genA := strings.Repeat("1", 64)
+	genB := strings.Repeat("2", 64)
+	a := stageGeneration(t, 13, fingerA, genA, "old")
+	if _, err := publishAndActivate(t, &a); err != nil {
+		t.Fatal(err)
+	}
+	b := stageGeneration(t, 13, fingerB, genB, "new")
+	if _, err := publishAndActivate(t, &b); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := handleRestoreRuleGeneration(&RestoreRuleGenerationParams{ProfileID: 13, FailedGeneration: genB})
+	if err != nil || restored.Generation != genA {
+		t.Fatalf("restore=%+v err=%v", restored, err)
+	}
+	pendingFingerprint := strings.Repeat("c", 64)
+	pending := strings.Repeat("3", 64)
+	pendingParams := stageGeneration(t, 13, pendingFingerprint, pending, "pending")
+	if _, err := handlePublishRuleGeneration(&pendingParams); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := handleRestoreRuleGeneration(&RestoreRuleGenerationParams{ProfileID: 13, FailedGeneration: pending}); err != nil {
+		t.Fatalf("pre-activation abort failed: %v", err)
+	}
+	manifest, err := readRuleGenerationManifest(filepath.Join(C.Path.HomeDir(), "prewarm", "13", "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Current != genA {
+		t.Fatalf("pre-activation abort changed current: %+v", manifest)
+	}
+	if _, ok := manifest.Entries[pending]; ok {
+		t.Fatal("pre-activation abort retained pending generation")
+	}
+
+	if _, err := handleRestoreRuleGeneration(&RestoreRuleGenerationParams{ProfileID: 13, FailedGeneration: genB}); err != nil {
+		t.Fatalf("idempotent restore failed: %v", err)
+	}
+}
+
+func TestPreparedGenerationIsNotDiscoverableOrConsumableUntilActivated(t *testing.T) {
+	enableRuleGenerationTests(t)
+	oldHome := C.Path.HomeDir()
+	C.SetHomeDir(t.TempDir())
+	t.Cleanup(func() { C.SetHomeDir(oldHome) })
+	fingerprint := strings.Repeat("e", 64)
+	generation := strings.Repeat("5", 64)
+	params := stageGeneration(t, 12, fingerprint, generation, "pending")
+	published, err := handlePublishRuleGeneration(&params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready, err := handleGetPreparedRuleGeneration(12, fingerprint)
+	if err != nil || ready.ConfigPath != "" {
+		t.Fatalf("pending generation leaked through prepared lookup: %+v %v", ready, err)
+	}
+	if err := validateCandidateConfigAtPath(published.ConfigPath); err == nil {
+		t.Fatal("pending generation was accepted as active candidate")
+	}
+	activated, err := handleActivateRuleGeneration(&ActivateRuleGenerationParams{ProfileID: 12, Generation: generation})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateCandidateConfigAtPath(activated.ConfigPath); err != nil {
+		t.Fatalf("activated generation rejected: %v", err)
+	}
+}
+
 func TestPublishRuleGenerationRetainsTwoImmutableReadyEntries(t *testing.T) {
 	enableRuleGenerationTests(t)
 	oldHome := C.Path.HomeDir()
@@ -65,12 +148,12 @@ func TestPublishRuleGenerationRetainsTwoImmutableReadyEntries(t *testing.T) {
 	genB := strings.Repeat("2", 64)
 
 	a := stageGeneration(t, 7, fingerA, genA, "raw-a")
-	resultA, err := handlePublishRuleGeneration(&a)
+	resultA, err := publishAndActivate(t, &a)
 	if err != nil {
 		t.Fatal(err)
 	}
 	b := stageGeneration(t, 7, fingerB, genB, "raw-b")
-	resultB, err := handlePublishRuleGeneration(&b)
+	resultB, err := publishAndActivate(t, &b)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,11 +181,11 @@ func TestPreparedRuleGenerationFallsBackToValidPreviousWithSameFingerprint(t *te
 	current := strings.Repeat("8", 64)
 
 	first := stageGeneration(t, 8, fingerprint, previous, "raw-previous")
-	if _, err := handlePublishRuleGeneration(&first); err != nil {
+	if _, err := publishAndActivate(t, &first); err != nil {
 		t.Fatal(err)
 	}
 	second := stageGeneration(t, 8, fingerprint, current, "raw-current")
-	if _, err := handlePublishRuleGeneration(&second); err != nil {
+	if _, err := publishAndActivate(t, &second); err != nil {
 		t.Fatal(err)
 	}
 	currentRaw := filepath.Join(C.Path.HomeDir(), "prewarm", "8", "generations", current, "rules", "ads.raw")
@@ -127,7 +210,7 @@ func TestPreparedRuleGenerationFailsClosedOnCorruptArtifact(t *testing.T) {
 	fingerprint := strings.Repeat("c", 64)
 	generation := strings.Repeat("3", 64)
 	params := stageGeneration(t, 9, fingerprint, generation, "raw")
-	if _, err := handlePublishRuleGeneration(&params); err != nil {
+	if _, err := publishAndActivate(t, &params); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(C.Path.HomeDir(), "prewarm", "9", "generations", generation, "rules", "ads.raw")
@@ -161,14 +244,14 @@ func TestPublishRuleGenerationRecoversAfterManifestFailure(t *testing.T) {
 		return nil
 	}
 	t.Cleanup(func() { ruleGenerationTestHook = nil })
-	if _, err := handlePublishRuleGeneration(&params); err == nil || !strings.Contains(err.Error(), "injected") {
+	if _, err := publishAndActivate(t, &params); err == nil || !strings.Contains(err.Error(), "injected") {
 		t.Fatalf("first publish error = %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(C.Path.HomeDir(), "prewarm", "11", "generations", generation)); err != nil {
 		t.Fatalf("generation was not durably published before injected failure: %v", err)
 	}
 
-	result, err := handlePublishRuleGeneration(&params)
+	result, err := publishAndActivate(t, &params)
 	if err != nil {
 		t.Fatalf("retry did not recover existing generation: %v", err)
 	}
@@ -179,7 +262,7 @@ func TestPublishRuleGenerationRecoversAfterManifestFailure(t *testing.T) {
 	if err != nil || ready.Generation != generation {
 		t.Fatalf("recovered generation not ready: %+v %v", ready, err)
 	}
-	if _, err := handlePublishRuleGeneration(&params); err != nil {
+	if _, err := publishAndActivate(t, &params); err != nil {
 		t.Fatalf("committed retry is not idempotent: %v", err)
 	}
 }
@@ -193,7 +276,7 @@ func TestPublishRuleGenerationGarbageCollectionFailureIsRetryable(t *testing.T) 
 	generations := []string{strings.Repeat("a", 64), strings.Repeat("b", 64), strings.Repeat("c", 64)}
 	for i := 0; i < 2; i++ {
 		params := stageGeneration(t, 30, fingerprint, generations[i], fmt.Sprintf("raw-%d", i))
-		if _, err := handlePublishRuleGeneration(&params); err != nil {
+		if _, err := publishAndActivate(t, &params); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -213,7 +296,7 @@ func TestPublishRuleGenerationGarbageCollectionFailureIsRetryable(t *testing.T) 
 	}
 	t.Cleanup(func() { ruleGenerationTestHook = nil })
 	third := stageGeneration(t, 30, fingerprint, generations[2], "raw-2")
-	if _, err := handlePublishRuleGeneration(&third); err != nil {
+	if _, err := publishAndActivate(t, &third); err != nil {
 		t.Fatalf("cleanup failure failed published generation: %v", err)
 	}
 	manifest, err := readRuleGenerationManifest(filepath.Join(C.Path.HomeDir(), "prewarm", "30", "manifest.json"))
@@ -225,7 +308,7 @@ func TestPublishRuleGenerationGarbageCollectionFailureIsRetryable(t *testing.T) 
 	}
 
 	ruleGenerationTestHook = nil
-	if _, err := handlePublishRuleGeneration(&third); err != nil {
+	if _, err := publishAndActivate(t, &third); err != nil {
 		t.Fatalf("retry publish failed: %v", err)
 	}
 	if _, err := os.Stat(obsolete); !os.IsNotExist(err) {
@@ -243,7 +326,7 @@ func TestPublishRuleGenerationGarbageCollectionBoundsOldDirectories(t *testing.T
 	for i := 1; i <= 8; i++ {
 		generation := fmt.Sprintf("%064x", i)
 		last = stageGeneration(t, 31, fingerprint, generation, fmt.Sprintf("raw-%d", i))
-		if _, err := handlePublishRuleGeneration(&last); err != nil {
+		if _, err := publishAndActivate(t, &last); err != nil {
 			t.Fatal(err)
 		}
 		manifest, err := readRuleGenerationManifest(filepath.Join(C.Path.HomeDir(), "prewarm", "31", "manifest.json"))
@@ -265,7 +348,7 @@ func TestPublishRuleGenerationGarbageCollectionBoundsOldDirectories(t *testing.T
 			}
 		}
 	}
-	if _, err := handlePublishRuleGeneration(&last); err != nil {
+	if _, err := publishAndActivate(t, &last); err != nil {
 		t.Fatal(err)
 	}
 	root := filepath.Join(C.Path.HomeDir(), "prewarm", "31", "generations")
@@ -329,7 +412,7 @@ func TestPublishRuleGenerationRejectsSymlinkComponents(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			p := stageGeneration(t, int64(20+i), fingerprint, generation, "raw-link")
 			tc.link(t, &p)
-			if _, err := handlePublishRuleGeneration(&p); err == nil {
+			if _, err := publishAndActivate(t, &p); err == nil {
 				t.Fatal("unsafe linked path was accepted")
 			}
 		})
@@ -348,7 +431,7 @@ func TestPublishRuleGenerationConfigDigestUsesExactBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := handlePublishRuleGeneration(&params); err != nil {
+	if _, err := publishAndActivate(t, &params); err != nil {
 		t.Fatal(err)
 	}
 	manifest, err := readRuleGenerationManifest(filepath.Join(C.Path.HomeDir(), "prewarm", "14", "manifest.json"))

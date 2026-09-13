@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -11,8 +12,38 @@ import 'clash_config.dart';
 part 'generated/profile.freezed.dart';
 part 'generated/profile.g.dart';
 
+typedef PreparedProfileContent = ({Profile profile, String content});
+
 typedef PrepareProfileConfig =
     Future<String> Function(String content, String? ageSecretKey);
+
+final Map<String, Future<void>> _profileCommitTails = {};
+final Map<String, int> _profileCommitOwners = {};
+var _nextProfileCommitOwner = 0;
+
+Future<bool> _commitProfileFile({
+  required File temporary,
+  required File target,
+  bool Function()? guard,
+}) async {
+  final previous = _profileCommitTails[target.path] ?? Future<void>.value();
+  final completer = Completer<void>();
+  final owner = ++_nextProfileCommitOwner;
+  _profileCommitTails[target.path] = completer.future;
+  _profileCommitOwners[target.path] = owner;
+  try {
+    await previous.catchError((_) {});
+    if (guard != null && !guard()) return false;
+    await temporary.rename(target.path);
+    return true;
+  } finally {
+    completer.complete();
+    if (_profileCommitOwners[target.path] == owner) {
+      _profileCommitTails.remove(target.path);
+      _profileCommitOwners.remove(target.path);
+    }
+  }
+}
 
 @freezed
 abstract class SubscriptionInfo with _$SubscriptionInfo {
@@ -163,13 +194,14 @@ extension ProfileExtension on Profile {
 
   Future<Profile?> checkAndUpdateAndCopy({
     required PrepareProfileConfig prepare,
+    bool Function()? commitGuard,
   }) async {
     final mFile = await _getFile(false);
     final isExists = await mFile.exists();
     if (isExists || url.isEmpty) {
       return null;
     }
-    return update(prepare: prepare);
+    return update(prepare: prepare, commitGuard: commitGuard);
   }
 
   Future<File> _getFile([bool autoCreate = true]) async {
@@ -186,8 +218,42 @@ extension ProfileExtension on Profile {
     return _getFile();
   }
 
-  Future<Profile> update({required PrepareProfileConfig prepare}) async {
+  Future<PreparedProfileContent> prepareUpdate({
+    required PrepareProfileConfig prepare,
+    bool Function()? commitGuard,
+  }) async {
     final response = await request.getFileResponseForUrl(url);
+    if (commitGuard != null && !commitGuard()) {
+      return (profile: this, content: '');
+    }
+    final disposition = response.headers.value('content-disposition');
+    final userinfo = response.headers.value('subscription-userinfo');
+    final content = await prepare(
+      utf8.decode(response.data ?? Uint8List.fromList([])),
+      ageSecretKey,
+    );
+    return (
+      profile: copyWith(
+        label: label.takeFirstValid([
+          getFileNameForDisposition(disposition),
+          getFileNameFromUrl(url),
+          id.toString(),
+        ]),
+        subscriptionInfo: SubscriptionInfo.formHString(userinfo),
+        lastUpdateDate: DateTime.now(),
+      ),
+      content: content,
+    );
+  }
+
+  Future<Profile> update({
+    required PrepareProfileConfig prepare,
+    bool Function()? commitGuard,
+  }) async {
+    final response = await request.getFileResponseForUrl(url);
+    if (commitGuard != null && !commitGuard()) {
+      return this;
+    }
     final disposition = response.headers.value('content-disposition');
     final userinfo = response.headers.value('subscription-userinfo');
     return copyWith(
@@ -197,20 +263,49 @@ extension ProfileExtension on Profile {
         id.toString(),
       ]),
       subscriptionInfo: SubscriptionInfo.formHString(userinfo),
-    ).saveFile(response.data ?? Uint8List.fromList([]), prepare: prepare);
+    ).saveFile(
+      response.data ?? Uint8List.fromList([]),
+      prepare: prepare,
+      commitGuard: commitGuard,
+    );
+  }
+
+  Future<PreparedProfileContent> prepareFile(
+    Uint8List bytes, {
+    required PrepareProfileConfig prepare,
+  }) async {
+    final content = await prepare(utf8.decode(bytes), ageSecretKey);
+    return (
+      profile: copyWith(lastUpdateDate: DateTime.now()),
+      content: content,
+    );
   }
 
   Future<Profile> saveFile(
     Uint8List bytes, {
     required PrepareProfileConfig prepare,
+    bool Function()? commitGuard,
   }) async {
     final content = await prepare(utf8.decode(bytes), ageSecretKey);
-    final path = await appPath.tempFilePath;
-    final tempFile = File(path);
-    await tempFile.safeWriteAsString(content);
-    final mFile = await file;
-    await tempFile.copy(mFile.path);
-    await tempFile.safeDelete();
+    if (commitGuard != null && !commitGuard()) {
+      return this;
+    }
+    final targetFile = await _getFile(false);
+    await targetFile.parent.create(recursive: true);
+    final tempFile = File(
+      '${targetFile.path}.tmp.$pid.${DateTime.now().microsecondsSinceEpoch}',
+    );
+    try {
+      await tempFile.writeAsString(content, flush: true);
+      final committed = await _commitProfileFile(
+        temporary: tempFile,
+        target: targetFile,
+        guard: commitGuard,
+      );
+      if (!committed) return this;
+    } finally {
+      await tempFile.safeDelete();
+    }
     return copyWith(lastUpdateDate: DateTime.now());
   }
 }

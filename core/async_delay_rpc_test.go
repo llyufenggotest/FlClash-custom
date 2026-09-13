@@ -1,4 +1,4 @@
-//go:build !(ios && with_low_memory)
+//go:build !cgo && !(ios && with_low_memory)
 
 package main
 

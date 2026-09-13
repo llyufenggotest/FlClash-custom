@@ -30,6 +30,16 @@ const (
 var ruleGenerationPublishLocks sync.Map
 var ruleGenerationTestHook func(string) error
 
+type RestoreRuleGenerationParams struct {
+	ProfileID        int64  `json:"profile-id"`
+	FailedGeneration string `json:"failed-generation"`
+}
+
+type ActivateRuleGenerationParams struct {
+	ProfileID  int64  `json:"profile-id"`
+	Generation string `json:"generation"`
+}
+
 type PublishRuleGenerationParams struct {
 	ProfileID   int64                    `json:"profile-id"`
 	Fingerprint string                   `json:"fingerprint"`
@@ -189,15 +199,10 @@ func handlePublishRuleGeneration(params *PublishRuleGenerationParams) (RuleGener
 	if old, err := readRuleGenerationManifest(manifestPath); err == nil {
 		manifest = old
 	}
-	oldCurrent := manifest.Current
 	manifest.Version = ruleGenerationManifestVersion
-	manifest.Current = params.Generation
-	if oldCurrent != "" && oldCurrent != params.Generation {
-		manifest.Previous = oldCurrent
-	}
 	manifest.Entries[params.Generation] = entry
 	for id := range manifest.Entries {
-		if id != manifest.Current && id != manifest.Previous {
+		if id != manifest.Current && id != manifest.Previous && id != params.Generation {
 			delete(manifest.Entries, id)
 		}
 	}
@@ -209,11 +214,100 @@ func handlePublishRuleGeneration(params *PublishRuleGenerationParams) (RuleGener
 	if err := writeRuleGenerationManifest(manifestPath, manifest); err != nil {
 		return RuleGenerationResult{}, err
 	}
-	// The manifest is authoritative after its atomic rename. Cleanup is best
-	// effort: failures must not roll back or obscure the published generation,
-	// and a later publish will retry the same unreferenced directories.
-	_ = garbageCollectRuleGenerations(generationsRoot, prewarmRoot, manifest)
 	return RuleGenerationResult{Generation: params.Generation, ConfigPath: entry.ConfigPath}, nil
+}
+
+func handleActivateRuleGeneration(params *ActivateRuleGenerationParams) (RuleGenerationResult, error) {
+	if !isInit.Load() || params.ProfileID <= 0 || !isSHA256(params.Generation) {
+		return RuleGenerationResult{}, errors.New("invalid rule generation activation")
+	}
+	prewarmRoot := rulePrewarmRoot()
+	profileRoot := filepath.Join(prewarmRoot, fmt.Sprint(params.ProfileID))
+	lockValue, _ := ruleGenerationPublishLocks.LoadOrStore(profileRoot, &sync.Mutex{})
+	lock := lockValue.(*sync.Mutex)
+	lock.Lock()
+	defer lock.Unlock()
+	manifestPath := filepath.Join(profileRoot, "manifest.json")
+	manifest, err := readRuleGenerationManifest(manifestPath)
+	if err != nil {
+		return RuleGenerationResult{}, err
+	}
+	entry, ok := manifest.Entries[params.Generation]
+	if !ok || entry.ProfileID != params.ProfileID {
+		return RuleGenerationResult{}, errors.New("prepared generation is missing")
+	}
+	if err := validateRuleGenerationEntry(params.Generation, entry); err != nil {
+		return RuleGenerationResult{}, err
+	}
+	oldCurrent := manifest.Current
+	manifest.Current = params.Generation
+	if oldCurrent != "" && oldCurrent != params.Generation {
+		manifest.Previous = oldCurrent
+	}
+	for id := range manifest.Entries {
+		if id != manifest.Current && id != manifest.Previous {
+			delete(manifest.Entries, id)
+		}
+	}
+	if err := writeRuleGenerationManifest(manifestPath, manifest); err != nil {
+		return RuleGenerationResult{}, err
+	}
+	_ = garbageCollectRuleGenerations(filepath.Join(profileRoot, "generations"), prewarmRoot, manifest)
+	return RuleGenerationResult{Generation: params.Generation, ConfigPath: entry.ConfigPath}, nil
+}
+
+func handleRestoreRuleGeneration(params *RestoreRuleGenerationParams) (RuleGenerationResult, error) {
+	if !isInit.Load() || params.ProfileID <= 0 || !isSHA256(params.FailedGeneration) {
+		return RuleGenerationResult{}, errors.New("invalid rule generation restore")
+	}
+	profileRoot := filepath.Join(rulePrewarmRoot(), fmt.Sprint(params.ProfileID))
+	lockValue, _ := ruleGenerationPublishLocks.LoadOrStore(profileRoot, &sync.Mutex{})
+	lock := lockValue.(*sync.Mutex)
+	lock.Lock()
+	defer lock.Unlock()
+	manifestPath := filepath.Join(profileRoot, "manifest.json")
+	manifest, err := readRuleGenerationManifest(manifestPath)
+	if err != nil {
+		return RuleGenerationResult{}, err
+	}
+	if manifest.Current != params.FailedGeneration {
+		if _, pending := manifest.Entries[params.FailedGeneration]; pending {
+			// Activation failed before advancing current. Dropping the unpublished
+			// prepared entry is a safe abort and lets the caller continue rolling
+			// back its profile file and database state.
+			delete(manifest.Entries, params.FailedGeneration)
+			if err := writeRuleGenerationManifest(manifestPath, manifest); err != nil {
+				return RuleGenerationResult{}, err
+			}
+			if manifest.Current == "" {
+				return RuleGenerationResult{}, nil
+			}
+			entry := manifest.Entries[manifest.Current]
+			return RuleGenerationResult{Generation: manifest.Current, ConfigPath: entry.ConfigPath}, nil
+		}
+		if manifest.Previous == "" {
+			if _, stillPresent := manifest.Entries[params.FailedGeneration]; !stillPresent {
+				if manifest.Current == "" {
+					return RuleGenerationResult{}, nil
+				}
+				entry := manifest.Entries[manifest.Current]
+				return RuleGenerationResult{Generation: manifest.Current, ConfigPath: entry.ConfigPath}, nil
+			}
+		}
+		return RuleGenerationResult{}, errors.New("generation restore compare-and-swap failed")
+	}
+	failed := manifest.Current
+	manifest.Current = manifest.Previous
+	manifest.Previous = ""
+	delete(manifest.Entries, failed)
+	if err := writeRuleGenerationManifest(manifestPath, manifest); err != nil {
+		return RuleGenerationResult{}, err
+	}
+	if manifest.Current == "" {
+		return RuleGenerationResult{}, nil
+	}
+	entry := manifest.Entries[manifest.Current]
+	return RuleGenerationResult{Generation: manifest.Current, ConfigPath: entry.ConfigPath}, nil
 }
 
 func garbageCollectRuleGenerations(root, trustedRoot string, manifest ruleGenerationManifest) error {
@@ -270,7 +364,7 @@ func handleGetPreparedRuleGeneration(profileID int64, fingerprint string) (RuleG
 	}
 	for _, id := range []string{manifest.Current, manifest.Previous} {
 		entry, ok := manifest.Entries[id]
-		if !ok || !strings.EqualFold(entry.Fingerprint, fingerprint) {
+		if !ok || entry.ProfileID != profileID || !strings.EqualFold(entry.Fingerprint, fingerprint) {
 			continue
 		}
 		if err := validateRuleGenerationEntry(id, entry); err != nil {
@@ -326,7 +420,7 @@ func readRuleGenerationManifest(path string) (ruleGenerationManifest, error) {
 	if err := json.Unmarshal(buf, &manifest); err != nil {
 		return ruleGenerationManifest{}, err
 	}
-	if manifest.Version != ruleGenerationManifestVersion || manifest.Entries == nil || len(manifest.Entries) > 2 {
+	if manifest.Version != ruleGenerationManifestVersion || manifest.Entries == nil || len(manifest.Entries) > 3 {
 		return ruleGenerationManifest{}, errors.New("invalid rule manifest")
 	}
 	for _, id := range []string{manifest.Current, manifest.Previous} {

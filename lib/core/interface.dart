@@ -25,6 +25,8 @@ mixin CoreInterface {
 
   Future<String> decryptAgeConfig(String data, String ageSecretKey);
 
+  Future<Map<String, dynamic>> parseProfileConfigData(String data);
+
   Future<Map<String, dynamic>> getProfileConfig(int profileId);
 
   Future<Map<String, String>> generateAgeKeyPair();
@@ -33,7 +35,21 @@ mixin CoreInterface {
 
   Future<Delay?> asyncTestDelay(String url, String proxyName);
 
+  Future<bool> cancelDelayTests();
+
+  Future<bool> setProfileSwitchProbeBarrier({
+    required String token,
+    required bool suspended,
+  });
+
   Future<String> updateConfig(UpdateParams updateParams);
+
+  Future<Map<String, dynamic>> prewarmProxyProvider({
+    required String name,
+    required Map<String, dynamic> definition,
+    required String targetPath,
+    required int timeoutMilliseconds,
+  });
 
   Future<Map<String, dynamic>> prewarmRuleProvider({
     required String name,
@@ -48,6 +64,16 @@ mixin CoreInterface {
     required String stagingPath,
     required String configPath,
     required List<Map<String, dynamic>> artifacts,
+  });
+
+  Future<Map<String, dynamic>> activateRuleGeneration({
+    required int profileId,
+    required String generation,
+  });
+
+  Future<Map<String, dynamic>> restoreRuleGeneration({
+    required int profileId,
+    required String failedGeneration,
   });
 
   Future<Map<String, dynamic>> getPreparedRuleGeneration({
@@ -222,6 +248,21 @@ abstract class CoreHandlerInterface with CoreInterface {
   }
 
   @override
+  Future<Map<String, dynamic>> parseProfileConfigData(String data) async {
+    final result = await _invokeMethod<Map<String, dynamic>>(
+      method: CoreMethod.parseProfileConfigData,
+      arguments: data,
+    );
+    if (result == null) {
+      throw const CoreMethodException(
+        code: 'empty_result',
+        message: 'Core returned an empty parsed config result',
+      );
+    }
+    return result;
+  }
+
+  @override
   Future<Map<String, dynamic>> getProfileConfig(int profileId) async {
     final result = await _invokeMethod<Map<String, dynamic>>(
       method: CoreMethod.getProfileConfig,
@@ -250,6 +291,25 @@ abstract class CoreHandlerInterface with CoreInterface {
       method: CoreMethod.convertAgeSecretKeyToPublicKey,
       arguments: secretKey,
     );
+  }
+
+  @override
+  Future<Map<String, dynamic>> prewarmProxyProvider({
+    required String name,
+    required Map<String, dynamic> definition,
+    required String targetPath,
+    required int timeoutMilliseconds,
+  }) async {
+    return await _invokeMethod<Map<String, dynamic>>(
+          method: CoreMethod.prewarmProxyProvider,
+          arguments: {
+            'name': name,
+            'definition': definition,
+            'target-path': targetPath,
+            'timeout-ms': timeoutMilliseconds,
+          },
+        ) ??
+        {};
   }
 
   @override
@@ -287,6 +347,33 @@ abstract class CoreHandlerInterface with CoreInterface {
             'staging-path': stagingPath,
             'config-path': configPath,
             'artifacts': artifacts,
+          },
+        ) ??
+        {};
+  }
+
+  @override
+  Future<Map<String, dynamic>> activateRuleGeneration({
+    required int profileId,
+    required String generation,
+  }) async {
+    return await _invokeMethod<Map<String, dynamic>>(
+          method: CoreMethod.activateRuleGeneration,
+          arguments: {'profile-id': profileId, 'generation': generation},
+        ) ??
+        {};
+  }
+
+  @override
+  Future<Map<String, dynamic>> restoreRuleGeneration({
+    required int profileId,
+    required String failedGeneration,
+  }) async {
+    return await _invokeMethod<Map<String, dynamic>>(
+          method: CoreMethod.restoreRuleGeneration,
+          arguments: {
+            'profile-id': profileId,
+            'failed-generation': failedGeneration,
           },
         ) ??
         {};
@@ -581,6 +668,23 @@ abstract class CoreHandlerInterface with CoreInterface {
   @override
   Future<bool> stopListener() async {
     return await _invokeMethod<bool>(method: CoreMethod.stopListener) ?? false;
+  }
+
+  @override
+  Future<bool> cancelDelayTests() async {
+    return await _invokeMethod<bool>(method: CoreMethod.cancelDelayTests) ?? false;
+  }
+
+  @override
+  Future<bool> setProfileSwitchProbeBarrier({
+    required String token,
+    required bool suspended,
+  }) async {
+    return await _invokeMethod<bool>(
+          method: CoreMethod.setProfileSwitchProbeBarrier,
+          arguments: {'token': token, 'suspended': suspended},
+        ) ??
+        false;
   }
 
   @override

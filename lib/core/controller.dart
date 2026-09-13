@@ -124,6 +124,34 @@ class CoreController {
     ).prepare(profileId: profileId, config: config);
   }
 
+  Future<String> validateCandidateConfigAtPath(String path) =>
+      _interface.validateCandidateConfigAtPath(path);
+
+  Future<RuleGenerationPreparation> activateRuleGeneration({
+    required int profileId,
+    required RuleGenerationPreparation preparation,
+  }) async {
+    final result = await _interface.activateRuleGeneration(
+      profileId: profileId,
+      generation: preparation.generation,
+    );
+    final path = result['config-path']?.toString();
+    if (path == null || path.isEmpty || path != preparation.configPath) {
+      throw StateError('Core did not activate prepared generation');
+    }
+    return preparation;
+  }
+
+  Future<void> restoreRuleGeneration({
+    required int profileId,
+    required String failedGeneration,
+  }) async {
+    await _interface.restoreRuleGeneration(
+      profileId: profileId,
+      failedGeneration: failedGeneration,
+    );
+  }
+
   Future<RuleGenerationPreparation?> getPreparedRuleGeneration({
     required String config,
     required int profileId,
@@ -352,6 +380,25 @@ class CoreController {
 
   Future<Delay?> getDelay(String url, String proxyName) async {
     return _interface.asyncTestDelay(url, proxyName);
+  }
+
+  Future<bool> cancelDelayTests() => _interface.cancelDelayTests();
+
+  Future<bool> setProfileSwitchProbeBarrier({
+    required String token,
+    required bool suspended,
+  }) => _interface.setProfileSwitchProbeBarrier(
+    token: token,
+    suspended: suspended,
+  );
+
+  Future<Map<String, dynamic>> parseProfileConfigData(String yaml) async {
+    final data = Map<String, dynamic>.from(
+      await _interface.parseProfileConfigData(yaml),
+    );
+    data['rules'] = data['rule'];
+    data.remove('rule');
+    return data;
   }
 
   Future<Map<String, dynamic>> getConfig(int id) async {

@@ -19,8 +19,8 @@ class ProductMigrationContractTest(unittest.TestCase):
 
     def test_file_url_and_qr_share_prepare_pipeline(self):
         source = self.read("lib/providers/actions/profiles.dart")
-        self.assertIn("saveFile(bytes, prepare: prepareProfileConfig)", source)
-        self.assertIn(".update(prepare: prepareProfileConfig)", source)
+        self.assertIn("prepareFile(bytes, prepare: prepareProfileConfig)", source)
+        self.assertIn(".prepareUpdate(prepare: prepareProfileConfig)", source)
         self.assertIn("addProfileFormURL(url)", source)
 
     def test_oppa_product_flow_and_explicit_read_only_policy(self):
@@ -54,7 +54,24 @@ class ProductMigrationContractTest(unittest.TestCase):
         self.assertNotIn("await file.length()", app)
         self.assertNotIn("await file.readAsBytes()", app)
         self.assertIn("Future<void> addProfileFromDroppedFile", actions)
-        self.assertIn("saveFile(bytes, prepare: prepareProfileConfig)", actions)
+        self.assertIn("prepareFile(bytes, prepare: prepareProfileConfig)", actions)
+
+    def test_subscription_addition_waits_for_resource_readiness_before_database_commit(self):
+        actions = self.read("lib/providers/actions/profiles.dart")
+        database = self.read("lib/providers/database.dart")
+        setup = self.read("lib/providers/actions/setup.dart")
+
+        self.assertIn("Future<void> putPreparedProfile", actions)
+        self.assertIn("await putPreparedProfile(prepared.profile, prepared.content)", actions)
+        self.assertIn("candidateYaml: candidateYaml", actions)
+        self.assertIn("await _core.activateRuleGeneration", actions)
+        self.assertIn("await ref.read(profilesProvider.notifier).putAsync(profile)", actions)
+        self.assertIn("Future<void> putAsync(Profile profile)", database)
+        self.assertIn("allowUncommittedProfile = false", setup)
+        put_profile = actions.split("void putProfile(Profile profile)", 1)[1].split(
+            "Future<void> updateProfiles", 1
+        )[0]
+        self.assertNotIn("_scheduleRulePrewarm", put_profile)
 
     def test_ci_preserves_matrix_and_adds_protocol_gates(self):
         workflow = self.read(".github/workflows/build.yaml")
@@ -113,7 +130,7 @@ class ProductMigrationContractTest(unittest.TestCase):
             "validateCandidateConfigAtPath",
         ):
             self.assertIn(method, methods)
-        self.assertIn("Future<bool> prewarmProfile(Profile profile)", setup)
+        self.assertIn("Future<RuleGenerationPreparation?> prewarmProfile(", setup)
         self.assertIn("import 'dart:convert';", profiles)
         self.assertIn("import 'dart:typed_data';", profiles)
         self.assertIn("dialogs.showMessage", logs)

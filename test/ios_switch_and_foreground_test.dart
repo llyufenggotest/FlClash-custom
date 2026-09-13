@@ -76,8 +76,11 @@ void main() {
       expect(send, greaterThan(-1));
       expect(attempt, greaterThan(send));
       final body = controller.substring(send, attempt);
-      expect(body, contains('await acquireProviderMessageSlot()'));
-      expect(body, contains('defer { releaseProviderMessageSlot() }'));
+      expect(body, contains('await acquireProviderMessageSlot(lane: lane)'));
+      expect(
+        body,
+        contains('defer { releaseProviderMessageSlot(lane: lane) }'),
+      );
     });
 
     test('a stop-time nil reply stays benign', () {
