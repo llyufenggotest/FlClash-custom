@@ -289,3 +289,34 @@ jobs:
 
       - name: Setup Go
         uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.5'
+          cache-dependency-path: core/go.sum
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: master
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build macOS package
+        run: dart setup.dart macos -v
+
+      - name: Verify package exists
+        shell: bash
+        run: |
+          find dist -maxdepth 2 -type f -print
+          test -n "$(find dist -type f \( -name '*.dmg' -o -name '*.zip' \) -print -quit)"
+
+      - name: Upload macOS build
+        uses: actions/upload-artifact@v7
+        with:
+          name: FlClash-five-protocol-macos-${{ matrix.arch }}
+          path: |
+            dist/*.dmg
+            dist/*.zip
+          if-no-files-found: error
