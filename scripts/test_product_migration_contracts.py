@@ -80,7 +80,7 @@ class ProductMigrationContractTest(unittest.TestCase):
         self.assertIn("protocol-contract:", workflow)
         self.assertIn("submodules: recursive", workflow)
         self.assertIn("98c4afa30d95f4af5bdaa18abf8ff6cc6d3ed8d7", workflow)
-        self.assertIn("294e072d12f5a068f86f5b275fc9c49544c3f4fa", workflow)
+        self.assertIn("7eb702723de9cd7b51d25b3e207f3feafb0f07a4", workflow)
         self.assertIn("with_low_memory", workflow)
         self.assertIn("MAGIC_SHANLIAN_TRIGGER", workflow)
         self.assertIn("protocol_smoke", workflow)
