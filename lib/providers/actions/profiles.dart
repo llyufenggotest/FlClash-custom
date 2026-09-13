@@ -4,6 +4,53 @@ part of '../action.dart';
 class ProfilesAction extends _$ProfilesAction {
   CoreController get _core => ref.read(coreHandlerProvider);
 
+  final Map<int, int> _profileUpdateGenerations = {};
+  final Map<int, Future<void>> _profileTransactionTails = {};
+
+  Future<void> _withProfileTransaction(
+    int profileId,
+    Future<void> Function() action,
+  ) async {
+    final previous = _profileTransactionTails[profileId] ?? Future<void>.value();
+    final completer = Completer<void>();
+    _profileTransactionTails[profileId] = completer.future;
+    try {
+      await previous.catchError((_) {});
+      await action();
+    } finally {
+      completer.complete();
+      if (identical(_profileTransactionTails[profileId], completer.future)) {
+        _profileTransactionTails.remove(profileId);
+      }
+    }
+  }
+
+  Future<T> withProfileTransaction<T>(
+    int profileId,
+    Future<T> Function() action,
+  ) async {
+    late T result;
+    await _withProfileTransaction(profileId, () async {
+      result = await action();
+    });
+    return result;
+  }
+
+  Future<void> ensureProfileFile(Profile profile) async {
+    final path = await appPath.getProfilePath(profile.id.toString());
+    if (await File(path).exists() || profile.url.isEmpty) return;
+    await updateProfile(profile);
+  }
+
+  int _beginProfileUpdate(int profileId) => _profileUpdateGenerations.update(
+    profileId,
+    (value) => value + 1,
+    ifAbsent: () => 1,
+  );
+
+  bool _isCurrentProfileUpdate(int profileId, int generation) =>
+      _profileUpdateGenerations[profileId] == generation;
+
   @override
   void build() {}
 
@@ -20,19 +67,61 @@ class ProfilesAction extends _$ProfilesAction {
   }
 
   Future<void> deleteProfile(int id) async {
-    await ref.read(profilesProvider.notifier).del(id);
-    await clearEffect(id);
-    final currentProfileId = ref.read(currentProfileIdProvider);
-    if (currentProfileId == id) {
-      final profiles = ref.read(profilesProvider);
-      if (profiles.isNotEmpty) {
-        final updateId = profiles.first.id;
-        ref.read(currentProfileIdProvider.notifier).value = updateId;
-      } else {
-        ref.read(currentProfileIdProvider.notifier).value = null;
-        unawaited(ref.read(setupActionProvider.notifier).setRunning(false));
+    _beginProfileUpdate(id);
+    await _withProfileTransaction(id, () async {
+      final oldProfile = ref.read(profilesProvider).getProfile(id);
+      if (oldProfile == null) return;
+      final profilePath = await appPath.getProfilePath(id.toString());
+      final profileFile = File(profilePath);
+      final backup = File(
+        '$profilePath.delete-rollback.$pid.${DateTime.now().microsecondsSinceEpoch}',
+      );
+      final hadFile = await profileFile.exists();
+      if (hadFile) await profileFile.copy(backup.path);
+      var preserveBackup = false;
+      try {
+        if (hadFile) await profileFile.safeDelete();
+        await ref.read(profilesProvider.notifier).del(id);
+      } catch (error, stackTrace) {
+        try {
+          if (hadFile && await backup.exists()) {
+            await backup.rename(profilePath);
+          }
+          await ref.read(profilesProvider.notifier).putAsync(oldProfile);
+        } catch (restoreError, restoreStack) {
+          preserveBackup = hadFile && await backup.exists();
+          Error.throwWithStackTrace(
+            StateError(
+              'profile deletion failed ($error); rollback failed '
+              '($restoreError); preserved backup: ${backup.path}',
+            ),
+            restoreStack,
+          );
+        }
+        Error.throwWithStackTrace(error, stackTrace);
+      } finally {
+        if (!preserveBackup) await backup.safeDelete();
       }
-    }
+      try {
+        await clearProviderEffect(id);
+      } catch (error) {
+        commonPrint.log(
+          'profile $id deleted; deferred provider cleanup failed: $error',
+          logLevel: LogLevel.warning,
+        );
+      }
+      final currentProfileId = ref.read(currentProfileIdProvider);
+      if (currentProfileId == id) {
+        final profiles = ref.read(profilesProvider);
+        if (profiles.isNotEmpty) {
+          final updateId = profiles.first.id;
+          ref.read(currentProfileIdProvider.notifier).value = updateId;
+        } else {
+          ref.read(currentProfileIdProvider.notifier).value = null;
+          unawaited(ref.read(setupActionProvider.notifier).setRunning(false));
+        }
+      }
+    });
   }
 
   Future<String> validateConfigWithData(String data) async {
@@ -74,28 +163,105 @@ class ProfilesAction extends _$ProfilesAction {
     }
   }
 
-  @protected
-  bool get rulePrewarmEnabled => system.isIOS;
-
-  void _scheduleRulePrewarm(Profile profile) {
-    final setupAction = ref.read(setupActionProvider.notifier);
-    if (!rulePrewarmEnabled) {
-      if (profile.id == ref.read(currentProfileIdProvider)) {
-        setupAction.applyProfileDebounce(silence: true);
+  Future<void> _commitPreparedProfile({
+    required Profile profile,
+    required String candidateYaml,
+    required bool isNew,
+    bool Function()? commitGuard,
+  }) async {
+    await _withProfileTransaction(profile.id, () async {
+      if (commitGuard != null && !commitGuard()) return;
+      final setupAction = ref.read(setupActionProvider.notifier);
+      final preparation = await setupAction.prewarmProfile(
+        profile,
+        candidateYaml: candidateYaml,
+        allowUncommittedProfile: isNew,
+      );
+      if (commitGuard != null && !commitGuard()) return;
+      final target = File(await appPath.getProfilePath(profile.id.toString()));
+      await target.parent.create(recursive: true);
+      final temporary = File(
+        '${target.path}.candidate.$pid.${DateTime.now().microsecondsSinceEpoch}',
+      );
+      final backup = File(
+        '${target.path}.rollback.$pid.${DateTime.now().microsecondsSinceEpoch}',
+      );
+      final hadOld = await target.exists();
+      final oldProfile = ref.read(profilesProvider).getProfile(profile.id);
+      var preserveBackup = false;
+      var activationAttempted = false;
+      try {
+        await temporary.writeAsString(candidateYaml, flush: true);
+        if (hadOld) await target.copy(backup.path);
+        if (commitGuard != null && !commitGuard()) return;
+        await temporary.rename(target.path);
+        try {
+          await ref.read(profilesProvider.notifier).putAsync(profile);
+          if (commitGuard != null && !commitGuard()) {
+            throw StateError('profile commit is no longer current');
+          }
+          if (preparation != null) {
+            activationAttempted = true;
+            await _core.activateRuleGeneration(
+              profileId: profile.id,
+              preparation: preparation,
+            );
+          }
+        } catch (error, stackTrace) {
+          try {
+            if (activationAttempted && preparation != null) {
+              await _core.restoreRuleGeneration(
+                profileId: profile.id,
+                failedGeneration: preparation.generation,
+              );
+            }
+            if (hadOld) {
+              await backup.rename(target.path);
+            } else {
+              await target.safeDelete();
+            }
+            if (oldProfile != null) {
+              await ref.read(profilesProvider.notifier).putAsync(oldProfile);
+            } else {
+              await ref.read(profilesProvider.notifier).del(profile.id);
+            }
+          } catch (restoreError, restoreStack) {
+            preserveBackup = hadOld && await backup.exists();
+            Error.throwWithStackTrace(
+              StateError(
+                'profile commit failed ($error); rollback failed '
+                '($restoreError); preserved backup: ${backup.path}',
+              ),
+              restoreStack,
+            );
+          }
+          Error.throwWithStackTrace(error, stackTrace);
+        }
+        if (isNew && ref.read(currentProfileIdProvider) == null) {
+          ref.read(currentProfileIdProvider.notifier).value = profile.id;
+        }
+      } finally {
+        await temporary.safeDelete();
+        if (!preserveBackup) await backup.safeDelete();
       }
-      return;
-    }
-    unawaited(
-      setupAction.prewarmProfile(profile).catchError((
-        Object error,
-        StackTrace stackTrace,
-      ) {
-        commonPrint.log(
-          'rule prewarm failed ===> $error',
-          logLevel: LogLevel.warning,
-        );
-        return false;
-      }),
+    });
+  }
+
+  Future<void> putPreparedProfile(
+    Profile profile,
+    String candidateYaml,
+  ) {
+    final existing = ref.read(profilesProvider).getProfile(profile.id);
+    return _commitPreparedProfile(
+      profile: profile,
+      candidateYaml: candidateYaml,
+      isNew: existing == null,
+      commitGuard: existing == null
+          ? () => ref.read(profilesProvider).getProfile(profile.id) == null
+          : () => identical(
+              ref.read(profilesProvider).getProfile(profile.id),
+              existing,
+            ),
     );
   }
 
@@ -104,7 +270,6 @@ class ProfilesAction extends _$ProfilesAction {
     if (ref.read(currentProfileIdProvider) == null) {
       ref.read(currentProfileIdProvider.notifier).value = profile.id;
     }
-    _scheduleRulePrewarm(profile);
   }
 
   Future<void> updateProfiles() async {
@@ -121,11 +286,22 @@ class ProfilesAction extends _$ProfilesAction {
     final operation = showLoading
         ? ref.read(updatingKeysProvider.notifier).start(profile.updatingKey)
         : null;
+    final generation = _beginProfileUpdate(profile.id);
     try {
-      ref.read(profilesProvider.notifier).put(profile);
-      final newProfile = await profile.update(prepare: prepareProfileConfig);
-      ref.read(profilesProvider.notifier).put(newProfile);
-      _scheduleRulePrewarm(newProfile);
+      final prepared = await profile.prepareUpdate(
+        prepare: prepareProfileConfig,
+        commitGuard: () => _isCurrentProfileUpdate(profile.id, generation),
+      );
+      if (!_isCurrentProfileUpdate(profile.id, generation) ||
+          prepared.content.isEmpty) {
+        return;
+      }
+      await _commitPreparedProfile(
+        profile: prepared.profile,
+        candidateYaml: prepared.content,
+        isNew: false,
+        commitGuard: () => _isCurrentProfileUpdate(profile.id, generation),
+      );
     } finally {
       if (operation != null) {
         ref
@@ -136,15 +312,17 @@ class ProfilesAction extends _$ProfilesAction {
   }
 
   Future<void> addOppaProfile(OppaProxyConfig config) async {
-    final profile = await globalState.loadingRun(
+    final prepared = await globalState.loadingRun(
       tag: LoadingTag.profiles,
-      () => Profile.normal(label: config.name).saveFile(
+      () => Profile.normal(label: config.name).prepareFile(
         Uint8List.fromList(utf8.encode(config.toYaml())),
         prepare: prepareProfileConfig,
       ),
       title: currentAppLocalizations.addProfile,
     );
-    if (profile != null) putProfile(profile);
+    if (prepared != null) {
+      await putPreparedProfile(prepared.profile, prepared.content);
+    }
   }
 
   Future<void> addProfileFromDroppedFile({
@@ -153,14 +331,16 @@ class ProfilesAction extends _$ProfilesAction {
   }) async {
     globalState.navigatorKey.currentState?.popUntil((route) => route.isFirst);
     ref.read(currentPageLabelProvider.notifier).toProfiles();
-    final profile = await globalState.loadingRun(
+    final prepared = await globalState.loadingRun(
       tag: LoadingTag.profiles,
       () => Profile.normal(
         label: name,
-      ).saveFile(bytes, prepare: prepareProfileConfig),
+      ).prepareFile(bytes, prepare: prepareProfileConfig),
       title: currentAppLocalizations.addProfile,
     );
-    if (profile != null) putProfile(profile);
+    if (prepared != null) {
+      await putPreparedProfile(prepared.profile, prepared.content);
+    }
   }
 
   Future<void> addProfileFormFile() async {
@@ -177,18 +357,18 @@ class ProfilesAction extends _$ProfilesAction {
       globalState.navigatorKey.currentState?.popUntil((route) => route.isFirst);
     }
     ref.read(currentPageLabelProvider.notifier).value = PageLabel.profiles;
-    final profile = await globalState.loadingRun(
+    final prepared = await globalState.loadingRun(
       tag: LoadingTag.profiles,
       () async {
         return Profile.normal(
           url: url,
           ageSecretKey: ageSecretKey,
-        ).update(prepare: prepareProfileConfig);
+        ).prepareUpdate(prepare: prepareProfileConfig);
       },
       title: currentAppLocalizations.addProfile,
     );
-    if (profile != null) {
-      putProfile(profile);
+    if (prepared != null && prepared.content.isNotEmpty) {
+      await putPreparedProfile(prepared.profile, prepared.content);
     }
   }
 
@@ -209,13 +389,7 @@ class ProfilesAction extends _$ProfilesAction {
     ref.read(profilesProvider.notifier).reorder(profiles);
   }
 
-  Future<void> clearEffect(int profileId) async {
-    final profilePath = await appPath.getProfilePath(profileId.toString());
-    final profileFile = File(profilePath);
-    final isExists = await profileFile.exists();
-    if (isExists) {
-      await profileFile.safeDelete(recursive: true);
-    }
+  Future<void> clearProviderEffect(int profileId) async {
     final error = await _core.deleteManagedPath(
       DeleteManagedPathParams(
         scope: ManagedPathScope.providers,
@@ -223,7 +397,17 @@ class ProfilesAction extends _$ProfilesAction {
       ),
     );
     if (error.isNotEmpty) {
-      commonPrint.log(error, logLevel: LogLevel.warning);
+      throw MessageException(error);
     }
+  }
+
+  Future<void> clearEffect(int profileId) async {
+    final profilePath = await appPath.getProfilePath(profileId.toString());
+    final profileFile = File(profilePath);
+    final isExists = await profileFile.exists();
+    if (isExists) {
+      await profileFile.safeDelete(recursive: true);
+    }
+    await clearProviderEffect(profileId);
   }
 }

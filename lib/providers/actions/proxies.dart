@@ -45,7 +45,11 @@ class ProxiesAction extends _$ProxiesAction {
     if (cancelCoreRequests) {
       // Only asyncTestDelay calls are cancelled; the Tunnel and setup RPC stay.
       try {
-        await Service().cancelDelayTests();
+        if (system.isIOS) {
+          await Service().cancelDelayTests();
+        } else {
+          await _core.cancelDelayTests();
+        }
       } catch (error) {
         commonPrint.log('cancelDelayTests RPC failed: $error');
       }

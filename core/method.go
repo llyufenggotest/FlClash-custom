@@ -179,6 +179,14 @@ var methodHandlers = map[CoreMethod]methodHandler{
 	validateConfigMethod: withArguments(func(data *string, response MethodResponse) {
 		response.success(handleValidateConfig(*data))
 	}),
+	prewarmProxyProviderMethod: withArguments(func(params *PrewarmProxyProviderParams, response MethodResponse) {
+		result, err := handlePrewarmProxyProvider(params)
+		if err != nil {
+			response.failure("core_error", err.Error(), nil)
+			return
+		}
+		response.success(result)
+	}),
 	prewarmRuleProviderMethod: withArguments(func(params *PrewarmRuleProviderParams, response MethodResponse) {
 		result, err := handlePrewarmRuleProvider(params)
 		if err != nil {
@@ -189,6 +197,22 @@ var methodHandlers = map[CoreMethod]methodHandler{
 	}),
 	publishRuleGenerationMethod: withArguments(func(params *PublishRuleGenerationParams, response MethodResponse) {
 		result, err := handlePublishRuleGeneration(params)
+		if err != nil {
+			response.failure("core_error", err.Error(), nil)
+			return
+		}
+		response.success(result)
+	}),
+	activateRuleGenerationMethod: withArguments(func(params *ActivateRuleGenerationParams, response MethodResponse) {
+		result, err := handleActivateRuleGeneration(params)
+		if err != nil {
+			response.failure("core_error", err.Error(), nil)
+			return
+		}
+		response.success(result)
+	}),
+	restoreRuleGenerationMethod: withArguments(func(params *RestoreRuleGenerationParams, response MethodResponse) {
+		result, err := handleRestoreRuleGeneration(params)
 		if err != nil {
 			response.failure("core_error", err.Error(), nil)
 			return
@@ -214,6 +238,14 @@ var methodHandlers = map[CoreMethod]methodHandler{
 	}),
 	setupConfigMethod: withDefaults(defaultSetupParams, func(params *SetupParams, response MethodResponse) {
 		response.success(handleSetupConfig(params))
+	}),
+	parseProfileConfigDataMethod: withArguments(func(data *string, response MethodResponse) {
+		rawConfig, err := handleParseProfileConfigData(*data)
+		if err != nil {
+			response.failure("core_error", err.Error(), nil)
+			return
+		}
+		response.success(rawConfig)
 	}),
 	getProfileConfigMethod: withArguments(func(profileID *int64, response MethodResponse) {
 		rawConfig, err := handleGetProfileConfig(*profileID)

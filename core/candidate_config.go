@@ -85,15 +85,13 @@ func readValidatedCandidateConfig(candidate string) (string, []byte, error) {
 	if err != nil {
 		return "", nil, fmt.Errorf("candidate generation manifest: %w", err)
 	}
-	for _, id := range []string{manifest.Current, manifest.Previous} {
-		entry, ok := manifest.Entries[id]
-		if !ok || id != parts[2] || filepath.Clean(entry.ConfigPath) != path {
-			continue
-		}
+	entry, ok := manifest.Entries[parts[2]]
+	isActive := parts[2] == manifest.Current || parts[2] == manifest.Previous
+	if ok && isActive && filepath.Clean(entry.ConfigPath) == path {
 		if entry.ProfileID != profileID {
 			return "", nil, errors.New("candidate config profile does not match generation path")
 		}
-		if err := validateRuleGenerationEntry(id, entry); err != nil {
+		if err := validateRuleGenerationEntry(parts[2], entry); err != nil {
 			return "", nil, fmt.Errorf("candidate generation validation: %w", err)
 		}
 		digest := sha256.Sum256(data)

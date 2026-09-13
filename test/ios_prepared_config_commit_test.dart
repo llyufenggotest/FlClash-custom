@@ -78,7 +78,7 @@ void main() {
 
       final activationAt = body.indexOf('commitAndActivateIOSConfig(');
       final commitAt = body.indexOf(
-        'persistAtomically: _persistConfigAtomically',
+        'persistAtomically: (path, config) async {',
         activationAt,
       );
       final stopAt = body.indexOf(
@@ -119,7 +119,9 @@ void main() {
 
     test('atomic persistence uses a same-directory temporary and rename', () {
       final setup = source('lib/providers/actions/setup.dart');
-      final start = setup.indexOf('Future<void> _persistConfigAtomically(');
+      final start = setup.indexOf(
+        'Future<bool> _persistConfigAtomicallyIfCurrent(',
+      );
       expect(start, greaterThan(-1));
       final end = setup.indexOf(
         '\n  Future<_SetupTaskResult> _setupConfig(',

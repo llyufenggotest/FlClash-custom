@@ -146,6 +146,28 @@ func handleShutdown() bool {
 	return true
 }
 
+func handlePrewarmProxyProvider(params *PrewarmProxyProviderParams) (any, error) {
+	if !isInit.Load() {
+		return nil, fmt.Errorf("not initialized")
+	}
+	if params.Name == "" || len(params.Definition) == 0 || params.TimeoutMS <= 0 {
+		return nil, fmt.Errorf("invalid proxy provider prewarm arguments")
+	}
+	prewarmRoot := rulePrewarmRoot()
+	if !pathWithin(params.TargetPath, prewarmRoot) {
+		return nil, fmt.Errorf("unsafe proxy provider prewarm path")
+	}
+	if err := os.MkdirAll(filepath.Dir(params.TargetPath), 0o755); err != nil {
+		return nil, err
+	}
+	if err := rejectLinkedComponentsWithinRoot(filepath.Dir(params.TargetPath), prewarmRoot, false); err != nil {
+		return nil, fmt.Errorf("unsafe proxy provider prewarm path: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(params.TimeoutMS)*time.Millisecond)
+	defer cancel()
+	return executor.PrepareProxyProvider(ctx, params.Name, params.Definition, params.TargetPath, prewarmRoot, time.Duration(params.TimeoutMS)*time.Millisecond)
+}
+
 func handlePrewarmRuleProvider(params *PrewarmRuleProviderParams) (any, error) {
 	if !isInit.Load() {
 		return nil, fmt.Errorf("not initialized")
@@ -1234,6 +1256,10 @@ func readManagedConfig(root *os.Root, path string) ([]byte, error) {
 		return nil, fmt.Errorf("config is not a regular file")
 	}
 	return io.ReadAll(file)
+}
+
+func handleParseProfileConfigData(data string) (*config.RawConfig, error) {
+	return config.UnmarshalRawConfig([]byte(data))
 }
 
 func handleGetProfileConfig(profileID int64) (*config.RawConfig, error) {

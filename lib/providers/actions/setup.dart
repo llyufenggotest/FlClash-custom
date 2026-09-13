@@ -57,18 +57,23 @@ class SetupAction extends _$SetupAction {
     var setupSucceeded = false;
     var barrierResumed = true;
     try {
-      if (system.isIOS && profileSwitched) {
-        barrierHeld = await Service().setProfileSwitchProbeBarrier(
-          token: barrierToken,
-          suspended: true,
-        );
+      if (profileSwitched) {
+        barrierHeld = system.isIOS
+            ? await Service().setProfileSwitchProbeBarrier(
+                token: barrierToken,
+                suspended: true,
+              )
+            : await _core.setProfileSwitchProbeBarrier(
+                token: barrierToken,
+                suspended: true,
+              );
         if (!barrierHeld || generation != _profileSwitchGeneration) {
           return false;
         }
       }
       await ref
           .read(proxiesActionProvider.notifier)
-          .cancelDelayTests(cancelCoreRequests: system.isIOS && profileSwitched);
+          .cancelDelayTests(cancelCoreRequests: profileSwitched);
       if (generation != _profileSwitchGeneration) return false;
       ref.read(delayDataSourceProvider.notifier).value = {};
       final setupResult = applyProfile(
@@ -86,14 +91,19 @@ class SetupAction extends _$SetupAction {
       commonPrint.log('fullSetup ===> ${compactError(e)}, $s');
       return false;
     } finally {
-      // Token ownership prevents an older task from reopening a newer switch.
       if (barrierHeld) {
-        barrierResumed = await Service().setProfileSwitchProbeBarrier(
-          token: barrierToken,
-          suspended: false,
-        );
-        if (!barrierResumed && generation == _profileSwitchGeneration) {
+        final resumed = system.isIOS
+            ? await Service().setProfileSwitchProbeBarrier(
+                token: barrierToken,
+                suspended: false,
+              )
+            : await _core.setProfileSwitchProbeBarrier(
+                token: barrierToken,
+                suspended: false,
+              );
+        if (!resumed && generation == _profileSwitchGeneration) {
           commonPrint.log('failed to resume profile-switch probe barrier');
+          barrierResumed = false;
         }
       }
     }
@@ -313,41 +323,61 @@ class SetupAction extends _$SetupAction {
   }
 
   @protected
-  bool get rulePrewarmEnabled => system.isIOS;
+  bool get rulePrewarmEnabled => true;
 
   /// Prepares external rule-provider artifacts without activating the profile.
-  Future<bool> prewarmProfile(Profile profile) async {
+  Future<RuleGenerationPreparation?> prewarmProfile(
+    Profile profile, {
+    String? candidateYaml,
+    bool allowUncommittedProfile = false,
+  }) async {
     if (!rulePrewarmEnabled) {
-      return false;
+      return null;
     }
-    final setupState = await ref.read(setupStateProvider(profile.id).future);
+    final knownProfile = ref.read(profileProvider(profile.id));
+    if (knownProfile == null && !allowUncommittedProfile) {
+      throw StateError('profile ${profile.id} is not committed');
+    }
+    final baseSetupState = await ref.read(
+      setupStateProvider(knownProfile == null ? null : profile.id).future,
+    );
+    final setupState = baseSetupState.copyWith(
+      profileId: profile.id,
+      profileLastUpdateDate: profile.lastUpdateDate?.millisecondsSinceEpoch,
+      overwriteType: profile.overwriteType,
+      matchTarget: profile.matchTarget,
+    );
     final patchConfig = ref.read(patchClashConfigProvider);
+    final candidateRawConfig = candidateYaml == null
+        ? null
+        : await _core.parseProfileConfigData(candidateYaml);
     final rendered = await getProfile(
       setupState: setupState,
       patchConfig: patchConfig,
+      candidateRawConfig: candidateRawConfig,
     );
     if (rendered.yaml.isEmpty) {
-      return false;
+      throw StateError('candidate profile rendered an empty configuration');
     }
     final parsed = loadYaml(rendered.yaml);
     final ruleProviders = parsed is YamlMap ? parsed['rule-providers'] : null;
-    final hasExternalRuleProvider =
-        ruleProviders is YamlMap &&
-        ruleProviders.values.any(
+    final proxyProviders = parsed is YamlMap ? parsed['proxy-providers'] : null;
+    bool hasExternalProvider(Object? providers) =>
+        providers is YamlMap &&
+        providers.values.any(
           (value) => value is YamlMap && value['type'] != 'inline',
         );
-    if (!hasExternalRuleProvider) {
-      return false;
+    final requiresPreparation =
+        hasExternalProvider(ruleProviders) ||
+        hasExternalProvider(proxyProviders);
+    if (!requiresPreparation) {
+      return null;
     }
-    final result = await _core.setupConfig(
-      params: _setupParams,
-      preparationConfig: rendered.yaml,
-      preparationProfileId: profile.id,
+    final preparation = await _core.prepareRuleGeneration(
+      config: rendered.yaml,
+      profileId: profile.id,
     );
-    if (result.isNotEmpty) {
-      throw MessageException(result);
-    }
-    return true;
+    return preparation;
   }
 
   // False means building the profile, the config write, or the Core setup
@@ -378,13 +408,19 @@ class SetupAction extends _$SetupAction {
     bool Function()? activationGuard,
     Future<void> Function()? preloadInvoke,
   }) async {
-    final expectedProfileId = ref.read(currentProfileProvider)?.id;
-    final result = await _setupScheduler.run(() {
+    final expectedProfile = ref.read(currentProfileProvider);
+    final expectedProfileId = expectedProfile?.id;
+    final profileAction = ref.read(profilesActionProvider.notifier);
+    if (expectedProfile != null) {
+      await profileAction.ensureProfileFile(expectedProfile);
+    }
+    Future<_SetupTaskResult> runSetup() => _setupScheduler.run(() {
       if (activationGuard != null && !activationGuard()) {
         commonPrint.log('dropping stale setup before execution');
-        return Future.value(_SetupTaskResult.completed);
+        return Future.value(_SetupTaskResult.failed);
       }
       return _setupConfig(
+        expectedProfileId: expectedProfileId,
         force: force,
         silence: silence,
         profileSwitched: profileSwitched,
@@ -402,6 +438,12 @@ class SetupAction extends _$SetupAction {
         },
       );
     });
+    final result = expectedProfileId == null
+        ? await runSetup()
+        : await profileAction.withProfileTransaction(
+            expectedProfileId,
+            runSetup,
+          );
     if (result != _SetupTaskResult.handoffToCoreRestart) {
       return result;
     }
@@ -423,6 +465,7 @@ class SetupAction extends _$SetupAction {
   Future<({String yaml, String md5})> getProfile({
     required SetupState setupState,
     required PatchClashConfig patchConfig,
+    Map<String, dynamic>? candidateRawConfig,
   }) async {
     final profileId = setupState.profileId;
     if (profileId == null) return (yaml: '', md5: '');
@@ -439,7 +482,8 @@ class SetupAction extends _$SetupAction {
     final overrideDns = ref.read(overrideDnsProvider);
     final appendSystemDns = networkSetting.appendSystemDns;
     final routeMode = networkSetting.routeMode;
-    final configMap = await _core.getConfig(profileId);
+    final configMap =
+        candidateRawConfig ?? await _core.getConfig(profileId);
     String? scriptContent;
     final List<Rule> addedRules = [];
     final List<ProxyGroup> proxyGroups = [];
@@ -550,19 +594,28 @@ class SetupAction extends _$SetupAction {
     return fallback;
   }
 
-  Future<void> _persistConfigAtomically(String path, String config) async {
+  Future<bool> _persistConfigAtomicallyIfCurrent(
+    String path,
+    String config, {
+    bool Function()? commitGuard,
+  }) async {
+    final target = File(path);
+    await target.parent.create(recursive: true);
     final temporary = File(
       '$path.tmp.$pid.${DateTime.now().microsecondsSinceEpoch}',
     );
     try {
       await temporary.writeAsString(config, flush: true);
+      if (commitGuard != null && !commitGuard()) return false;
       await temporary.rename(path);
+      return true;
     } finally {
       await temporary.safeDelete();
     }
   }
 
   Future<_SetupTaskResult> _setupConfig({
+    required int? expectedProfileId,
     bool force = false,
     bool silence = false,
     bool profileSwitched = false,
@@ -570,17 +623,9 @@ class SetupAction extends _$SetupAction {
     Future<void> Function()? preloadInvoke,
     FutureOr Function()? onUpdated,
   }) async {
-    var profile = ref.read(currentProfileProvider) ?? recoverMissingProfile();
-    // A refresh failure is surfaced by safeRun; setup keeps the old profile.
-    final nextProfile = await globalState.safeRun(
-      () => profile?.checkAndUpdateAndCopy(
-        prepare: ref.read(profilesActionProvider.notifier).prepareProfileConfig,
-      ),
-    );
-    if (nextProfile != null) {
-      profile = nextProfile;
-      ref.read(profilesProvider.notifier).put(nextProfile);
-    }
+    var profile = expectedProfileId == null
+        ? recoverMissingProfile()
+        : ref.read(profilesProvider).getProfile(expectedProfileId);
     commonPrint.log('setup ===> ${profile?.realLabel}');
     final patchConfig = ref.read(patchClashConfigProvider);
     final shouldContinueSetup = await requestAdmin(patchConfig.tun.enable);
@@ -624,16 +669,40 @@ class SetupAction extends _$SetupAction {
     // Recaptured so _start's catch can roll back after safeRun swallows it.
     (Object, StackTrace)? handoffFailure;
     var setupFailed = false;
+    var setupStale = false;
     await globalState.loadingRun(
       () async {
         try {
           final configFilePath = await appPath.configFilePath;
+          if (activationGuard != null && !activationGuard()) {
+            commonPrint.log('dropping stale setup before config persistence');
+            setupStale = true;
+            return;
+          }
           if (!system.isIOS) {
-            await File(configFilePath).safeWriteAsString(yamlString);
+            final persisted = await _persistConfigAtomicallyIfCurrent(
+              configFilePath,
+              yamlString,
+              commitGuard: activationGuard,
+            );
+            if (!persisted) {
+              setupStale = true;
+              return;
+            }
+          }
+          if (activationGuard != null && !activationGuard()) {
+            commonPrint.log('dropping stale setup before Core activation');
+            setupStale = true;
+            return;
           }
           final profileId = profile?.id;
           if (profileId != null) {
             await appPath.ensureProviderDirs(profileId);
+          }
+          if (activationGuard != null && !activationGuard()) {
+            commonPrint.log('dropping stale setup after provider directory preparation');
+            setupStale = true;
+            return;
           }
           final coreController = _core;
           Future<void> commitAndActivate() async {
@@ -652,7 +721,15 @@ class SetupAction extends _$SetupAction {
                 configPath: configFilePath,
                 config: yamlString,
                 activationGuard: activationGuard,
-                persistAtomically: _persistConfigAtomically,
+                persistAtomically: (path, config) async {
+                  final persisted = await _persistConfigAtomicallyIfCurrent(
+                    path,
+                    config,
+                  );
+                  if (!persisted) {
+                    throw StateError('iOS config persistence was rejected');
+                  }
+                },
                 applyConfig: applyFormalConfig,
                 restoreConfig: applyFormalConfig,
               );
@@ -663,7 +740,15 @@ class SetupAction extends _$SetupAction {
               config: yamlString,
               oldTunnelWasRunning: false,
               activationGuard: activationGuard,
-              persistAtomically: _persistConfigAtomically,
+              persistAtomically: (path, config) async {
+                final persisted = await _persistConfigAtomicallyIfCurrent(
+                  path,
+                  config,
+                );
+                if (!persisted) {
+                  throw StateError('iOS config persistence was rejected');
+                }
+              },
               stopTunnel: () => setCoreRunning(false),
               restoreTunnel: () async {
                 final restoreResult = await applyFormalConfig();
@@ -724,7 +809,7 @@ class SetupAction extends _$SetupAction {
     if (handoffFailure != null) {
       Error.throwWithStackTrace(handoffFailure!.$1, handoffFailure!.$2);
     }
-    if (setupFailed || profileFailed) {
+    if (setupFailed || setupStale || profileFailed) {
       return _SetupTaskResult.failed;
     }
     return _SetupTaskResult.completed;

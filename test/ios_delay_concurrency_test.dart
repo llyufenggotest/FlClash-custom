@@ -85,20 +85,26 @@ void main() {
       final source = read('ios/Runner/Tunnel/TunnelController.swift');
       expect(source, contains('private let maxInFlightProviderMessages = 8'));
       expect(source, contains('private var inFlightProviderMessages = 0'));
-      expect(source, contains('func acquireProviderMessageSlot() async'));
-      expect(source, contains('func releaseProviderMessageSlot()'));
+      expect(
+        source,
+        contains('func acquireProviderMessageSlot(lane: ProviderMessageLane) async'),
+      );
+      expect(
+        source,
+        contains('func releaseProviderMessageSlot(lane: ProviderMessageLane)'),
+      );
     });
 
     test('every send acquires and releases a slot', () {
       final source = read('ios/Runner/Tunnel/TunnelController.swift');
       expect(
         source,
-        contains('await acquireProviderMessageSlot()'),
+        contains('await acquireProviderMessageSlot(lane: lane)'),
         reason: 'admission must happen before the request is issued',
       );
       expect(
         source,
-        contains('defer { releaseProviderMessageSlot() }'),
+        contains('defer { releaseProviderMessageSlot(lane: lane) }'),
         reason: 'a defer is what guarantees release on throw and on timeout',
       );
     });

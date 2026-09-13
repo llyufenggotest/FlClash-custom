@@ -33,6 +33,13 @@ type DeleteManagedPathParams struct {
 	RelativePath string           `json:"relative-path"`
 }
 
+type PrewarmProxyProviderParams struct {
+	Name       string         `json:"name"`
+	Definition map[string]any `json:"definition"`
+	TargetPath string         `json:"target-path"`
+	TimeoutMS  int64          `json:"timeout-ms"`
+}
+
 type PrewarmRuleProviderParams struct {
 	Name       string         `json:"name"`
 	Definition map[string]any `json:"definition"`
@@ -246,11 +253,15 @@ const (
 	stopListenerMethod                   CoreMethod = "stopListener"
 	updateDnsMethod                      CoreMethod = "updateDns"
 	crashMethod                          CoreMethod = "crash"
+	prewarmProxyProviderMethod           CoreMethod = "prewarmProxyProvider"
 	prewarmRuleProviderMethod            CoreMethod = "prewarmRuleProvider"
 	publishRuleGenerationMethod          CoreMethod = "publishRuleGeneration"
+	activateRuleGenerationMethod         CoreMethod = "activateRuleGeneration"
+	restoreRuleGenerationMethod          CoreMethod = "restoreRuleGeneration"
 	getPreparedRuleGenerationMethod      CoreMethod = "getPreparedRuleGeneration"
 	validateCandidateConfigAtPathMethod  CoreMethod = "validateCandidateConfigAtPath"
 	setupConfigMethod                    CoreMethod = "setupConfig"
+	parseProfileConfigDataMethod         CoreMethod = "parseProfileConfigData"
 	getProfileConfigMethod               CoreMethod = "getProfileConfig"
 	clearEffectMethod                    CoreMethod = "clearEffect"
 	deleteManagedPathMethod              CoreMethod = "deleteManagedPath"
