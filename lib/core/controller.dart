@@ -119,9 +119,11 @@ class CoreController {
   Future<RuleGenerationPreparation> prepareRuleGeneration({
     required String config,
     required int profileId,
+    void Function(RulePreparationProgress progress)? onProgress,
   }) {
     return RuleGenerationPreparer(
       core: _interface,
+      onProgress: onProgress,
     ).prepare(profileId: profileId, config: config);
   }
 
@@ -168,6 +170,7 @@ class CoreController {
     Future<void> Function(String preparedConfig)? persistPreparedConfig,
     String? preparationConfig,
     int? preparationProfileId,
+    bool allowRuleGenerationPreparation = false,
     @visibleForTesting
     Future<RuleGenerationPreparation> Function({
       required String config,
@@ -178,26 +181,75 @@ class CoreController {
     @visibleForTesting
     Duration rulePreparationTimeout = const Duration(seconds: 60),
   }) async {
-    final prepareFirst = prepareBeforePreload ?? system.isIOS;
+    final prepareFirst =
+        prepareBeforePreload ??
+        (preparationConfig != null && preparationProfileId != null);
     String? candidateConfigPath;
+    String? activatedGeneration;
+    var generationRestored = false;
+    Future<void> restoreActivatedGeneration() async {
+      final generation = activatedGeneration;
+      final profileId = preparationProfileId;
+      if (generation == null || profileId == null || generationRestored) return;
+      generationRestored = true;
+      try {
+        await restoreRuleGeneration(
+          profileId: profileId,
+          failedGeneration: generation,
+        );
+      } catch (_) {
+        // Preserve the original setup failure; restoration is best effort.
+      }
+    }
     Future<String> preparation() async {
       final config = preparationConfig;
       final profileId = preparationProfileId;
       if (prepareFirst && config != null && profileId != null) {
         try {
           final fingerprint = sha256.convert(utf8.encode(config)).toString();
-          final prepareOperation =
-              prepareRuleGenerationOverride ?? prepareRuleGeneration;
+          Future<RuleGenerationPreparation> findOrPrepare() async {
+            // Tests may inject the preparation seam directly; production
+            // switches always consult the committed-generation index first.
+            if (prepareRuleGenerationOverride != null) {
+              return prepareRuleGenerationOverride(
+                config: config,
+                profileId: profileId,
+              );
+            }
+            final existing = await getPreparedRuleGeneration(
+              config: config,
+              profileId: profileId,
+            );
+            if (existing != null) return existing;
+            if (!allowRuleGenerationPreparation) {
+              throw StateError(
+                'prepared rule generation is missing for profile $profileId',
+              );
+            }
+            return prepareRuleGeneration(
+              config: config,
+              profileId: profileId,
+            );
+          }
+
           final prepared = await preparedGenerationScheduler.prepare(
             jsonEncode({'profile-id': profileId, 'fingerprint': fingerprint}),
-            () => prepareOperation(config: config, profileId: profileId),
+            findOrPrepare,
           );
-          // This assignment runs in every waiter, including a connect that
-          // joined an import-time prewarm already in flight.
-          candidateConfigPath = prepared.configPath;
+          final activated = await _interface.activateRuleGeneration(
+            profileId: profileId,
+            generation: prepared.generation,
+          );
+          final activatedPath = activated['config-path']?.toString();
+          if (activatedPath == null || activatedPath != prepared.configPath) {
+            throw StateError('Core did not activate prepared generation');
+          }
+          candidateConfigPath = activatedPath;
+          activatedGeneration = prepared.generation;
           await persistPreparedConfig?.call(prepared.config);
           return '';
         } on Object catch (error) {
+          await restoreActivatedGeneration();
           return error.toString();
         }
       }
@@ -257,7 +309,20 @@ class CoreController {
       }
     }
     if (result.isNotEmpty) {
+      await restoreActivatedGeneration();
       return result;
+    }
+    if (isolatedPreparation && preloadInvoke == null) {
+      // Desktop/mobile Runner still has to load the now-active local
+      // generation. Preparation and activation never replace setupConfig.
+      try {
+        final setupResult = await _interface.setupConfig(params);
+        if (setupResult.isNotEmpty) await restoreActivatedGeneration();
+        return setupResult;
+      } on Object {
+        await restoreActivatedGeneration();
+        rethrow;
+      }
     }
     if (isolatedPreparation && preloadInvoke != null) {
       // The isolated stage only publishes immutable artifacts. Runner must
@@ -268,13 +333,24 @@ class CoreController {
       if (path == null || path.isEmpty) {
         result = 'prepared config path is missing';
       } else {
-        result = await _interface.validateCandidateConfigAtPath(path);
+        try {
+          result = await _interface.validateCandidateConfigAtPath(path);
+        } catch (error) {
+          await restoreActivatedGeneration();
+          rethrow;
+        }
       }
     }
     if (result.isNotEmpty) {
+      await restoreActivatedGeneration();
       return result;
     }
-    await preloadInvoke?.call();
+    try {
+      await preloadInvoke?.call();
+    } on Object {
+      await restoreActivatedGeneration();
+      rethrow;
+    }
     return result;
   }
 

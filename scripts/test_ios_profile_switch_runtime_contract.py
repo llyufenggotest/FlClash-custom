@@ -13,10 +13,23 @@ class IOSProfileSwitchRuntimeContract(unittest.TestCase):
         )
         self.assertIn("PreparedGenerationScheduler<RuleGenerationPreparation>", scheduler)
         self.assertIn("preparedGenerationScheduler.prepare", controller)
-        self.assertIn("candidateConfigPath = prepared.configPath", controller)
+        self.assertIn("candidateConfigPath = activatedPath", controller)
         self.assertNotIn("candidate config path is missing", controller)
 
-    def test_profile_switch_selectively_cancels_delay_rpc(self) -> None:
+    def test_ios_generation_writers_never_route_to_ne(self):
+        router = (ROOT / "ios/Runner/Core/CoreMessageRouter.swift").read_text(encoding="utf-8")
+        methods = [
+            "prewarmProxyProvider", "prewarmRuleProvider", "publishRuleGeneration",
+            "activateRuleGeneration", "restoreRuleGeneration", "getPreparedRuleGeneration",
+            "validateStagedConfigAtPath", "validateCandidateConfigAtPath", "deleteManagedPath",
+        ]
+        enum_block = router.split("private enum AppCoreMethod", 1)[1].split("}", 1)[0]
+        for method in methods:
+            self.assertIn(f"case {method}", enum_block)
+        route_block = router.split("private func route(", 1)[1]
+        self.assertIn("AppCoreMethod(rawValue: method) != nil", route_block)
+        self.assertIn("return .app", route_block)
+
         manager = (ROOT / "lib/manager/core_manager.dart").read_text(encoding="utf-8")
         service = (ROOT / "ios/Runner/ServiceChannel.swift").read_text(encoding="utf-8")
         self.assertIn("cancelDelayTests(cancelCoreRequests: true)", manager)

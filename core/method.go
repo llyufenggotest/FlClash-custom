@@ -227,6 +227,9 @@ var methodHandlers = map[CoreMethod]methodHandler{
 		}
 		response.success(result)
 	}),
+	validateStagedConfigAtPathMethod: withArguments(func(params *ValidateStagedConfigParams, response MethodResponse) {
+		response.success(handleValidateStagedConfig(params))
+	}),
 	validateCandidateConfigAtPathMethod: withArguments(func(params *ValidateCandidateConfigParams, response MethodResponse) {
 		response.success(handleValidateCandidateConfig(params))
 	}),

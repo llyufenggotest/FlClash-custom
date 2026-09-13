@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -26,6 +27,16 @@ void main() {
         fingerprint: any(named: 'fingerprint'),
       ),
     ).thenAnswer((_) async => {});
+    when(
+      () => core.validateStagedConfigAtPath(
+        profileId: any(named: 'profileId'),
+        stagingPath: any(named: 'stagingPath'),
+        candidateConfigPath: any(named: 'candidateConfigPath'),
+      ),
+    ).thenAnswer((_) async => '');
+    when(
+      () => core.validateCandidateConfigAtPath(any()),
+    ).thenAnswer((_) async => '');
   });
 
   tearDown(() => home.deleteSync(recursive: true));
@@ -293,6 +304,233 @@ rules: [RULE-SET,ads,DIRECT]
     );
 
     expect(observedLimit, 32 * 1024 * 1024);
+  });
+
+  test('reuses a verified rule cache across profiles', () async {
+    var downloads = 0;
+    when(
+      () => core.publishRuleGeneration(
+        profileId: any(named: 'profileId'),
+        fingerprint: any(named: 'fingerprint'),
+        generation: any(named: 'generation'),
+        stagingPath: any(named: 'stagingPath'),
+        configPath: any(named: 'configPath'),
+        artifacts: any(named: 'artifacts'),
+      ),
+    ).thenAnswer((invocation) async {
+      final staging = invocation.namedArguments[#stagingPath] as String;
+      final generation = invocation.namedArguments[#generation] as String;
+      final root = Directory(staging).parent.parent.path;
+      final target = p.join(root, 'generations', generation);
+      await Directory(p.dirname(target)).create(recursive: true);
+      await Directory(staging).rename(target);
+      return {'generation': generation, 'config-path': p.join(target, 'config.yaml')};
+    });
+    Future<RuleGenerationPreparation> prepare(int profileId) {
+      return RuleGenerationPreparer(
+        core: core,
+        homeDir: () async => home.path,
+        download: (_, _, _, destinationPath) async {
+          downloads++;
+          return _writeDownload(
+            destinationPath,
+            Uint8List.fromList('example.com\n'.codeUnits),
+          );
+        },
+      ).prepare(
+        profileId: profileId,
+        config: '''
+rule-providers:
+  ads: {type: http, url: https://example.test/ads, behavior: domain, format: text}
+rules: [RULE-SET,ads,DIRECT]
+''',
+      );
+    }
+
+    await prepare(11);
+    await prepare(12);
+    expect(downloads, 1);
+  });
+
+  test('rejects invalid final config before publishing', () async {
+    when(
+      () => core.validateStagedConfigAtPath(
+        profileId: any(named: 'profileId'),
+        stagingPath: any(named: 'stagingPath'),
+        candidateConfigPath: any(named: 'candidateConfigPath'),
+      ),
+    ).thenAnswer((_) async => 'invalid rule reference');
+    await expectLater(
+      RuleGenerationPreparer(
+        core: core,
+        homeDir: () async => home.path,
+        download: (_, _, _, destinationPath) => _writeDownload(
+          destinationPath,
+          Uint8List.fromList('payload:\n  - example.com\n'.codeUnits),
+        ),
+      ).prepare(
+        profileId: 13,
+        config: '''
+rule-providers:
+  ads: {type: http, url: https://example.test/ads, behavior: classical}
+rules: [RULE-SET,ads,DIRECT]
+''',
+      ),
+      throwsA(isA<StateError>().having(
+        (error) => error.message,
+        'message',
+        contains('invalid rule reference'),
+      )),
+    );
+    verifyNever(
+      () => core.publishRuleGeneration(
+        profileId: any(named: 'profileId'),
+        fingerprint: any(named: 'fingerprint'),
+        generation: any(named: 'generation'),
+        stagingPath: any(named: 'stagingPath'),
+        configPath: any(named: 'configPath'),
+        artifacts: any(named: 'artifacts'),
+      ),
+    );
+  });
+
+  test('downloads independent rule providers concurrently with a limit', () async {
+    final started = <String>[];
+    final releases = <Completer<void>>[];
+    when(
+      () => core.publishRuleGeneration(
+        profileId: 8,
+        fingerprint: any(named: 'fingerprint'),
+        generation: any(named: 'generation'),
+        stagingPath: any(named: 'stagingPath'),
+        configPath: any(named: 'configPath'),
+        artifacts: any(named: 'artifacts'),
+      ),
+    ).thenAnswer((invocation) async {
+      final staging = invocation.namedArguments[#stagingPath] as String;
+      final generation = invocation.namedArguments[#generation] as String;
+      final root = Directory(staging).parent.parent.path;
+      final target = p.join(root, 'generations', generation);
+      await Directory(p.dirname(target)).create(recursive: true);
+      await Directory(staging).rename(target);
+      return {
+        'generation': generation,
+        'config-path': p.join(target, 'config.yaml'),
+      };
+    });
+    final future = RuleGenerationPreparer(
+      core: core,
+      homeDir: () async => home.path,
+      download: (url, _, _, destinationPath) async {
+        started.add(url);
+        final release = Completer<void>();
+        releases.add(release);
+        await release.future;
+        return _writeDownload(
+          destinationPath,
+          Uint8List.fromList('payload:\n  - example.com\n'.codeUnits),
+        );
+      },
+    ).prepare(
+      profileId: 8,
+      config: '''
+rule-providers:
+  a: {type: http, url: https://example.test/a, behavior: classical}
+  b: {type: http, url: https://example.test/b, behavior: classical}
+  c: {type: http, url: https://example.test/c, behavior: classical}
+  d: {type: http, url: https://example.test/d, behavior: classical}
+  e: {type: http, url: https://example.test/e, behavior: classical}
+rules: []
+''',
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(started.length, 4);
+    for (final release in releases.toList()) {
+      release.complete();
+    }
+    await Future<void>.delayed(Duration.zero);
+    expect(started.length, 5);
+    releases.last.complete();
+    await future;
+  });
+
+  test('shares the limit across proxy and rule providers', () async {
+    var active = 0;
+    var maximum = 0;
+    final releases = <Completer<void>>[];
+    Future<void> block() async {
+      active++;
+      if (active > maximum) maximum = active;
+      final release = Completer<void>();
+      releases.add(release);
+      await release.future;
+      active--;
+    }
+    when(
+      () => core.prewarmProxyProvider(
+        name: any(named: 'name'),
+        definition: any(named: 'definition'),
+        targetPath: any(named: 'targetPath'),
+        timeoutMilliseconds: any(named: 'timeoutMilliseconds'),
+      ),
+    ).thenAnswer((invocation) async {
+      final target = invocation.namedArguments[#targetPath] as String;
+      await block();
+      final bytes = Uint8List.fromList('proxies:\n  - {name: x, type: direct}\n'.codeUnits);
+      await File(target).parent.create(recursive: true);
+      await File(target).writeAsBytes(bytes);
+      return {'path': target, 'digest': sha256.convert(bytes).toString(), 'count': 1};
+    });
+    when(
+      () => core.publishRuleGeneration(
+        profileId: any(named: 'profileId'),
+        fingerprint: any(named: 'fingerprint'),
+        generation: any(named: 'generation'),
+        stagingPath: any(named: 'stagingPath'),
+        configPath: any(named: 'configPath'),
+        artifacts: any(named: 'artifacts'),
+      ),
+    ).thenAnswer((invocation) async {
+      final staging = invocation.namedArguments[#stagingPath] as String;
+      final generation = invocation.namedArguments[#generation] as String;
+      final target = p.join(Directory(staging).parent.parent.path, 'generations', generation);
+      await Directory(p.dirname(target)).create(recursive: true);
+      await Directory(staging).rename(target);
+      return {'generation': generation, 'config-path': p.join(target, 'config.yaml')};
+    });
+    final future = RuleGenerationPreparer(
+      core: core,
+      homeDir: () async => home.path,
+      download: (_, _, _, destinationPath) async {
+        await block();
+        return _writeDownload(
+          destinationPath,
+          Uint8List.fromList('payload:\n  - example.com\n'.codeUnits),
+        );
+      },
+    ).prepare(
+      profileId: 14,
+      config: '''
+proxy-providers:
+  p1: {type: http, url: https://example.test/p1}
+  p2: {type: http, url: https://example.test/p2}
+  p3: {type: http, url: https://example.test/p3}
+rule-providers:
+  r1: {type: http, url: https://example.test/r1, behavior: classical}
+  r2: {type: http, url: https://example.test/r2, behavior: classical}
+rules: []
+''',
+    );
+    await pumpEventQueue(times: 20);
+    expect(releases.length, 4);
+    for (final release in releases.toList()) {
+      release.complete();
+    }
+    await pumpEventQueue(times: 20);
+    expect(releases.length, 5);
+    releases.last.complete();
+    await future;
+    expect(maximum, 4);
   });
 
   test(

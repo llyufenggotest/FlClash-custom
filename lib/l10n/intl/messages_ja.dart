@@ -953,6 +953,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "routes": MessageLookupByLibrary.simpleMessage("ルート"),
     "ru": MessageLookupByLibrary.simpleMessage("ロシア語"),
     "rule": MessageLookupByLibrary.simpleMessage("ルール"),
+    "rulePreparationProgress": MessageLookupByLibrary.simpleMessage(
+      "ルールリソースを準備中",
+    ),
     "ruleActionAndDesc": MessageLookupByLibrary.simpleMessage("論理ルール AND"),
     "ruleActionDomainDesc": MessageLookupByLibrary.simpleMessage("完全なドメインにマッチ"),
     "ruleActionDomainKeywordDesc": MessageLookupByLibrary.simpleMessage(

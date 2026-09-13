@@ -48,6 +48,7 @@ enum CoreMethod {
   activateRuleGeneration,
   restoreRuleGeneration,
   getPreparedRuleGeneration,
+  validateStagedConfigAtPath,
   validateCandidateConfigAtPath,
   setupConfig,
   clearEffect,

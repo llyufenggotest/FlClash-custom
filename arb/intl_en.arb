@@ -765,5 +765,6 @@
   "tailscaleNeedsMachineAuth": "Device approval required",
   "networking": "Networking",
   "networkingDesc": "View status of P2P networks",
-  "networkingNoOutbounds": "No P2P outbound in the current configuration"
+  "networkingNoOutbounds": "No P2P outbound in the current configuration",
+  "rulePreparationProgress": "Preparing rule resources"
 }

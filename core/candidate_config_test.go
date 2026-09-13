@@ -74,6 +74,67 @@ func TestSetupConfigAdmitsCandidateInsteadOfFormalConfig(t *testing.T) {
 	}
 }
 
+func TestValidateStagedCandidatePerformsSemanticParsingWithoutAdmission(t *testing.T) {
+	home := t.TempDir()
+	oldHome := C.Path.HomeDir()
+	C.SetHomeDir(home)
+	defer C.SetHomeDir(oldHome)
+	oldInit := isInit.Load()
+	isInit.Store(true)
+	defer isInit.Store(oldInit)
+
+	staging := filepath.Join(home, "prewarm", "7", "staging", "download_1")
+	if err := os.MkdirAll(staging, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	valid := filepath.Join(staging, "config.yaml")
+	if err := os.WriteFile(valid, []byte("mode: direct\nrules:\n  - MATCH,DIRECT\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	params := &ValidateStagedConfigParams{ProfileID: 7, StagingPath: staging, CandidateConfigPath: valid}
+	if result := handleValidateStagedConfig(params); result != "" {
+		t.Fatalf("valid staged config rejected: %s", result)
+	}
+	if err := os.WriteFile(valid, []byte("rules: [invalid"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if result := handleValidateStagedConfig(params); result == "" {
+		t.Fatal("semantically invalid staged config was accepted")
+	}
+	if result := handleValidateCandidateConfig(&ValidateCandidateConfigParams{CandidateConfigPath: valid}); result == "" {
+		t.Fatal("staged config leaked through active candidate admission")
+	}
+}
+
+func TestValidateStagedCandidateRejectsMismatchedScope(t *testing.T) {
+	home := t.TempDir()
+	oldHome := C.Path.HomeDir()
+	C.SetHomeDir(home)
+	defer C.SetHomeDir(oldHome)
+	oldInit := isInit.Load()
+	isInit.Store(true)
+	defer isInit.Store(oldInit)
+
+	staging := filepath.Join(home, "prewarm", "7", "staging", "download_1")
+	if err := os.MkdirAll(staging, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	candidate := filepath.Join(staging, "config.yaml")
+	if err := os.WriteFile(candidate, []byte("mode: direct\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cases := []*ValidateStagedConfigParams{
+		{ProfileID: 8, StagingPath: staging, CandidateConfigPath: candidate},
+		{ProfileID: 7, StagingPath: filepath.Dir(staging), CandidateConfigPath: candidate},
+		{ProfileID: 7, StagingPath: staging, CandidateConfigPath: filepath.Join(home, "config.yaml")},
+	}
+	for _, params := range cases {
+		if result := handleValidateStagedConfig(params); result == "" {
+			t.Fatalf("unsafe staged scope accepted: %+v", params)
+		}
+	}
+}
+
 func TestValidateCandidateConfigOnlyAdmitsPublishedArtifact(t *testing.T) {
 	home := t.TempDir()
 	oldHome := C.Path.HomeDir()

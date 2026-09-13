@@ -55,6 +55,16 @@ class AppLocalizations {
     return Localizations.of<AppLocalizations>(context, AppLocalizations);
   }
 
+  /// `Preparing rule resources`
+  String get rulePreparationProgress {
+    return Intl.message(
+      'Preparing rule resources',
+      name: 'rulePreparationProgress',
+      desc: '',
+      args: [],
+    );
+  }
+
   /// `Rule`
   String get rule {
     return Intl.message('Rule', name: 'rule', desc: '', args: []);

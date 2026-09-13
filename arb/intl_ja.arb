@@ -765,5 +765,6 @@
   "tailscaleNeedsMachineAuth": "デバイスの承認が必要",
   "networking": "メッシュネットワーク",
   "networkingDesc": "P2P ネットワークの状態を表示",
-  "networkingNoOutbounds": "現在の設定に P2P アウトバウンドはありません"
+  "networkingNoOutbounds": "現在の設定に P2P アウトバウンドはありません",
+  "rulePreparationProgress": "ルールリソースを準備中"
 }

@@ -60,6 +60,12 @@ type ValidateCandidateConfigParams struct {
 	CandidateConfigPath string `json:"candidate-config-path"`
 }
 
+type ValidateStagedConfigParams struct {
+	ProfileID           int64  `json:"profile-id"`
+	StagingPath         string `json:"staging-path"`
+	CandidateConfigPath string `json:"candidate-config-path"`
+}
+
 type UpdateParams struct {
 	Tun                *tunSchema         `json:"tun"`
 	AllowLan           *bool              `json:"allow-lan"`
@@ -259,6 +265,7 @@ const (
 	activateRuleGenerationMethod         CoreMethod = "activateRuleGeneration"
 	restoreRuleGenerationMethod          CoreMethod = "restoreRuleGeneration"
 	getPreparedRuleGenerationMethod      CoreMethod = "getPreparedRuleGeneration"
+	validateStagedConfigAtPathMethod     CoreMethod = "validateStagedConfigAtPath"
 	validateCandidateConfigAtPathMethod  CoreMethod = "validateCandidateConfigAtPath"
 	setupConfigMethod                    CoreMethod = "setupConfig"
 	parseProfileConfigDataMethod         CoreMethod = "parseProfileConfigData"

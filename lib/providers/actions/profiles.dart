@@ -251,9 +251,9 @@ class ProfilesAction extends _$ProfilesAction {
   Future<void> putPreparedProfile(
     Profile profile,
     String candidateYaml,
-  ) {
+  ) async {
     final existing = ref.read(profilesProvider).getProfile(profile.id);
-    return _commitPreparedProfile(
+    await _commitPreparedProfile(
       profile: profile,
       candidateYaml: candidateYaml,
       isNew: existing == null,
@@ -263,6 +263,10 @@ class ProfilesAction extends _$ProfilesAction {
               ref.read(profilesProvider).getProfile(profile.id),
               existing,
             ),
+    );
+    await ref.read(setupActionProvider.notifier).applyProfile(
+      force: true,
+      allowRuleGenerationPreparation: true,
     );
   }
 
@@ -304,6 +308,10 @@ class ProfilesAction extends _$ProfilesAction {
         commitGuard: () => _isCurrentProfileUpdate(profile.id, generation),
         postCommitGuard: () =>
             _isCurrentProfileUpdate(profile.id, generation),
+      );
+      await ref.read(setupActionProvider.notifier).applyProfile(
+        force: true,
+        allowRuleGenerationPreparation: true,
       );
     } finally {
       if (operation != null) {

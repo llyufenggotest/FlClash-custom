@@ -1141,6 +1141,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "routes": MessageLookupByLibrary.simpleMessage("Routes"),
     "ru": MessageLookupByLibrary.simpleMessage("Russian"),
     "rule": MessageLookupByLibrary.simpleMessage("Rule"),
+    "rulePreparationProgress": MessageLookupByLibrary.simpleMessage(
+      "Preparing rule resources",
+    ),
     "ruleActionAndDesc": MessageLookupByLibrary.simpleMessage(
       "Logical rule AND",
     ),
