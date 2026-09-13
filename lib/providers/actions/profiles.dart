@@ -168,6 +168,7 @@ class ProfilesAction extends _$ProfilesAction {
     required String candidateYaml,
     required bool isNew,
     bool Function()? commitGuard,
+    bool Function()? postCommitGuard,
   }) async {
     await _withProfileTransaction(profile.id, () async {
       if (commitGuard != null && !commitGuard()) return;
@@ -197,7 +198,7 @@ class ProfilesAction extends _$ProfilesAction {
         await temporary.rename(target.path);
         try {
           await ref.read(profilesProvider.notifier).putAsync(profile);
-          if (commitGuard != null && !commitGuard()) {
+          if (postCommitGuard != null && !postCommitGuard()) {
             throw StateError('profile commit is no longer current');
           }
           if (preparation != null) {
@@ -301,6 +302,8 @@ class ProfilesAction extends _$ProfilesAction {
         candidateYaml: prepared.content,
         isNew: false,
         commitGuard: () => _isCurrentProfileUpdate(profile.id, generation),
+        postCommitGuard: () =>
+            _isCurrentProfileUpdate(profile.id, generation),
       );
     } finally {
       if (operation != null) {
