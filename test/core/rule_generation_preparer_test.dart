@@ -6,6 +6,7 @@ import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 import 'package:fl_clash/common/request.dart';
 import 'package:fl_clash/core/interface.dart';
+import 'package:fl_clash/core/rule_generation_preparation.dart';
 import 'package:fl_clash/core/rule_generation_preparer.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';

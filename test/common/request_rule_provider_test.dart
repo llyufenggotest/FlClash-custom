@@ -196,7 +196,9 @@ final class _RuleProviderAdapter implements HttpClientAdapter {
     Stream<Uint8List>? requestStream,
     Future<void>? cancelFuture,
   ) async {
-    cancelFuture?.then((_) => cancelled = true);
+    if (cancelFuture != null) {
+      unawaited(cancelFuture.then((_) => cancelled = true));
+    }
     return response(options, cancelFuture);
   }
 

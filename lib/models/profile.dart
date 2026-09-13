@@ -39,7 +39,7 @@ Future<bool> _commitProfileFile({
   } finally {
     completer.complete();
     if (_profileCommitOwners[target.path] == owner) {
-      _profileCommitTails.remove(target.path);
+      unawaited(_profileCommitTails.remove(target.path));
       _profileCommitOwners.remove(target.path);
     }
   }

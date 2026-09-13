@@ -11,8 +11,9 @@ final class SingleValueSink<T> implements Sink<T> {
 
   @override
   void add(T data) {
-    if (_hasValue)
+    if (_hasValue) {
       throw StateError('chunked conversion produced multiple values');
+    }
     _value = data;
     _hasValue = true;
   }

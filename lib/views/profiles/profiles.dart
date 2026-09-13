@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:fl_clash/common/common.dart';
+import 'package:fl_clash/core/rule_generation_preparation.dart';
 import 'package:fl_clash/l10n/l10n.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
@@ -167,7 +168,7 @@ class _ProfilesViewState extends ConsumerState<ProfilesView> {
                           Expanded(
                             child: Text(
                               '${appLocalizations.rulePreparationProgress}: '
-                              '${_localizedPhase(appLocalizations, progress!.phase)} · '
+                              '${_localizedPhase(appLocalizations, progress.phase)} · '
                               '${_localizedKind(appLocalizations, progress.kind)}/${progress.name} · '
                               '${p.basename(progress.path)}',
                             ),

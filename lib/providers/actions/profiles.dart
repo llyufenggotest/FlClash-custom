@@ -20,7 +20,7 @@ class ProfilesAction extends _$ProfilesAction {
     } finally {
       completer.complete();
       if (identical(_profileTransactionTails[profileId], completer.future)) {
-        _profileTransactionTails.remove(profileId);
+        unawaited(_profileTransactionTails.remove(profileId));
       }
     }
   }
