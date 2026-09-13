@@ -837,6 +837,7 @@ class _TestSetupAction extends SetupAction {
     bool silence = false,
     bool force = false,
     bool profileSwitched = false,
+    bool allowRuleGenerationPreparation = false,
     bool Function()? activationGuard,
     Future<void> Function()? preloadInvoke,
   }) async {
@@ -924,6 +925,7 @@ class _InitializingSetupAction extends _RaceSetupAction {
     bool silence = false,
     bool force = false,
     bool profileSwitched = false,
+    bool allowRuleGenerationPreparation = false,
     bool Function()? activationGuard,
     Future<void> Function()? preloadInvoke,
   }) async {

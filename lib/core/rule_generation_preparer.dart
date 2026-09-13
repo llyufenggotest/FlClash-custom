@@ -582,7 +582,7 @@ class RuleGenerationPreparer {
       }
       await File(destinationPath).parent.create(recursive: true);
       final temporaryDestination = File(
-        '${destinationPath}.tmp.$pid.${DateTime.now().microsecondsSinceEpoch}.${_cacheNonce++}',
+        '$destinationPath.tmp.$pid.${DateTime.now().microsecondsSinceEpoch}.${_cacheNonce++}',
       );
       try {
         await source.copy(temporaryDestination.path);
@@ -670,7 +670,7 @@ class RuleGenerationPreparer {
       Error.throwWithStackTrace(error, stack);
     } finally {
       if (identical(_providerCacheFlights[flightKey], completer.future)) {
-        _providerCacheFlights.remove(flightKey);
+        unawaited(_providerCacheFlights.remove(flightKey));
       }
     }
   }

@@ -644,7 +644,7 @@ class SetupAction extends _$SetupAction {
     Future<void> Function()? preloadInvoke,
     FutureOr Function()? onUpdated,
   }) async {
-    var profile = expectedProfileId == null
+    final profile = expectedProfileId == null
         ? recoverMissingProfile()
         : ref.read(profilesProvider).getProfile(expectedProfileId);
     commonPrint.log('setup ===> ${profile?.realLabel}');
