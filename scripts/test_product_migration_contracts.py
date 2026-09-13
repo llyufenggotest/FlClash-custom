@@ -17,6 +17,27 @@ class ProductMigrationContractTest(unittest.TestCase):
         self.assertLess(normalize, decrypt)
         self.assertLess(decrypt, validate)
 
+    def test_profile_import_keeps_prepare_and_commit_in_one_loading_boundary(self):
+        source = self.read("lib/providers/actions/profiles.dart")
+        self.assertIn("Future<void> _addPreparedProfile", source)
+        self.assertIn("await putPreparedProfile(prepared.profile, prepared.content)", source)
+        helper_start = source.index("Future<void> _addPreparedProfile")
+        helper_end = source.index("Future<void> addOppaProfile", helper_start)
+        helper = source[helper_start:helper_end]
+        self.assertIn("globalState.loadingRun<void>", helper)
+        self.assertLess(
+            helper.index("globalState.loadingRun<void>"),
+            helper.index("await putPreparedProfile"),
+        )
+        self.assertIn("showCoreUnavailableErrors: true", helper)
+        state = self.read("lib/state.dart")
+        self.assertIn("bool showCoreUnavailableErrors = false", state)
+        self.assertIn(
+            "if (!showCoreUnavailableErrors && isCoreUnavailableError(e))",
+            state,
+        )
+        self.assertIn("final prepared = await futureFunction();", helper)
+
     def test_file_url_and_qr_share_prepare_pipeline(self):
         source = self.read("lib/providers/actions/profiles.dart")
         self.assertIn("prepareFile(bytes, prepare: prepareProfileConfig)", source)

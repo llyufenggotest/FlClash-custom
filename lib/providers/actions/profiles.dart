@@ -311,18 +311,30 @@ class ProfilesAction extends _$ProfilesAction {
     }
   }
 
-  Future<void> addOppaProfile(OppaProxyConfig config) async {
-    final prepared = await globalState.loadingRun(
+  Future<void> _addPreparedProfile({
+    required Future<PreparedProfileContent> Function() futureFunction,
+  }) async {
+    await globalState.loadingRun<void>(
       tag: LoadingTag.profiles,
-      () => Profile.normal(label: config.name).prepareFile(
+      () async {
+        final prepared = await futureFunction();
+        if (prepared.content.isEmpty) {
+          throw StateError('candidate profile rendered an empty configuration');
+        }
+        await putPreparedProfile(prepared.profile, prepared.content);
+      },
+      title: currentAppLocalizations.addProfile,
+      showCoreUnavailableErrors: true,
+    );
+  }
+
+  Future<void> addOppaProfile(OppaProxyConfig config) async {
+    await _addPreparedProfile(
+      futureFunction: () => Profile.normal(label: config.name).prepareFile(
         Uint8List.fromList(utf8.encode(config.toYaml())),
         prepare: prepareProfileConfig,
       ),
-      title: currentAppLocalizations.addProfile,
     );
-    if (prepared != null) {
-      await putPreparedProfile(prepared.profile, prepared.content);
-    }
   }
 
   Future<void> addProfileFromDroppedFile({
@@ -331,16 +343,11 @@ class ProfilesAction extends _$ProfilesAction {
   }) async {
     globalState.navigatorKey.currentState?.popUntil((route) => route.isFirst);
     ref.read(currentPageLabelProvider.notifier).toProfiles();
-    final prepared = await globalState.loadingRun(
-      tag: LoadingTag.profiles,
-      () => Profile.normal(
+    await _addPreparedProfile(
+      futureFunction: () => Profile.normal(
         label: name,
       ).prepareFile(bytes, prepare: prepareProfileConfig),
-      title: currentAppLocalizations.addProfile,
     );
-    if (prepared != null) {
-      await putPreparedProfile(prepared.profile, prepared.content);
-    }
   }
 
   Future<void> addProfileFormFile() async {
@@ -357,19 +364,12 @@ class ProfilesAction extends _$ProfilesAction {
       globalState.navigatorKey.currentState?.popUntil((route) => route.isFirst);
     }
     ref.read(currentPageLabelProvider.notifier).value = PageLabel.profiles;
-    final prepared = await globalState.loadingRun(
-      tag: LoadingTag.profiles,
-      () async {
-        return Profile.normal(
-          url: url,
-          ageSecretKey: ageSecretKey,
-        ).prepareUpdate(prepare: prepareProfileConfig);
-      },
-      title: currentAppLocalizations.addProfile,
+    await _addPreparedProfile(
+      futureFunction: () => Profile.normal(
+        url: url,
+        ageSecretKey: ageSecretKey,
+      ).prepareUpdate(prepare: prepareProfileConfig),
     );
-    if (prepared != null && prepared.content.isNotEmpty) {
-      await putPreparedProfile(prepared.profile, prepared.content);
-    }
   }
 
   void setProfileAndAutoApply(Profile profile) {

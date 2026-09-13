@@ -69,10 +69,12 @@ class GlobalState {
     String? title,
     required LoadingTag? tag,
     bool silence = false,
+    bool showCoreUnavailableErrors = false,
   }) async {
     return globalState.safeRun(
       futureFunction,
       silence: silence,
+      showCoreUnavailableErrors: showCoreUnavailableErrors,
       title: title,
       onStart: () {
         if (tag != null) {
@@ -93,6 +95,7 @@ class GlobalState {
     VoidCallback? onStart,
     VoidCallback? onEnd,
     bool silence = true,
+    bool showCoreUnavailableErrors = false,
   }) async {
     try {
       onStart?.call();
@@ -104,7 +107,7 @@ class GlobalState {
             : '$title ===> ${compactError(e)}, $s',
         logLevel: LogLevel.warning,
       );
-      if (isCoreUnavailableError(e)) {
+      if (!showCoreUnavailableErrors && isCoreUnavailableError(e)) {
         return null;
       }
       final message = userFacingErrorMessage(e, currentAppLocalizations);
