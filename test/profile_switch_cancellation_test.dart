@@ -49,7 +49,63 @@ void main() {
       expect(router, contains('CoreRoute.app, CoreRoute.networkExtension'));
       final mailbox = source('ios/NECore/ProviderMessageMailbox.swift');
       expect(mailbox, contains('method == "cancelDelayTests"'));
-      expect(mailbox, contains('outstanding < maxOutstanding + 1'));
+      expect(mailbox, contains('interruptOutstanding < 1'));
+      expect(mailbox, contains('configurationOutstanding < 1'));
+    });
+
+    test('profile switch controls bypass normal Runner admission', () {
+      final tunnel = source(
+        'ios/Runner/Tunnel/TunnelController.swift',
+      );
+      final router = source('ios/Runner/Core/CoreMessageRouter.swift');
+      expect(tunnel, contains('providerMessageLane'));
+      expect(tunnel, contains('acquireProviderMessageSlot(lane:'));
+      expect(tunnel, contains('case interrupt'));
+      expect(tunnel, contains('case configuration'));
+      expect(tunnel, contains('method == "setupConfig"'));
+      expect(tunnel, contains('method == "updateConfig"'));
+      expect(tunnel, contains('mailboxOnlySession'));
+      expect(router, contains('setProfileSwitchProbeBarrier'));
+      expect(router, contains('control: true'));
+      expect(router, contains('Release must converge every route'));
+      expect(router, contains('continue'));
+    });
+
+    test('profile switch suspends new probes until current setup finishes', () {
+      final setup = source('lib/providers/actions/setup.dart');
+      final service = source('lib/plugins/service.dart');
+      final goConstants = source('core/constant.go');
+      final goMethods = source('core/method.go');
+      expect(service, contains('setProfileSwitchProbeBarrier'));
+      expect(setup, contains('suspended: true'));
+      expect(setup, contains('suspended: false'));
+      expect(setup, contains('barrierToken'));
+      expect(setup, contains('barrierResumed'));
+      expect(setup, contains('generation != _profileSwitchGeneration'));
+      expect(goConstants, contains('setProfileSwitchProbeBarrierMethod'));
+      expect(goMethods, contains('setProfileSwitchProbeBarrier(params.Token, params.Suspended)'));
+      final barrier = source('core/profile_switch_probe_barrier.go');
+      expect(barrier, contains('provider.SuspendHealthCheck(providerHealthChecksSuspended())'));
+      expect(barrier, contains('profileSwitchProbeAdmissionCurrent'));
+      expect(barrier, contains('cancelDelayTests()'));
+      final extensionScheduler = source('core/delay_scheduler_extension.go');
+      final defaultScheduler = source('core/delay_scheduler_default.go');
+      expect(
+        extensionScheduler,
+        contains('profileSwitchProbeAdmissionSnapshot()'),
+      );
+      expect(
+        extensionScheduler,
+        contains('profileSwitchProbeAdmissionCurrent(epoch)'),
+      );
+      expect(
+        defaultScheduler,
+        contains('profileSwitchProbeAdmissionSnapshot()'),
+      );
+      expect(
+        defaultScheduler,
+        contains('profileSwitchProbeAdmissionCurrent(epoch)'),
+      );
     });
 
     test('late proxy and provider refreshes are generation guarded', () {

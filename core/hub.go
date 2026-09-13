@@ -22,7 +22,6 @@ import (
 	"github.com/metacubex/mihomo/adapter"
 	"github.com/metacubex/mihomo/adapter/outbound"
 	"github.com/metacubex/mihomo/adapter/outboundgroup"
-	"github.com/metacubex/mihomo/adapter/provider"
 	"github.com/metacubex/mihomo/common/observable"
 	"github.com/metacubex/mihomo/common/utils"
 	"github.com/metacubex/mihomo/component/age"
@@ -986,7 +985,7 @@ var refreshHealthChecks = defaultRefreshHealthChecks
 
 func handleSuspend(suspended bool) bool {
 	wasSuspended := isSuspended.Swap(suspended)
-	provider.SuspendHealthCheck(suspended)
+	updateProviderHealthCheckSuspension()
 	if suspended {
 		tunnel.OnSuspend()
 		return true
@@ -997,7 +996,7 @@ func handleSuspend(suspended bool) bool {
 	// refresh immediately instead of waiting for the next interval. Do not probe
 	// while the listeners are stopped: the service also resumes the core on its
 	// way down.
-	if wasSuspended && isRunning.Load() {
+	if wasSuspended && !providerHealthChecksSuspended() && isRunning.Load() {
 		refreshHealthChecks()
 	}
 	return true

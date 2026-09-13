@@ -171,11 +171,81 @@ final class CoreMessageRouter {
     let methodCall = #"{"method":"cancelDelayTests","arguments":null}"#
     for route in [CoreRoute.app, CoreRoute.networkExtension] {
       do {
-        _ = try await sendCoreMessage(Data(methodCall.utf8), route: route)
+        _ = try await sendCoreMessage(
+          Data(methodCall.utf8),
+          route: route,
+          control: true
+        )
       } catch {
         log("cancelDelayTests route=\(route) failed=\(error.localizedDescription)")
       }
     }
+  }
+
+  func setProfileSwitchProbeBarrier(token: String, suspended: Bool) async -> Bool {
+    let arguments: [String: Any] = ["token": token, "suspended": suspended]
+    guard let methodCall = try? JSONSerialization.data(withJSONObject: [
+      "method": "setProfileSwitchProbeBarrier",
+      "arguments": arguments,
+    ]) else { return false }
+    let requiredRoutes: [CoreRoute] = currentRoute == .networkExtension
+      ? [.app, .networkExtension]
+      : [.app]
+    var attemptedRoutes: [CoreRoute] = []
+    var allSucceeded = true
+    for route in requiredRoutes {
+      attemptedRoutes.append(route)
+      var routeSucceeded = false
+      let attempts = suspended ? 1 : 3
+      for _ in 0..<attempts {
+        do {
+          let response = try await sendCoreMessage(
+            methodCall,
+            route: route,
+            control: true
+          )
+          guard methodResponseBooleanResult(response) == true else { throw CoreRoutingError(
+            code: "probe_barrier_rejected",
+            message: "profile switch probe barrier was rejected"
+          ) }
+          routeSucceeded = true
+          break
+        } catch {
+          log("setProfileSwitchProbeBarrier token=\(token) suspended=\(suspended) route=\(route) failed=\(error.localizedDescription)")
+        }
+      }
+      if !routeSucceeded {
+        allSucceeded = false
+        if suspended {
+          // Delivery failure is ambiguous: every attempted route may have
+          // applied the owner token even when its response was lost. Release
+          // all of them; non-owners safely return false.
+          for attemptedRoute in attemptedRoutes.reversed() {
+            for _ in 0..<2 {
+              if let release = try? await sendCoreMessage(
+                profileSwitchProbeBarrierMessage(token: token, suspended: false),
+                route: attemptedRoute,
+                control: true
+              ), methodResponseBooleanResult(release) == true {
+                break
+              }
+            }
+          }
+          return false
+        }
+        // Release must converge every route even when ownership has split.
+        // A stale owner on App must not prevent the same token releasing NE.
+        continue
+      }
+    }
+    return allSucceeded
+  }
+
+  private func profileSwitchProbeBarrierMessage(token: String, suspended: Bool) -> Data {
+    (try? JSONSerialization.data(withJSONObject: [
+      "method": "setProfileSwitchProbeBarrier",
+      "arguments": ["token": token, "suspended": suspended],
+    ])) ?? Data()
   }
 
   func shutdownAppCore() async -> Bool {
@@ -300,7 +370,8 @@ final class CoreMessageRouter {
 
   private func sendCoreMessage(
     _ data: Data,
-    route: CoreRoute
+    route: CoreRoute,
+    control: Bool = false
   ) async throws -> String {
     try Task.checkCancellation()
     switch route {
@@ -349,7 +420,7 @@ final class CoreMessageRouter {
       }
       return response
     case .networkExtension:
-      return try await tunnelController.sendProviderMessage(data)
+      return try await tunnelController.sendProviderMessage(data, control: control)
     }
   }
 
@@ -401,6 +472,14 @@ final class CoreMessageRouter {
       return false
     }
     return object["result"] as? String == ""
+  }
+
+  private func methodResponseBooleanResult(_ response: String) -> Bool? {
+    guard let data = response.data(using: .utf8),
+      let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+      methodResponseSucceeded(object)
+    else { return nil }
+    return object["result"] as? Bool
   }
 
   private func methodResponseSucceeded(_ response: String) -> Bool {

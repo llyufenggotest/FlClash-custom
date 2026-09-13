@@ -48,30 +48,56 @@ class SetupAction extends _$SetupAction {
     int? profileSwitchGeneration,
   }) async {
     if (!ref.read(initProvider)) return true;
-    await ref
-        .read(proxiesActionProvider.notifier)
-        .cancelDelayTests(cancelCoreRequests: system.isIOS && profileSwitched);
-    ref.read(delayDataSourceProvider.notifier).value = {};
     final generation =
         profileSwitchGeneration ??
         (profileSwitched ? beginProfileSwitch() : _profileSwitchGeneration);
     final ownsProfileSelection = profileSwitchGeneration != null;
-    final setupResult = applyProfile(
-      force: true,
-      silence: profileSwitched,
-      profileSwitched: profileSwitched,
-      activationGuard: ownsProfileSelection
-          ? () => generation == _profileSwitchGeneration
-          : null,
-    );
-    ref.read(logsProvider.notifier).value = FixedList(maxLogsLength);
-    ref.read(requestsProvider.notifier).value = FixedList(maxRequestsLength);
+    final barrierToken = '${generation}_${DateTime.now().microsecondsSinceEpoch}';
+    var barrierHeld = false;
+    var setupSucceeded = false;
+    var barrierResumed = true;
     try {
-      return await setupResult;
+      if (system.isIOS && profileSwitched) {
+        barrierHeld = await Service().setProfileSwitchProbeBarrier(
+          token: barrierToken,
+          suspended: true,
+        );
+        if (!barrierHeld || generation != _profileSwitchGeneration) {
+          return false;
+        }
+      }
+      await ref
+          .read(proxiesActionProvider.notifier)
+          .cancelDelayTests(cancelCoreRequests: system.isIOS && profileSwitched);
+      if (generation != _profileSwitchGeneration) return false;
+      ref.read(delayDataSourceProvider.notifier).value = {};
+      final setupResult = applyProfile(
+        force: true,
+        silence: profileSwitched,
+        profileSwitched: profileSwitched,
+        activationGuard: ownsProfileSelection
+            ? () => generation == _profileSwitchGeneration
+            : null,
+      );
+      ref.read(logsProvider.notifier).value = FixedList(maxLogsLength);
+      ref.read(requestsProvider.notifier).value = FixedList(maxRequestsLength);
+      setupSucceeded = await setupResult;
     } catch (e, s) {
       commonPrint.log('fullSetup ===> ${compactError(e)}, $s');
       return false;
+    } finally {
+      // Token ownership prevents an older task from reopening a newer switch.
+      if (barrierHeld) {
+        barrierResumed = await Service().setProfileSwitchProbeBarrier(
+          token: barrierToken,
+          suspended: false,
+        );
+        if (!barrierResumed && generation == _profileSwitchGeneration) {
+          commonPrint.log('failed to resume profile-switch probe barrier');
+        }
+      }
     }
+    return setupSucceeded && barrierResumed;
   }
 
   void _setLocalRunning(bool running) {
@@ -354,6 +380,10 @@ class SetupAction extends _$SetupAction {
   }) async {
     final expectedProfileId = ref.read(currentProfileProvider)?.id;
     final result = await _setupScheduler.run(() {
+      if (activationGuard != null && !activationGuard()) {
+        commonPrint.log('dropping stale setup before execution');
+        return Future.value(_SetupTaskResult.completed);
+      }
       return _setupConfig(
         force: force,
         silence: silence,

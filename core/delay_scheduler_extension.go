@@ -21,9 +21,20 @@ func scheduleDelayTest(
 	rejected func(),
 	panicHandler func(any),
 ) {
+	epoch, blocked := profileSwitchProbeAdmissionSnapshot()
+	if blocked {
+		rejected()
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	ctx, release, err := manualProbes.Acquire(ctx)
 	if err != nil {
+		cancel()
+		rejected()
+		return
+	}
+	if !profileSwitchProbeAdmissionCurrent(epoch) {
+		release()
 		cancel()
 		rejected()
 		return
