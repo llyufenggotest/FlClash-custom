@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:fl_clash/core/rule_generation_preparer.dart';
+import 'package:fl_clash/core/rule_generation_preparation.dart';
 
 /// Deduplicates only concurrent preparation. Durable readiness belongs to the
 /// core manifest and must be queried before every later connection.
