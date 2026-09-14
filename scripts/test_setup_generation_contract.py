@@ -13,8 +13,10 @@ class SetupGenerationContracts(unittest.TestCase):
         setup = (ROOT / "lib/providers/actions/setup.dart").read_text(encoding="utf-8")
         self.assertIn("allowRuleGenerationPreparation = false", setup)
         profiles = (ROOT / "lib/providers/actions/profiles.dart").read_text(encoding="utf-8")
-        self.assertIn("allowRuleGenerationPreparation: true", profiles)
-        self.assertIn("applyProfile(\n      force: true,\n      allowRuleGenerationPreparation: true,", profiles)
+        self.assertIn("ProfileCommitPreparationPolicy.validateAndCommitOnly", profiles)
+        self.assertIn("ProfileCommitPreparationPolicy.prepareAndActivate", profiles)
+        self.assertIn("allowRuleGenerationPreparation: true", setup)
+        self.assertIn("profileSwitched: profileSwitched", setup)
         self.assertIn("allowRuleGenerationPreparation: allowRuleGenerationPreparation", setup)
 
     def test_progress_is_riverpod_backed_and_visible(self):
