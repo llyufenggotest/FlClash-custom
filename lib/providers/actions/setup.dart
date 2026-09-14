@@ -824,6 +824,7 @@ class SetupAction extends _$SetupAction {
                 (value) => value is YamlMap && value['type'] != 'inline',
               );
           final requiresCommittedGeneration =
+              profileSwitched &&
               parsedSetupConfig is YamlMap &&
               (hasExternalProvider(parsedSetupConfig['rule-providers']) ||
                   hasExternalProvider(parsedSetupConfig['proxy-providers']));
