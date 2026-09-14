@@ -11,7 +11,7 @@ class SetupGenerationContracts(unittest.TestCase):
         self.assertIn("getPreparedRuleGeneration", source)
         self.assertIn("return _interface.setupConfig(params);", source)
         setup = (ROOT / "lib/providers/actions/setup.dart").read_text(encoding="utf-8")
-        self.assertIn("allowRuleGenerationPreparation = false", setup)
+        self.assertIn("allowRuleGenerationPreparation = true", setup)
         profiles = (ROOT / "lib/providers/actions/profiles.dart").read_text(encoding="utf-8")
         self.assertNotIn("ProfileCommitPreparationPolicy", profiles)
         self.assertIn(".saveFile(bytes, prepare: prepareProfileConfig)", profiles)

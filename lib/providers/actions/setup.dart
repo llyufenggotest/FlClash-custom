@@ -489,7 +489,7 @@ class SetupAction extends _$SetupAction {
     bool silence = false,
     bool force = false,
     bool profileSwitched = false,
-    bool allowRuleGenerationPreparation = false,
+    bool allowRuleGenerationPreparation = true,
     bool Function()? activationGuard,
     Future<void> Function()? preloadInvoke,
     ProfileSwitchPhaseTimer? timing,
