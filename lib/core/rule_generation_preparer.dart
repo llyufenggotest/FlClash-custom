@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
@@ -13,6 +14,10 @@ import 'package:yaml/yaml.dart';
 const _defaultRuleProviderLimit = 32 * 1024 * 1024;
 const _classicalRuleLimit = 10000;
 const _providerDownloadConcurrency = 4;
+const _providerDownloadMaxAttempts = 3;
+const _providerDownloadRetryBase = Duration(milliseconds: 250);
+const _providerDownloadRetryCap = Duration(seconds: 1);
+const _providerDownloadRetryBudget = Duration(seconds: 2);
 
 class _AsyncLimiter {
   final int limit;
@@ -57,6 +62,9 @@ class RuleGenerationPreparer {
   final CoreInterface core;
   final RuleProviderDownload _download;
   final Future<String> Function() _homeDir;
+  final Future<void> Function(Duration duration) _sleeper;
+  final DateTime Function() _clock;
+  final double Function() _retryJitter;
   final void Function(RulePreparationProgress progress)? _onProgress;
   int _activeProfileId = 0;
   late final String _operationId = '${pid}_${DateTime.now().microsecondsSinceEpoch}';
@@ -65,9 +73,15 @@ class RuleGenerationPreparer {
     required this.core,
     RuleProviderDownload? download,
     Future<String> Function()? homeDir,
+    Future<void> Function(Duration duration)? sleeper,
+    DateTime Function()? clock,
+    double Function()? retryJitter,
     void Function(RulePreparationProgress progress)? onProgress,
   }) : _download = download ?? _downloadWithSharedRequest,
        _homeDir = homeDir ?? (() => appPath.homeDirPath),
+       _sleeper = sleeper ?? Future<void>.delayed,
+       _clock = clock ?? DateTime.now,
+       _retryJitter = retryJitter ?? Random().nextDouble,
        _onProgress = onProgress;
 
   Future<RuleGenerationPreparation?> findPrepared({
@@ -480,21 +494,39 @@ class RuleGenerationPreparer {
         );
         if (cached != null) return cached;
         RuleProviderFileDownload downloaded;
-        try {
-          downloaded = await _download(
-            url,
-            _headers(definition['header']),
-            _sizeLimit(definition),
-            destinationPath,
-          );
-        } on Object catch (error) {
-          throw StateError(
-            'rule provider "$name" download failed: ${compactError(error)}',
-          );
+        var attempts = 0;
+        final retryStartedAt = _clock();
+        Object? lastError;
+        while (attempts < _providerDownloadMaxAttempts) {
+          attempts++;
+          try {
+            downloaded = await _download(
+              url,
+              _headers(definition['header']),
+              _sizeLimit(definition),
+              destinationPath,
+            );
+            final verified = await _verifyDownload(downloaded);
+            await _writeCachedProvider(cacheRoot, definition, verified);
+            return verified;
+          } on Object catch (error) {
+            lastError = error;
+            final canRetry =
+                attempts < _providerDownloadMaxAttempts &&
+                _isTransientDownloadError(error);
+            if (!canRetry) break;
+            final delay = _retryDelay(attempts);
+            if (_clock().difference(retryStartedAt) + delay >
+                _providerDownloadRetryBudget) {
+              break;
+            }
+            await _sleeper(delay);
+          }
         }
-        final verified = await _verifyDownload(downloaded);
-        await _writeCachedProvider(cacheRoot, definition, verified);
-        return verified;
+        throw StateError(
+          'rule provider "$name" download failed after $attempts attempt${attempts == 1 ? '' : 's'}: '
+          '${compactError(lastError)}',
+        );
       case 'file':
         final path = definition['path']?.toString() ?? '';
         if (path.isEmpty || !p.isAbsolute(path)) {
@@ -537,6 +569,36 @@ class RuleGenerationPreparer {
         throw UnsupportedError(
           'rule provider "$name" has unsupported type "$type"',
         );
+    }
+  }
+
+  Duration _retryDelay(int failedAttempt) {
+    final exponential = _providerDownloadRetryBase.inMilliseconds *
+        (1 << (failedAttempt - 1));
+    final capped = min(exponential, _providerDownloadRetryCap.inMilliseconds);
+    final jitterSample = _retryJitter();
+    final normalizedJitter = jitterSample.isFinite
+        ? jitterSample.clamp(0.0, 1.0).toDouble()
+        : 0.0;
+    final jitter = (normalizedJitter * capped * 0.25).round();
+    return Duration(milliseconds: capped + jitter);
+  }
+
+  bool _isTransientDownloadError(Object error) {
+    if (error is! DioException) return false;
+    switch (error.type) {
+      case DioExceptionType.connectionTimeout:
+      case DioExceptionType.sendTimeout:
+      case DioExceptionType.receiveTimeout:
+      case DioExceptionType.connectionError:
+        return true;
+      case DioExceptionType.badResponse:
+        final status = error.response?.statusCode;
+        return status == 429 || (status != null && status >= 500 && status < 600);
+      case DioExceptionType.cancel:
+      case DioExceptionType.badCertificate:
+      case DioExceptionType.unknown:
+        return false;
     }
   }
 

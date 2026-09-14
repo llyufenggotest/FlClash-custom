@@ -117,6 +117,64 @@ void main() {
       expect(helper, contains("StateError('old iOS tunnel did not restart')"));
     });
 
+    test('profile import policy validates and commits without provider I/O', () {
+      final profiles = source('lib/providers/actions/profiles.dart');
+      expect(
+        profiles,
+        contains(
+          'required ProfileCommitPreparationPolicy preparationPolicy',
+        ),
+      );
+      expect(
+        profiles,
+        contains(
+          'preparationPolicy:\n'
+          '              ProfileCommitPreparationPolicy.validateAndCommitOnly',
+        ),
+        reason: 'import callers must explicitly choose validation-only commit',
+      );
+      expect(
+        profiles,
+        contains(
+          'final validationMessage = await _core.validateConfig(candidateYaml)',
+        ),
+        reason: 'commit policy still performs Core syntax/semantic validation',
+      );
+      final commitStart = profiles.indexOf(
+        'Future<void> _commitPreparedProfile',
+      );
+      final commitEnd = profiles.indexOf(
+        'Future<void> putPreparedProfile',
+        commitStart,
+      );
+      final commitBody = profiles.substring(commitStart, commitEnd);
+      final policyGuard = commitBody.indexOf(
+        'preparationPolicy == ProfileCommitPreparationPolicy.prepareAndActivate',
+      );
+      expect(policyGuard, greaterThan(-1));
+      expect(
+        commitBody.indexOf('await setupAction.prewarmProfile(', policyGuard),
+        greaterThan(policyGuard),
+      );
+      expect(
+        commitBody.substring(0, policyGuard),
+        isNot(contains('await setupAction.prewarmProfile(')),
+        reason: 'validation-only imports must not execute provider preparation',
+      );
+      expect(
+        profiles,
+        contains(
+          'preparationPolicy: ProfileCommitPreparationPolicy.prepareAndActivate',
+        ),
+        reason: 'subscription refresh must still prepare before commit',
+      );
+      expect(
+        profiles,
+        contains('allowRuleGenerationPreparation: true'),
+        reason: 'explicit prepare-and-activate paths retain strict activation',
+      );
+    });
+
     test('atomic persistence uses a same-directory temporary and rename', () {
       final setup = source('lib/providers/actions/setup.dart');
       final start = setup.indexOf(

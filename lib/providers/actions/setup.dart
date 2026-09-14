@@ -96,6 +96,11 @@ class SetupAction extends _$SetupAction {
         force: true,
         silence: profileSwitched,
         profileSwitched: profileSwitched,
+        // A validation-only import intentionally has no generation yet. Every
+        // explicit profile selection may fill that one missing generation;
+        // the controller always consults the local committed index first, so
+        // later A/B/A switches remain offline and reuse it.
+        allowRuleGenerationPreparation: true,
         activationGuard: ownsProfileSelection
             ? () => generation == _profileSwitchGeneration
             : null,

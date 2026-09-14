@@ -144,7 +144,7 @@ void main() {
       final catchStart = proxies.indexOf("'updateGroups error: \$e'");
       expect(catchStart, greaterThan(-1));
       final tail = proxies.substring(catchStart);
-      final nextMethod = tail.indexOf('void _removeUnavailableSelections');
+      final nextMethod = tail.indexOf('void updateCurrentGroupName');
       expect(nextMethod, greaterThan(-1));
       expect(
         tail.substring(0, nextMethod),

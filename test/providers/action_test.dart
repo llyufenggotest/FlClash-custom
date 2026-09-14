@@ -50,7 +50,7 @@ void main() {
       expect(profile?.url, edited.url);
     });
 
-    test('updates selection, inserts first profile, and reorders profiles', () {
+    test('updates selection, inserts first profile, and reorders profiles', () async {
       final first = Profile.normal(label: 'First');
       final second = Profile.normal(label: 'Second');
       final container = ProviderContainer(
@@ -62,11 +62,11 @@ void main() {
       addTearDown(container.dispose);
       final action = container.read(profilesActionProvider.notifier);
 
-      action.updateCurrentSelectedMap('Group', 'Proxy');
+      await action.updateCurrentSelectedMap('Group', 'Proxy');
       final updatedFirst = container.read(profilesProvider).single;
       expect(updatedFirst.selectedMap['Group'], 'Proxy');
 
-      action.updateCurrentSelectedMap('Group', 'Proxy');
+      await action.updateCurrentSelectedMap('Group', 'Proxy');
       expect(container.read(profilesProvider), hasLength(1));
 
       container.read(currentProfileIdProvider.notifier).value = null;

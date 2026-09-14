@@ -64,6 +64,53 @@ void main() {
       expect(body, isNot(contains('await setCoreRunning(false)')));
     });
 
+    test(
+      'first activation may prepare missing generation before atomic switch',
+      () {
+        final setup = source('lib/providers/actions/setup.dart');
+        final controller = source('lib/core/controller.dart');
+        final fullSetup = setup.substring(
+          setup.indexOf('Future<bool> fullSetup({'),
+          setup.indexOf('void _setLocalRunning'),
+        );
+        expect(
+          fullSetup,
+          contains('allowRuleGenerationPreparation: true'),
+          reason: 'an imported profile has no generation until first enable',
+        );
+        expect(
+          fullSetup.indexOf('allowRuleGenerationPreparation: true'),
+          lessThan(fullSetup.indexOf('setupSucceeded = await setupResult')),
+          reason: 'preparation finishes before the switch is reported complete',
+        );
+        expect(
+          controller,
+          contains(
+            'final existing = await getPreparedRuleGeneration(',
+          ),
+          reason: 'switches consume a local generation before considering download',
+        );
+        expect(
+          controller,
+          contains(
+            "throw StateError(\n                'prepared rule generation is missing for profile \$profileId'",
+          ),
+          reason: 'missing generation must remain an explicit failure',
+        );
+        expect(
+          setup,
+          contains(
+            'preparationConfig: requiresCommittedGeneration ? yamlString : null',
+          ),
+        );
+        expect(
+          setup.indexOf('final message = await coreController.setupConfig('),
+          lessThan(setup.indexOf('await onUpdated?.call()')),
+          reason: 'groups must not publish as switched before preparation/activation',
+        );
+      },
+    );
+
     test('running iOS profile switches hot-apply after preparation', () {
       final setup = source('lib/providers/actions/setup.dart');
       final start = setup.indexOf('Future<void> commitAndActivate()');

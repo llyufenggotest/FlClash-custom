@@ -71,9 +71,11 @@ class ProxiesAction extends _$ProxiesAction {
       groupName,
       () => _currentSelectedName(groupName),
     );
-    ref
-        .read(profilesActionProvider.notifier)
-        .updateCurrentSelectedMap(groupName, proxyName);
+    unawaited(
+      ref
+          .read(profilesActionProvider.notifier)
+          .updateCurrentSelectedMap(groupName, proxyName),
+    );
     debouncer.call((FunctionTag.changeProxy, groupName), (
       String groupName,
       String proxyName,
@@ -138,12 +140,10 @@ class ProxiesAction extends _$ProxiesAction {
         return;
       }
       ref.read(groupsProvider.notifier).value = groups;
-      if (groups.isNotEmpty) {
-        _removeUnavailableSelections(
-          profileId: expectedProfileId,
-          groups: groups,
-        );
-      }
+      // Core group snapshots can be non-empty while providers are still
+      // materializing. Keep per-profile history and let runtime selection
+      // resolution fall back to Core's `now`/available entries instead of
+      // destructively treating a partial frame as authoritative.
     } catch (e) {
       // The Core failure path already runs inside the retry task above; a
       // throw here only means ref.read hit a disposed container or the
@@ -153,31 +153,6 @@ class ProxiesAction extends _$ProxiesAction {
         logLevel: coreFailureLogLevel(e),
       );
     }
-  }
-
-  void _removeUnavailableSelections({
-    required int? profileId,
-    required List<Group> groups,
-  }) {
-    final currentProfile = ref.read(currentProfileProvider);
-    if (currentProfile == null || currentProfile.id != profileId) {
-      return;
-    }
-    final availableProxies = {
-      for (final group in groups)
-        group.name: group.all.map((proxy) => proxy.name).toSet(),
-    };
-    final selectedMap = Map<String, String>.fromEntries(
-      currentProfile.selectedMap.entries.where(
-        (entry) => availableProxies[entry.key]?.contains(entry.value) == true,
-      ),
-    );
-    if (selectedMap.length == currentProfile.selectedMap.length) {
-      return;
-    }
-    ref
-        .read(profilesProvider.notifier)
-        .put(currentProfile.copyWith(selectedMap: selectedMap));
   }
 
   void updateCurrentGroupName(String groupName) {
@@ -222,7 +197,7 @@ class ProxiesAction extends _$ProxiesAction {
     final rollbackName =
         _pendingSelectedRollback.remove(groupName) ??
         _currentSelectedName(groupName);
-    profilesAction.updateCurrentSelectedMap(groupName, proxyName);
+    await profilesAction.updateCurrentSelectedMap(groupName, proxyName);
     try {
       await _core.changeProxy(params, closeConnections: closeConnections);
     } catch (error) {
@@ -230,7 +205,7 @@ class ProxiesAction extends _$ProxiesAction {
         'changeProxy($groupName -> $proxyName) failed: $error',
         logLevel: coreFailureLogLevel(error),
       );
-      profilesAction.updateCurrentSelectedMap(groupName, rollbackName);
+      await profilesAction.updateCurrentSelectedMap(groupName, rollbackName);
       dialogs.showNotifier(
         currentAppLocalizations.changeProxyFailedTip,
         level: MessageLevel.error,

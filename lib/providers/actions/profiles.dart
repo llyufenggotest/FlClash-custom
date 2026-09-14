@@ -1,5 +1,10 @@
 part of '../action.dart';
 
+enum ProfileCommitPreparationPolicy {
+  validateAndCommitOnly,
+  prepareAndActivate,
+}
+
 @Riverpod(keepAlive: true)
 class ProfilesAction extends _$ProfilesAction {
   CoreController get _core => ref.read(coreHandlerProvider);
@@ -54,16 +59,25 @@ class ProfilesAction extends _$ProfilesAction {
   @override
   void build() {}
 
-  void updateCurrentSelectedMap(String groupName, String proxyName) {
+  Future<void> updateCurrentSelectedMap(
+    String groupName,
+    String proxyName,
+  ) async {
     final currentProfile = ref.read(currentProfileProvider);
-    if (currentProfile != null &&
-        currentProfile.selectedMap[groupName] != proxyName) {
-      final selectedMap = Map<String, String>.from(currentProfile.selectedMap)
-        ..[groupName] = proxyName;
-      ref
+    if (currentProfile == null) return;
+    await _withProfileTransaction(currentProfile.id, () async {
+      final profile = ref.read(profilesProvider).getProfile(currentProfile.id);
+      if (profile == null || profile.selectedMap[groupName] == proxyName) return;
+      final selectedMap = Map<String, String>.from(profile.selectedMap);
+      if (proxyName.isEmpty) {
+        selectedMap.remove(groupName);
+      } else {
+        selectedMap[groupName] = proxyName;
+      }
+      await ref
           .read(profilesProvider.notifier)
-          .put(currentProfile.copyWith(selectedMap: selectedMap));
-    }
+          .putAsync(profile.copyWith(selectedMap: selectedMap));
+    });
   }
 
   Future<void> deleteProfile(int id) async {
@@ -169,15 +183,23 @@ class ProfilesAction extends _$ProfilesAction {
     required bool isNew,
     bool Function()? commitGuard,
     bool Function()? postCommitGuard,
+    required ProfileCommitPreparationPolicy preparationPolicy,
   }) async {
     await _withProfileTransaction(profile.id, () async {
       if (commitGuard != null && !commitGuard()) return;
+      final validationMessage = await _core.validateConfig(candidateYaml);
+      if (validationMessage.isNotEmpty) {
+        throw MessageException(validationMessage);
+      }
       final setupAction = ref.read(setupActionProvider.notifier);
-      final preparation = await setupAction.prewarmProfile(
-        profile,
-        candidateYaml: candidateYaml,
-        allowUncommittedProfile: isNew,
-      );
+      final preparation =
+          preparationPolicy == ProfileCommitPreparationPolicy.prepareAndActivate
+          ? await setupAction.prewarmProfile(
+              profile,
+              candidateYaml: candidateYaml,
+              allowUncommittedProfile: isNew,
+            )
+          : null;
       if (commitGuard != null && !commitGuard()) return;
       final target = File(await appPath.getProfilePath(profile.id.toString()));
       await target.parent.create(recursive: true);
@@ -250,8 +272,9 @@ class ProfilesAction extends _$ProfilesAction {
 
   Future<void> putPreparedProfile(
     Profile profile,
-    String candidateYaml,
-  ) async {
+    String candidateYaml, {
+    required ProfileCommitPreparationPolicy preparationPolicy,
+  }) async {
     final existing = ref.read(profilesProvider).getProfile(profile.id);
     await _commitPreparedProfile(
       profile: profile,
@@ -263,11 +286,15 @@ class ProfilesAction extends _$ProfilesAction {
               ref.read(profilesProvider).getProfile(profile.id),
               existing,
             ),
+      preparationPolicy: preparationPolicy,
     );
-    await ref.read(setupActionProvider.notifier).applyProfile(
-      force: true,
-      allowRuleGenerationPreparation: true,
-    );
+    if (preparationPolicy ==
+        ProfileCommitPreparationPolicy.prepareAndActivate) {
+      await ref.read(setupActionProvider.notifier).applyProfile(
+        force: true,
+        allowRuleGenerationPreparation: true,
+      );
+    }
   }
 
   void putProfile(Profile profile) {
@@ -308,6 +335,7 @@ class ProfilesAction extends _$ProfilesAction {
         commitGuard: () => _isCurrentProfileUpdate(profile.id, generation),
         postCommitGuard: () =>
             _isCurrentProfileUpdate(profile.id, generation),
+        preparationPolicy: ProfileCommitPreparationPolicy.prepareAndActivate,
       );
       await ref.read(setupActionProvider.notifier).applyProfile(
         force: true,
@@ -332,7 +360,12 @@ class ProfilesAction extends _$ProfilesAction {
         if (prepared.content.isEmpty) {
           throw StateError('candidate profile rendered an empty configuration');
         }
-        await putPreparedProfile(prepared.profile, prepared.content);
+        await putPreparedProfile(
+          prepared.profile,
+          prepared.content,
+          preparationPolicy:
+              ProfileCommitPreparationPolicy.validateAndCommitOnly,
+        );
       },
       title: currentAppLocalizations.addProfile,
       showCoreUnavailableErrors: true,

@@ -124,6 +124,8 @@ class _EditProfileViewState extends ConsumerState<EditProfileView> {
       await profilesAction.putPreparedProfile(
         prepared.profile,
         prepared.content,
+        preparationPolicy:
+            ProfileCommitPreparationPolicy.validateAndCommitOnly,
       );
     } else if (!hasUpdate) {
       profilesAction.putProfile(profile);

@@ -132,6 +132,160 @@ rules:
     expect((yaml['rules'] as YamlList).single, 'RULE-SET,ads,DIRECT');
   });
 
+  test('retries only transient Dio failures with deterministic backoff', () async {
+    var attempts = 0;
+    final sleeps = <Duration>[];
+    var now = DateTime.utc(2026);
+    when(
+      () => core.publishRuleGeneration(
+        profileId: 15,
+        fingerprint: any(named: 'fingerprint'),
+        generation: any(named: 'generation'),
+        stagingPath: any(named: 'stagingPath'),
+        configPath: any(named: 'configPath'),
+        artifacts: any(named: 'artifacts'),
+      ),
+    ).thenAnswer((invocation) async {
+      final staging = invocation.namedArguments[#stagingPath] as String;
+      final generation = invocation.namedArguments[#generation] as String;
+      final target = p.join(
+        Directory(staging).parent.parent.path,
+        'generations',
+        generation,
+      );
+      await Directory(p.dirname(target)).create(recursive: true);
+      await Directory(staging).rename(target);
+      return {'generation': generation, 'config-path': p.join(target, 'config.yaml')};
+    });
+
+    await RuleGenerationPreparer(
+      core: core,
+      homeDir: () async => home.path,
+      clock: () => now,
+      sleeper: (duration) async {
+        sleeps.add(duration);
+        now = now.add(duration);
+      },
+      retryJitter: () => 0,
+      download: (_, _, _, destinationPath) async {
+        attempts++;
+        if (attempts < 3) {
+          throw DioException(
+            requestOptions: RequestOptions(path: '/ads'),
+            type: attempts == 1
+                ? DioExceptionType.receiveTimeout
+                : DioExceptionType.connectionError,
+          );
+        }
+        return _writeDownload(
+          destinationPath,
+          Uint8List.fromList('payload:\n  - example.com\n'.codeUnits),
+        );
+      },
+    ).prepare(
+      profileId: 15,
+      config: '''
+rule-providers:
+  ads: {type: http, url: https://example.test/ads, behavior: classical}
+rules: [RULE-SET,ads,DIRECT]
+''',
+    );
+
+    expect(attempts, 3);
+    expect(sleeps, const [Duration(milliseconds: 250), Duration(milliseconds: 500)]);
+  });
+
+  test('does not retry non-transient failures and retains provider name', () async {
+    for (final error in <Object>[
+      DioException(
+        requestOptions: RequestOptions(path: '/ads'),
+        type: DioExceptionType.badResponse,
+        response: Response<void>(
+          requestOptions: RequestOptions(path: '/ads'),
+          statusCode: 404,
+        ),
+      ),
+      const FormatException('bad payload'),
+    ]) {
+      var attempts = 0;
+      final sleeps = <Duration>[];
+      final profileId = error is FormatException ? 18 : 16;
+      await expectLater(
+        RuleGenerationPreparer(
+          core: core,
+          homeDir: () async => home.path,
+          sleeper: (duration) async => sleeps.add(duration),
+          retryJitter: () => 0,
+          download: (_, _, _, __) async {
+            attempts++;
+            throw error;
+          },
+        ).prepare(
+          profileId: profileId,
+          config: '''
+rule-providers:
+  ads: {type: http, url: https://example.test/ads, behavior: classical}
+rules: [RULE-SET,ads,DIRECT]
+''',
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (value) => value.message,
+            'message',
+            allOf(
+              contains('rule provider "ads" download failed'),
+              contains('after 1 attempt'),
+            ),
+          ),
+        ),
+      );
+      expect(attempts, 1);
+      expect(sleeps, isEmpty);
+    }
+  });
+
+  test('retries 429 but stops at the explicit attempt bound', () async {
+    var attempts = 0;
+    final sleeps = <Duration>[];
+    await expectLater(
+      RuleGenerationPreparer(
+        core: core,
+        homeDir: () async => home.path,
+        sleeper: (duration) async => sleeps.add(duration),
+        retryJitter: () => 0,
+        download: (_, _, _, __) async {
+          attempts++;
+          final options = RequestOptions(path: '/limited');
+          throw DioException(
+            requestOptions: options,
+            type: DioExceptionType.badResponse,
+            response: Response<void>(requestOptions: options, statusCode: 429),
+          );
+        },
+      ).prepare(
+        profileId: 17,
+        config: '''
+rule-providers:
+  limited: {type: http, url: https://example.test/limited, behavior: classical}
+rules: [RULE-SET,limited,DIRECT]
+''',
+      ),
+      throwsA(
+        isA<StateError>().having(
+          (value) => value.message,
+          'message',
+          allOf(contains('limited'), contains('after 3 attempts')),
+        ),
+      ),
+    );
+    expect(attempts, 3);
+    expect(sleeps, hasLength(2));
+    expect(
+      sleeps.fold<Duration>(Duration.zero, (total, delay) => total + delay),
+      lessThanOrEqualTo(const Duration(seconds: 2)),
+    );
+  });
+
   test('named proxy fails explicitly without downloading', () async {
     var downloads = 0;
     final preparer = RuleGenerationPreparer(

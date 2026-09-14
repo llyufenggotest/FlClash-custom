@@ -113,7 +113,7 @@ void main() {
       expect(groups.single.all.map((proxy) => proxy.name), ['HK-01']);
     });
 
-    test('prunes selections that disappeared after a group refresh', () async {
+    test('preserves selections when a group snapshot is incomplete', () async {
       when(core.getProxies).thenAnswer(
         (_) async => ProxiesData(
           all: const ['Proxy', 'HK-01'],
@@ -135,7 +135,10 @@ void main() {
 
       await actionOf(container).updateGroups();
 
-      expect(container.read(currentProfileProvider)?.selectedMap, isEmpty);
+      expect(container.read(currentProfileProvider)?.selectedMap, {
+        'Proxy': 'HK-00',
+        'Removed group': 'Removed proxy',
+      });
     });
 
     test(
@@ -348,6 +351,18 @@ void main() {
         ),
       ).called(1);
       expect(container.read(currentProfileProvider)?.selectedMap, isEmpty);
+    });
+
+    test('serializes awaited selection writes without losing keys', () async {
+      final action = actionOf(container);
+
+      await action.updateCurrentSelectedMap('A', 'Proxy A');
+      await action.updateCurrentSelectedMap('B', 'Proxy B');
+
+      expect(container.read(currentProfileProvider)?.selectedMap, {
+        'A': 'Proxy A',
+        'B': 'Proxy B',
+      });
     });
 
     test('rolls the selection back when the switch fails', () async {
