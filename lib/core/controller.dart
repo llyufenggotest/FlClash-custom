@@ -179,6 +179,7 @@ class CoreController {
     @visibleForTesting bool? prepareBeforePreload,
     @visibleForTesting
     Duration rulePreparationTimeout = const Duration(seconds: 60),
+    ProfileSwitchPhaseTimer? timing,
   }) async {
     final prepareFirst =
         prepareBeforePreload ??
@@ -219,6 +220,7 @@ class CoreController {
               config: config,
               profileId: profileId,
             );
+            timing?.mark('generation_lookup');
             if (existing != null) return existing;
             if (!allowRuleGenerationPreparation) {
               throw StateError(
@@ -239,6 +241,7 @@ class CoreController {
             profileId: profileId,
             generation: prepared.generation,
           );
+          timing?.mark('generation_activate');
           final activatedPath = activated['config-path']?.toString();
           if (activatedPath == null || activatedPath != prepared.configPath) {
             throw StateError('Core did not activate prepared generation');
@@ -252,7 +255,9 @@ class CoreController {
           return error.toString();
         }
       }
-      return _interface.setupConfig(params);
+      final result = await _interface.setupConfig(params);
+      timing?.mark('core_setup');
+      return result;
     }
 
     Future<String> prepare() {
@@ -316,6 +321,7 @@ class CoreController {
       // generation. Preparation and activation never replace setupConfig.
       try {
         final setupResult = await _interface.setupConfig(params);
+        timing?.mark('core_setup');
         if (setupResult.isNotEmpty) await restoreActivatedGeneration();
         return setupResult;
       } on Object {
@@ -346,6 +352,7 @@ class CoreController {
     }
     try {
       await preloadInvoke?.call();
+      timing?.mark('preload');
     } on Object catch (error) {
       await restoreActivatedGeneration();
       return error.toString();

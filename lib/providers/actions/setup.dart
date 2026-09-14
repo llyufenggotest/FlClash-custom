@@ -43,6 +43,19 @@ class SetupAction extends _$SetupAction {
     return SetupParams(selectedMap: selectedMap, testUrl: testUrl);
   }
 
+  ProfileSwitchPhaseTimer? _profileSwitchTimer(int generation, bool enabled) {
+    if (!enabled) return null;
+    return ProfileSwitchPhaseTimer(
+      label: '${system.isAndroid ? 'android' : 'ios'}.profile_switch.$generation',
+      sink: (phase, phaseElapsed, totalElapsed) {
+        commonPrint.log(
+          'timing $phase phase_ms=${phaseElapsed.inMilliseconds} '
+          'total_ms=${totalElapsed.inMilliseconds}',
+        );
+      },
+    );
+  }
+
   Future<bool> fullSetup({
     bool profileSwitched = false,
     int? profileSwitchGeneration,
@@ -52,6 +65,7 @@ class SetupAction extends _$SetupAction {
         profileSwitchGeneration ??
         (profileSwitched ? beginProfileSwitch() : _profileSwitchGeneration);
     final ownsProfileSelection = profileSwitchGeneration != null;
+    final timing = _profileSwitchTimer(generation, profileSwitched);
     final barrierToken = '${generation}_${DateTime.now().microsecondsSinceEpoch}';
     var barrierHeld = false;
     var setupSucceeded = false;
@@ -67,6 +81,7 @@ class SetupAction extends _$SetupAction {
                 token: barrierToken,
                 suspended: true,
               );
+        timing?.mark('barrier_acquire');
         if (!barrierHeld || generation != _profileSwitchGeneration) {
           return false;
         }
@@ -74,6 +89,7 @@ class SetupAction extends _$SetupAction {
       await ref
           .read(proxiesActionProvider.notifier)
           .cancelDelayTests(cancelCoreRequests: profileSwitched);
+      timing?.mark('delay_cancel');
       if (generation != _profileSwitchGeneration) return false;
       ref.read(delayDataSourceProvider.notifier).value = {};
       final setupResult = applyProfile(
@@ -83,10 +99,12 @@ class SetupAction extends _$SetupAction {
         activationGuard: ownsProfileSelection
             ? () => generation == _profileSwitchGeneration
             : null,
+        timing: timing,
       );
       ref.read(logsProvider.notifier).value = FixedList(maxLogsLength);
       ref.read(requestsProvider.notifier).value = FixedList(maxRequestsLength);
       setupSucceeded = await setupResult;
+      timing?.mark('setup');
     } catch (e, s) {
       commonPrint.log('fullSetup ===> ${compactError(e)}, $s');
       return false;
@@ -101,6 +119,7 @@ class SetupAction extends _$SetupAction {
                 token: barrierToken,
                 suspended: false,
               );
+        timing?.mark('barrier_resume');
         if (!resumed && generation == _profileSwitchGeneration) {
           commonPrint.log('failed to resume profile-switch probe barrier');
           barrierResumed = false;
@@ -407,6 +426,7 @@ class SetupAction extends _$SetupAction {
     bool allowRuleGenerationPreparation = false,
     bool Function()? activationGuard,
     Future<void> Function()? preloadInvoke,
+    ProfileSwitchPhaseTimer? timing,
   }) async {
     final result = await _runSetup(
       force: force,
@@ -415,6 +435,7 @@ class SetupAction extends _$SetupAction {
       allowRuleGenerationPreparation: allowRuleGenerationPreparation,
       activationGuard: activationGuard,
       preloadInvoke: preloadInvoke,
+      timing: timing,
     );
     return result != _SetupTaskResult.failed;
   }
@@ -426,6 +447,7 @@ class SetupAction extends _$SetupAction {
     bool allowRuleGenerationPreparation = false,
     bool Function()? activationGuard,
     Future<void> Function()? preloadInvoke,
+    ProfileSwitchPhaseTimer? timing,
   }) async {
     final expectedProfile = ref.read(currentProfileProvider);
     final expectedProfileId = expectedProfile?.id;
@@ -433,6 +455,7 @@ class SetupAction extends _$SetupAction {
     if (expectedProfile != null) {
       await profileAction.ensureProfileFile(expectedProfile);
     }
+    timing?.mark('profile_file');
     Future<_SetupTaskResult> runSetup() => _setupScheduler.run(() {
       if (activationGuard != null && !activationGuard()) {
         commonPrint.log('dropping stale setup before execution');
@@ -446,15 +469,18 @@ class SetupAction extends _$SetupAction {
         allowRuleGenerationPreparation: allowRuleGenerationPreparation,
         activationGuard: activationGuard,
         preloadInvoke: preloadInvoke,
+        timing: timing,
         onUpdated: () async {
           if (activationGuard != null && !activationGuard()) return;
           await ref
               .read(proxiesActionProvider.notifier)
               .updateGroups(profileId: expectedProfileId);
+          timing?.mark('groups_sync');
           if (activationGuard != null && !activationGuard()) return;
           await ref
               .read(providersProvider.notifier)
               .syncProviders(profileId: expectedProfileId);
+          timing?.mark('providers_sync');
         },
       );
     });
@@ -642,6 +668,7 @@ class SetupAction extends _$SetupAction {
     bool allowRuleGenerationPreparation = false,
     bool Function()? activationGuard,
     Future<void> Function()? preloadInvoke,
+    ProfileSwitchPhaseTimer? timing,
     FutureOr Function()? onUpdated,
   }) async {
     final profile = expectedProfileId == null
@@ -661,6 +688,7 @@ class SetupAction extends _$SetupAction {
       final setupState = await ref.read(setupStateProvider(profile?.id).future);
       return getProfile(setupState: setupState, patchConfig: realPatchConfig);
     }, title: 'build profile');
+    timing?.mark('render_config');
     final profileFailed = realProfile == null;
     final yamlString = realProfile?.yaml ?? '';
     final yamlMd5 = realProfile?.md5 ?? '';
@@ -711,6 +739,7 @@ class SetupAction extends _$SetupAction {
               return;
             }
           }
+          timing?.mark('persist_config');
           if (activationGuard != null && !activationGuard()) {
             commonPrint.log('dropping stale setup before Core activation');
             setupStale = true;
@@ -818,6 +847,7 @@ class SetupAction extends _$SetupAction {
             preparationProfileId: requiresCommittedGeneration ? profileId : null,
             allowRuleGenerationPreparation: allowRuleGenerationPreparation,
             preloadInvoke: system.isIOS ? commitAndActivate : preloadInvoke,
+            timing: timing,
           );
           if (message.isNotEmpty) {
             throw MessageException(message);
