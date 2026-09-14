@@ -20,7 +20,11 @@ class ProductMigrationContractTest(unittest.TestCase):
     def test_profile_import_keeps_prepare_and_commit_in_one_loading_boundary(self):
         source = self.read("lib/providers/actions/profiles.dart")
         self.assertIn("Future<void> _addPreparedProfile", source)
-        self.assertIn("await putPreparedProfile(prepared.profile, prepared.content)", source)
+        self.assertIn("await putPreparedProfile(", source)
+        self.assertIn(
+            "ProfileCommitPreparationPolicy.validateAndCommitOnly",
+            source,
+        )
         helper_start = source.index("Future<void> _addPreparedProfile")
         helper_end = source.index("Future<void> addOppaProfile", helper_start)
         helper = source[helper_start:helper_end]
@@ -97,7 +101,11 @@ class ProductMigrationContractTest(unittest.TestCase):
         update_end = actions.index("Future<void> _addPreparedProfile", update_start)
         self.assertIn("postCommitGuard:", actions[update_start:update_end])
         self.assertIn("Future<void> putPreparedProfile", actions)
-        self.assertIn("await putPreparedProfile(prepared.profile, prepared.content)", actions)
+        self.assertIn("await putPreparedProfile(", actions)
+        self.assertIn(
+            "ProfileCommitPreparationPolicy.validateAndCommitOnly",
+            actions,
+        )
         self.assertIn("candidateYaml: candidateYaml", actions)
         self.assertIn("await _core.activateRuleGeneration", actions)
         self.assertIn("await ref.read(profilesProvider.notifier).putAsync(profile)", actions)
