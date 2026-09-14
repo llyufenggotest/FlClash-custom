@@ -124,13 +124,17 @@ class ProductMigrationContractTest(unittest.TestCase):
         release_workflow = self.read(".github/workflows/build.yaml")
         matrix_workflow = self.read(".github/workflows/ios-five-protocol.yaml")
         gradle_versions = self.read("android/gradle/libs.versions.toml")
-        flutter_marker = "FLUTTER_VERSION: '3.47.2'"
-        self.assertIn(flutter_marker, release_workflow)
+        flutter = re.search(
+            r"^  FLUTTER_VERSION: '([^']+)'$", release_workflow, re.MULTILINE
+        )
+        self.assertIsNotNone(flutter)
+        flutter_marker = f"FLUTTER_VERSION: '{flutter.group(1)}'"
         self.assertIn(flutter_marker, matrix_workflow)
+        self.assertIn("GO_VERSION: '1.26.8'", release_workflow)
         ndk = re.search(r'^ndkVersion = "([^"]+)"$', gradle_versions, re.MULTILINE)
         self.assertIsNotNone(ndk)
         ndk_marker = f"NDK_VERSION: '{ndk.group(1)}'"
-        self.assertIn(ndk_marker, release_workflow)
+        self.assertIn("NDK_VERSION: r29", release_workflow)
         self.assertIn(ndk_marker, matrix_workflow)
         self.assertIn("github.event_name == 'push'", matrix_workflow)
         self.assertEqual(matrix_workflow.count("github.event_name == 'push'"), 3)

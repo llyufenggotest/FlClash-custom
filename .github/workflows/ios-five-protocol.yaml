@@ -15,12 +15,13 @@ on:
     branches:
       - five-protocol-ios
       - migration/full-0.8.120
+      - migration/full-0.8.122
 
 permissions:
   contents: read
 
 env:
-  FLUTTER_VERSION: '3.47.2'
+  FLUTTER_VERSION: '3.47.4'
   NDK_VERSION: '28.2.13676358'
   NDK_RELEASE: r28c
 
