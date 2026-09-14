@@ -311,6 +311,62 @@ class ProfilesAction extends _$ProfilesAction {
     }
   }
 
+  @protected
+  Future<void> commitProfileUpdateOnly(
+    Profile profile,
+    String candidateYaml, {
+    required bool Function() commitGuard,
+  }) => _commitPreparedProfile(
+    profile: profile,
+    candidateYaml: candidateYaml,
+    isNew: false,
+    commitGuard: commitGuard,
+    postCommitGuard: commitGuard,
+    preparationPolicy: ProfileCommitPreparationPolicy.validateAndCommitOnly,
+  );
+
+  @protected
+  Future<bool> applyCommittedCurrentProfile({
+    required bool Function() activationGuard,
+  }) => ref.read(setupActionProvider.notifier).applyProfile(
+    force: true,
+    allowRuleGenerationPreparation: true,
+    activationGuard: activationGuard,
+  );
+
+  @visibleForTesting
+  Future<void> commitPreparedUpdate(
+    Profile profile,
+    String candidateYaml, {
+    bool Function()? updateGuard,
+  }) async {
+    bool isCurrentUpdate() => updateGuard?.call() ?? true;
+
+    await commitProfileUpdateOnly(
+      profile,
+      candidateYaml,
+      commitGuard: isCurrentUpdate,
+    );
+    if (!isCurrentUpdate() ||
+        ref.read(currentProfileIdProvider) != profile.id) {
+      return;
+    }
+
+    final applied = await applyCommittedCurrentProfile(
+      activationGuard: () =>
+          isCurrentUpdate() &&
+          ref.read(currentProfileIdProvider) == profile.id,
+    );
+    if (!applied &&
+        isCurrentUpdate() &&
+        ref.read(currentProfileIdProvider) == profile.id) {
+      throw StateError(
+        'updated profile ${profile.id} was committed but could not be activated; '
+        'the existing tunnel remains active',
+      );
+    }
+  }
+
   Future<void> updateProfile(
     Profile profile, {
     bool showLoading = false,
@@ -328,18 +384,10 @@ class ProfilesAction extends _$ProfilesAction {
           prepared.content.isEmpty) {
         return;
       }
-      await _commitPreparedProfile(
-        profile: prepared.profile,
-        candidateYaml: prepared.content,
-        isNew: false,
-        commitGuard: () => _isCurrentProfileUpdate(profile.id, generation),
-        postCommitGuard: () =>
-            _isCurrentProfileUpdate(profile.id, generation),
-        preparationPolicy: ProfileCommitPreparationPolicy.prepareAndActivate,
-      );
-      await ref.read(setupActionProvider.notifier).applyProfile(
-        force: true,
-        allowRuleGenerationPreparation: true,
+      await commitPreparedUpdate(
+        prepared.profile,
+        prepared.content,
+        updateGuard: () => _isCurrentProfileUpdate(profile.id, generation),
       );
     } finally {
       if (operation != null) {
