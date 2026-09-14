@@ -44,8 +44,11 @@ jobs:
         shell: bash
         run: |
           (cd core/mihomo && go test ./transport/oppa)
-          (cd core/mihomo && go test ./adapter -run 'Test(ParseOppa|ParseTrojanFastup)' -count=1)
-          (cd core/mihomo && go test ./adapter/outbound -run 'Test(Fastup|Vless)' -count=1)
+          (cd core/mihomo && go test ./adapter -run '^(TestParseOppa|TestParseFastupTrojan|TestParseStandardTrojan)' -count=1)
+          (cd core/mihomo && go test ./adapter/outbound -run '^(TestFastup|TestStandardTrojan|TestVlessX365|TestXHTTP|TestBlackstone)' -count=1)
+          (cd core/mihomo && go test ./transport/vless -run '^TestX365' -count=1)
+          (cd core/sing-shadowsocks2 && go test ./shadowstream -run '^TestBlackstone' -count=1)
+          (cd core/sing-shadowsocks2 && go test ./cipher -run '^(TestParseViewTurbo|TestViewTurbo)' -count=1)
           (cd core && CGO_ENABLED=0 go test ./...)
           (cd core && CGO_ENABLED=0 go test -tags with_low_memory ./...)
 

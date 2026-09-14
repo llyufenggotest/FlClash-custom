@@ -70,7 +70,10 @@ jobs:
       - name: Verify five-protocol and iOS contracts
         shell: bash
         run: |
-          (cd core/mihomo && go test ./transport/oppa && go test ./adapter -run 'Test(ParseOppa|ParseTrojanFastup)' -count=1 && go test ./adapter/outbound -run 'Test(Fastup|Vless)' -count=1)
+          (cd core/mihomo && go test ./transport/oppa && go test ./adapter -run '^(TestParseOppa|TestParseFastupTrojan|TestParseStandardTrojan)' -count=1 && go test ./adapter/outbound -run '^(TestFastup|TestStandardTrojan|TestVlessX365|TestXHTTP|TestBlackstone)' -count=1)
+          (cd core/mihomo && go test ./transport/vless -run '^TestX365' -count=1)
+          (cd core/sing-shadowsocks2 && go test ./shadowstream -run '^TestBlackstone' -count=1)
+          (cd core/sing-shadowsocks2 && go test ./cipher -run '^(TestParseViewTurbo|TestViewTurbo)' -count=1)
           # Type-check both memory profiles with cgo off: core/platform only has
           # ios/android/linux files, so a darwin+cgo resolution finds none and
           # fails. The real iOS compile happens in `setup.dart ios`, which builds
