@@ -354,7 +354,8 @@ void main() {
     });
 
     test('serializes awaited selection writes without losing keys', () async {
-      final action = actionOf(container);
+      final container = buildContainer(profile: _selectedProfile('HK-00'));
+      final action = container.read(profilesActionProvider.notifier);
 
       await action.updateCurrentSelectedMap('A', 'Proxy A');
       await action.updateCurrentSelectedMap('B', 'Proxy B');
