@@ -43,7 +43,7 @@ class ProductMigrationContractTest(unittest.TestCase):
         edit_view = self.read("lib/views/profiles/edit.dart")
         policy = self.read("lib/common/protocol_edit_policy.dart")
         self.assertIn("addOppaProfile", actions)
-        self.assertIn("OppaProfileDialog", add_view)
+        self.assertNotIn("OppaProfileDialog", add_view)
         self.assertIn("ProtocolEditPolicy", edit_view)
         self.assertIn("xhttp", policy.lower())
         self.assertIn("blackstone", policy.lower())
