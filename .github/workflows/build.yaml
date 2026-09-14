@@ -36,8 +36,8 @@ jobs:
       - name: Verify recursive submodule SHAs
         shell: bash
         run: |
-          test "$(git -C core/mihomo rev-parse HEAD)" = 7eb702723de9cd7b51d25b3e207f3feafb0f07a4
-          test "$(git -C core/sing-shadowsocks2 rev-parse HEAD)" = 98c4afa30d95f4af5bdaa18abf8ff6cc6d3ed8d7
+          test "$(git -C core/mihomo rev-parse HEAD)" = af55fb9e55ea180d4a7bd1875c329df2d59d9ae6
+          test "$(git -C core/sing-shadowsocks2 rev-parse HEAD)" = 5b97d1f820639c51057be1115df6327e6a2dc8be
           git submodule status --recursive
 
       - name: Verify protocol parsers and both build-tag modes
