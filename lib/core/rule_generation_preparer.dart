@@ -7,6 +7,7 @@ import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/core/interface.dart';
+import 'package:fl_clash/core/method.dart';
 import 'package:fl_clash/core/rule_generation_preparation.dart';
 import 'package:path/path.dart' as p;
 import 'package:yaml/yaml.dart';
@@ -175,27 +176,21 @@ class RuleGenerationPreparer {
             stagingRaw,
             kind: 'proxy',
           );
-          Map<String, dynamic> result;
+          final effectiveDefinition = cached == null
+              ? definition
+              : (<String, dynamic>{
+                    ...definition,
+                    'type': 'file',
+                    'path': cached.path,
+                  }
+                  ..remove('url')
+                  ..remove('interval'));
           if (cached != null) {
             _progress(
               RulePreparationPhase.cacheHit,
               kind: 'proxy',
               name: entry.key,
               path: stagingRaw,
-            );
-            final cachedDefinition =
-                <String, dynamic>{
-                    ...definition,
-                    'type': 'file',
-                    'path': cached.path,
-                  }
-                  ..remove('url')
-                  ..remove('interval');
-            result = await core.prewarmProxyProvider(
-              name: entry.key,
-              definition: cachedDefinition,
-              targetPath: stagingRaw,
-              timeoutMilliseconds: const Duration(seconds: 20).inMilliseconds,
             );
           } else {
             _progress(
@@ -204,13 +199,12 @@ class RuleGenerationPreparer {
               name: entry.key,
               path: stagingRaw,
             );
-            result = await core.prewarmProxyProvider(
-              name: entry.key,
-              definition: definition,
-              targetPath: stagingRaw,
-              timeoutMilliseconds: const Duration(seconds: 20).inMilliseconds,
-            );
           }
+          final result = await _prewarmProxyProvider(
+            entry.key,
+            effectiveDefinition,
+            stagingRaw,
+          );
           final actualPath = result['path']?.toString();
           final digest = result['digest']?.toString();
           final count = result['count'];
@@ -479,6 +473,113 @@ class RuleGenerationPreparer {
       if (await staging.exists()) await staging.delete(recursive: true);
       Error.throwWithStackTrace(error, stackTrace);
     }
+  }
+
+  Future<Map<String, dynamic>> _prewarmProxyProvider(
+    String name,
+    Map<String, dynamic> definition,
+    String targetPath,
+  ) async {
+    var attempts = 0;
+    final deadline = _clock().add(_downloadDeadline);
+    Object? lastError;
+    while (attempts < _providerDownloadMaxAttempts) {
+      final remaining = deadline.difference(_clock());
+      if (remaining <= Duration.zero) {
+        lastError ??= TimeoutException(
+          'proxy provider prewarm deadline expired',
+          _downloadDeadline,
+        );
+        break;
+      }
+      attempts++;
+      final attemptTimeout = remaining < _downloadAttemptCap
+          ? remaining
+          : _downloadAttemptCap;
+      final attemptPath = '$targetPath.attempt.$attempts';
+      await _removeStagingTarget(targetPath);
+      await _removeStagingTarget(attemptPath);
+      try {
+        final result = await core
+            .prewarmProxyProvider(
+              name: name,
+              definition: definition,
+              targetPath: attemptPath,
+              timeoutMilliseconds: attemptTimeout.inMilliseconds,
+            )
+            .timeout(attemptTimeout);
+        final actualPath = result['path']?.toString();
+        if (actualPath == null ||
+            p.normalize(actualPath) != p.normalize(attemptPath)) {
+          throw StateError(
+            'proxy provider "$name" wrote outside its attempt staging target',
+          );
+        }
+        await _removeStagingTarget(targetPath);
+        await File(attemptPath).rename(targetPath);
+        return {...result, 'path': targetPath};
+      } on Object catch (error) {
+        lastError = error;
+        await _removeStagingTarget(attemptPath);
+        final canRetry =
+            attempts < _providerDownloadMaxAttempts &&
+            _isTransientProxyPrewarmError(error);
+        if (!canRetry) break;
+        final delay = _retryDelay(attempts);
+        final retryRemaining = deadline.difference(_clock());
+        if (retryRemaining <= delay) break;
+        await _sleeper(delay);
+      }
+    }
+    throw StateError(
+      'proxy provider "$name" prewarm failed after $attempts attempt${attempts == 1 ? '' : 's'}: '
+      '${compactError(lastError ?? TimeoutException('prewarm failed'))}',
+    );
+  }
+
+  Future<void> _removeStagingTarget(String targetPath) async {
+    final target = File(targetPath);
+    if (await target.exists()) await target.delete();
+    final parent = target.parent;
+    if (!await parent.exists()) return;
+    await for (final entity in parent.list(followLinks: false)) {
+      if (entity is File &&
+          p.basename(entity.path).startsWith('${p.basename(targetPath)}.') &&
+          entity.path.endsWith('.tmp')) {
+        await entity.delete();
+      }
+    }
+  }
+
+  bool _isTransientProxyPrewarmError(Object error) {
+    if (error is TimeoutException) return true;
+    if (error is! CoreMethodException || error.code != 'core_error') {
+      return error is CoreMethodException && error.isCoreUnavailable;
+    }
+    final message = error.message.toLowerCase();
+    if (RegExp(r'(^|\D)(408|425|429|5\d\d)(\D|$)').hasMatch(message)) {
+      return true;
+    }
+    return const [
+      'context deadline exceeded',
+      'deadline exceeded',
+      'operation was canceled',
+      'operation was cancelled',
+      'context canceled',
+      'context cancelled',
+      'i/o timeout',
+      'connection timed out',
+      'connection timeout',
+      'connection reset',
+      'connection refused',
+      'network is unreachable',
+      'no route to host',
+      'temporary failure',
+      'temporarily unavailable',
+      'unexpected eof',
+      'tls handshake timeout',
+      'server misbehaving',
+    ].any(message.contains);
   }
 
   Future<RuleProviderFileDownload> _loadProvider(

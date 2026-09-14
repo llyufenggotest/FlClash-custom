@@ -6,6 +6,7 @@ import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 import 'package:fl_clash/common/request.dart';
 import 'package:fl_clash/core/interface.dart';
+import 'package:fl_clash/core/method.dart';
 import 'package:fl_clash/core/rule_generation_preparation.dart';
 import 'package:fl_clash/core/rule_generation_preparer.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -846,6 +847,139 @@ rules: []
     },
   );
 
+  test('retries transient proxy prewarm failures and cleans staging', () async {
+    var attempts = 0;
+    final timeouts = <int>[];
+    when(
+      () => core.prewarmProxyProvider(
+        name: 'remote',
+        definition: any(named: 'definition'),
+        targetPath: any(named: 'targetPath'),
+        timeoutMilliseconds: any(named: 'timeoutMilliseconds'),
+      ),
+    ).thenAnswer((invocation) async {
+      attempts++;
+      final target = invocation.namedArguments[#targetPath] as String;
+      timeouts.add(invocation.namedArguments[#timeoutMilliseconds] as int);
+      if (attempts < 3) {
+        await File(target).parent.create(recursive: true);
+        await File(target).writeAsString('partial-$attempts');
+        await File('$target.leaked.tmp').writeAsString('partial');
+        throw const CoreMethodException(
+          code: 'core_error',
+          message: 'Get "https://example.test": connection reset by peer',
+        );
+      }
+      expect(await File(target).exists(), isFalse);
+      final priorAttempt = target.replaceFirst('attempt.3', 'attempt.2');
+      expect(await File(priorAttempt).exists(), isFalse);
+      expect(await File('$priorAttempt.leaked.tmp').exists(), isFalse);
+      return _writeProxyResult(target);
+    });
+    _stubPublish(core);
+
+    await RuleGenerationPreparer(
+      core: core,
+      homeDir: () async => home.path,
+      sleeper: (_) async {},
+      retryJitter: () => 0,
+    ).prepare(
+      profileId: 23,
+      config: '''
+proxy-providers:
+  remote: {type: http, url: https://example.test/proxies}
+rules: []
+''',
+    );
+
+    expect(attempts, 3);
+    expect(timeouts, everyElement(const Duration(seconds: 20).inMilliseconds));
+  });
+
+  test('does not retry non-transient proxy prewarm failures', () async {
+    var attempts = 0;
+    when(
+      () => core.prewarmProxyProvider(
+        name: any(named: 'name'),
+        definition: any(named: 'definition'),
+        targetPath: any(named: 'targetPath'),
+        timeoutMilliseconds: any(named: 'timeoutMilliseconds'),
+      ),
+    ).thenAnswer((_) async {
+      attempts++;
+      throw const CoreMethodException(
+        code: 'core_error',
+        message: '400 Bad Request',
+      );
+    });
+
+    await expectLater(
+      RuleGenerationPreparer(
+        core: core,
+        homeDir: () async => home.path,
+        sleeper: (_) async {},
+        retryJitter: () => 0,
+      ).prepare(
+        profileId: 24,
+        config: '''
+proxy-providers:
+  invalid: {type: http, url: https://example.test/proxies}
+rules: []
+''',
+      ),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          allOf(contains('invalid'), contains('after 1 attempt')),
+        ),
+      ),
+    );
+    expect(attempts, 1);
+  });
+
+  test('proxy prewarm retries share one total deadline', () async {
+    var now = DateTime.utc(2026);
+    final timeouts = <int>[];
+    when(
+      () => core.prewarmProxyProvider(
+        name: any(named: 'name'),
+        definition: any(named: 'definition'),
+        targetPath: any(named: 'targetPath'),
+        timeoutMilliseconds: any(named: 'timeoutMilliseconds'),
+      ),
+    ).thenAnswer((invocation) async {
+      timeouts.add(invocation.namedArguments[#timeoutMilliseconds] as int);
+      now = now.add(const Duration(seconds: 25));
+      throw const CoreMethodException(
+        code: 'core_error',
+        message: 'context deadline exceeded',
+      );
+    });
+
+    await expectLater(
+      RuleGenerationPreparer(
+        core: core,
+        homeDir: () async => home.path,
+        clock: () => now,
+        downloadDeadline: const Duration(seconds: 45),
+        downloadAttemptCap: const Duration(seconds: 30),
+        sleeper: (delay) async => now = now.add(delay),
+        retryJitter: () => 0,
+      ).prepare(
+        profileId: 25,
+        config: '''
+proxy-providers:
+  slow: {type: http, url: https://example.test/proxies}
+rules: []
+''',
+      ),
+      throwsA(isA<StateError>()),
+    );
+
+    expect(timeouts, const [30000, 19750]);
+  });
+
   test(
     'classical provider over 10000 rules is rejected before publish',
     () async {
@@ -894,6 +1028,42 @@ rules: [RULE-SET,legacy,DIRECT]
       );
     },
   );
+}
+
+Future<Map<String, dynamic>> _writeProxyResult(String path) async {
+  final bytes = Uint8List.fromList(
+    'proxies:\n  - {name: x, type: direct}\n'.codeUnits,
+  );
+  await File(path).parent.create(recursive: true);
+  await File(path).writeAsBytes(bytes);
+  return {'path': path, 'digest': sha256.convert(bytes).toString(), 'count': 1};
+}
+
+void _stubPublish(_MockCore core) {
+  when(
+    () => core.publishRuleGeneration(
+      profileId: any(named: 'profileId'),
+      fingerprint: any(named: 'fingerprint'),
+      generation: any(named: 'generation'),
+      stagingPath: any(named: 'stagingPath'),
+      configPath: any(named: 'configPath'),
+      artifacts: any(named: 'artifacts'),
+    ),
+  ).thenAnswer((invocation) async {
+    final staging = invocation.namedArguments[#stagingPath] as String;
+    final generation = invocation.namedArguments[#generation] as String;
+    final target = p.join(
+      Directory(staging).parent.parent.path,
+      'generations',
+      generation,
+    );
+    await Directory(p.dirname(target)).create(recursive: true);
+    await Directory(staging).rename(target);
+    return {
+      'generation': generation,
+      'config-path': p.join(target, 'config.yaml'),
+    };
+  });
 }
 
 Future<RuleProviderFileDownload> _writeDownload(
