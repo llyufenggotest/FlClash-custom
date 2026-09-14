@@ -67,6 +67,8 @@ class IOSProfileSwitchRuntimeContract(unittest.TestCase):
         self.assertIn("dropping stale profile result", proxies)
         self.assertIn("syncProviders({int? profileId})", providers)
         self.assertIn("profileId: expectedProfileId", setup)
+        self.assertIn("ActivationEpochOwnership", setup)
+        self.assertIn("publishIfOwned(epoch", setup)
 
     def test_fixture_matches_reported_overlap_shape(self) -> None:
         fixture = json.loads(

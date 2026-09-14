@@ -14,6 +14,38 @@ import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter/services.dart';
 import 'package:path/path.dart';
 
+/// Assigns each activation attempt a unique epoch and publishes derived state
+/// only for the most recently requested, successfully activated epoch.
+///
+/// Profile ids are not ownership tokens: A -> B -> A reuses A's id, while the
+/// two A activations must remain distinct.
+class ActivationEpochOwnership {
+  int _latestEpoch = 0;
+  int? _activeEpoch;
+
+  int begin() {
+    _activeEpoch = null;
+    return ++_latestEpoch;
+  }
+
+  bool isLatest(int epoch) => epoch == _latestEpoch;
+
+  bool activate(int epoch) {
+    if (!isLatest(epoch)) return false;
+    _activeEpoch = epoch;
+    return true;
+  }
+
+  bool owns(int epoch) =>
+      epoch == _latestEpoch && epoch == _activeEpoch;
+
+  bool publishIfOwned(int epoch, void Function() publish) {
+    if (!owns(epoch)) return false;
+    publish();
+    return true;
+  }
+}
+
 class CoreController {
   static CoreController? _instance;
   late CoreHandlerInterface _interface;

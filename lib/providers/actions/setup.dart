@@ -25,6 +25,8 @@ class SetupAction extends _$SetupAction {
   _RunRequest? _latestRunRequest;
   DateTime? _startTime;
   int _profileSwitchGeneration = 0;
+  final ActivationEpochOwnership _activationOwnership =
+      ActivationEpochOwnership();
 
   int beginProfileSwitch() => ++_profileSwitchGeneration;
 
@@ -65,6 +67,11 @@ class SetupAction extends _$SetupAction {
         profileSwitchGeneration ??
         (profileSwitched ? beginProfileSwitch() : _profileSwitchGeneration);
     final ownsProfileSelection = profileSwitchGeneration != null;
+    final activationEpoch = _activationOwnership.begin();
+    final expectedProfileId = ref.read(currentProfileProvider)?.id;
+    bool activationIsCurrent() =>
+        _activationOwnership.isLatest(activationEpoch) &&
+        (!ownsProfileSelection || generation == _profileSwitchGeneration);
     final timing = _profileSwitchTimer(generation, profileSwitched);
     final barrierToken = '${generation}_${DateTime.now().microsecondsSinceEpoch}';
     var barrierHeld = false;
@@ -101,15 +108,18 @@ class SetupAction extends _$SetupAction {
         // the controller always consults the local committed index first, so
         // later A/B/A switches remain offline and reuse it.
         allowRuleGenerationPreparation: true,
-        activationGuard: ownsProfileSelection
-            ? () => generation == _profileSwitchGeneration
-            : null,
+        activationGuard: activationIsCurrent,
         timing: timing,
       );
       ref.read(logsProvider.notifier).value = FixedList(maxLogsLength);
       ref.read(requestsProvider.notifier).value = FixedList(maxRequestsLength);
       setupSucceeded = await setupResult;
       timing?.mark('setup');
+      if (setupSucceeded && _activationOwnership.activate(activationEpoch)) {
+        timing?.mark('activation_owned');
+      } else {
+        setupSucceeded = false;
+      }
     } catch (e, s) {
       commonPrint.log('fullSetup ===> ${compactError(e)}, $s');
       return false;
@@ -131,7 +141,57 @@ class SetupAction extends _$SetupAction {
         }
       }
     }
+    if (profileSwitched && setupSucceeded && barrierResumed) {
+      unawaited(
+        _publishActivatedRuntimeState(
+          epoch: activationEpoch,
+          profileId: expectedProfileId,
+          timing: timing,
+        ),
+      );
+    }
     return setupSucceeded && barrierResumed;
+  }
+
+  Future<void> _publishActivatedRuntimeState({
+    required int epoch,
+    required int? profileId,
+    ProfileSwitchPhaseTimer? timing,
+  }) async {
+    bool ownsActivation() => _activationOwnership.owns(epoch);
+    try {
+      final proxiesData = await _core.getProxiesData();
+      final selectedMap = ref.read(
+        currentProfileProvider.select((state) => state?.selectedMap ?? {}),
+      );
+      final groups = await computeGroups(
+        proxiesData: proxiesData,
+        selectedMap: selectedMap,
+        sortType: ref.read(
+          proxiesStyleSettingProvider.select((state) => state.sortType),
+        ),
+        delayMap: ref.read(delayDataSourceProvider),
+        defaultTestUrl: ref.read(
+          appSettingProvider.select((state) => state.testUrl),
+        ),
+      );
+      timing?.mark('groups_sync');
+      if (!ownsActivation() ||
+          ref.read(currentProfileProvider)?.id != profileId) {
+        return;
+      }
+      final providers = await _core.getExternalProviders();
+      timing?.mark('providers_sync');
+      _activationOwnership.publishIfOwned(epoch, () {
+        if (ref.read(currentProfileProvider)?.id != profileId) return;
+        ref.read(groupsProvider.notifier).value = groups;
+        ref.read(providersProvider.notifier).value = providers;
+      });
+    } catch (e, s) {
+      commonPrint.log('post-activation sync failed: ${compactError(e)}, $s');
+    } finally {
+      timing?.mark('post_activation_sync_done');
+    }
   }
 
   void _setLocalRunning(bool running) {
@@ -475,18 +535,20 @@ class SetupAction extends _$SetupAction {
         activationGuard: activationGuard,
         preloadInvoke: preloadInvoke,
         timing: timing,
-        onUpdated: () async {
-          if (activationGuard != null && !activationGuard()) return;
-          await ref
-              .read(proxiesActionProvider.notifier)
-              .updateGroups(profileId: expectedProfileId);
-          timing?.mark('groups_sync');
-          if (activationGuard != null && !activationGuard()) return;
-          await ref
-              .read(providersProvider.notifier)
-              .syncProviders(profileId: expectedProfileId);
-          timing?.mark('providers_sync');
-        },
+        onUpdated: profileSwitched
+            ? null
+            : () async {
+                if (activationGuard != null && !activationGuard()) return;
+                await ref
+                    .read(proxiesActionProvider.notifier)
+                    .updateGroups(profileId: expectedProfileId);
+                timing?.mark('groups_sync');
+                if (activationGuard != null && !activationGuard()) return;
+                await ref
+                    .read(providersProvider.notifier)
+                    .syncProviders(profileId: expectedProfileId);
+                timing?.mark('providers_sync');
+              },
       );
     });
     final result = expectedProfileId == null

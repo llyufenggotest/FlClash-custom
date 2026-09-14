@@ -211,5 +211,48 @@ void main() {
 
       expect(body, contains('silence: profileSwitched'));
     });
+
+    test('derived runtime state is published after visible switch completion', () {
+      final setup = source('lib/providers/actions/setup.dart');
+      final fullSetupStart = setup.indexOf('Future<bool> fullSetup(');
+      final fullSetupEnd = setup.indexOf('\n  }', fullSetupStart);
+      final body = setup.substring(fullSetupStart, fullSetupEnd);
+
+      expect(body, contains('unawaited(_publishActivatedRuntimeState('));
+      expect(
+        body.indexOf('setupSucceeded = await setupResult'),
+        lessThan(body.indexOf('unawaited(_publishActivatedRuntimeState(')),
+      );
+      expect(body, isNot(contains('await onUpdated?.call()')));
+    });
+
+    test('background publication failures do not fail an activated setup', () {
+      final setup = source('lib/providers/actions/setup.dart');
+      final start = setup.indexOf(
+        'Future<void> _publishActivatedRuntimeState(',
+      );
+      final end = setup.indexOf('\n  void _setLocalRunning', start);
+      final body = setup.substring(start, end);
+
+      expect(body, contains('try {'));
+      expect(body, contains("commonPrint.log('post-activation sync failed:"));
+      expect(body, isNot(contains('rethrow')));
+    });
+
+    test('an authoritative empty group snapshot clears old groups', () {
+      final setup = source('lib/providers/actions/setup.dart');
+
+      final publishStart = setup.indexOf(
+        'Future<void> _publishActivatedRuntimeState(',
+      );
+      final publishEnd = setup.indexOf('\n  void _setLocalRunning', publishStart);
+      final publishBody = setup.substring(publishStart, publishEnd);
+      expect(publishBody, isNot(contains('retry<List<Group>>')));
+      expect(publishBody, isNot(contains('return <Group>[]')));
+      expect(
+        publishBody,
+        contains('ref.read(groupsProvider.notifier).value = groups'),
+      );
+    });
   });
 }
