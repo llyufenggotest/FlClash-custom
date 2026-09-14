@@ -112,21 +112,16 @@ class _EditProfileViewState extends ConsumerState<EditProfileView> {
           profile = profile.copyWith(autoUpdate: false);
         }
       }
-      final prepared = await globalState.safeRun(
-        () => profile.prepareFile(
+      final savedProfile = await globalState.safeRun(
+        () => profile.saveFile(
           _fileData!,
           prepare: profilesAction.prepareProfileConfig,
         ),
       );
-      if (prepared == null) {
+      if (savedProfile == null) {
         return;
       }
-      await profilesAction.putPreparedProfile(
-        prepared.profile,
-        prepared.content,
-        preparationPolicy:
-            ProfileCommitPreparationPolicy.validateAndCommitOnly,
-      );
+      profilesAction.putProfile(savedProfile);
     } else if (!hasUpdate) {
       profilesAction.putProfile(profile);
     } else {

@@ -19,133 +19,8 @@ import '../helpers/test_profiles.dart';
 
 class _MockCoreHandlerInterface extends Mock implements CoreHandlerInterface {}
 
-class _ProfileUpdateSetupAction extends SetupAction {
-  int applyCount = 0;
-  bool result = true;
-  bool? activationGuardResult;
-
-  @override
-  Future<bool> applyProfile({
-    bool silence = false,
-    bool force = false,
-    bool profileSwitched = false,
-    bool allowRuleGenerationPreparation = false,
-    bool Function()? activationGuard,
-    Future<void> Function()? preloadInvoke,
-    ProfileSwitchPhaseTimer? timing,
-  }) async {
-    applyCount++;
-    activationGuardResult = activationGuard?.call();
-    return result;
-  }
-}
-
-class _ProfileUpdateAction extends ProfilesAction {
-  int commitCount = 0;
-  bool committedBeforeApply = false;
-
-  @override
-  Future<void> commitProfileUpdateOnly(
-    Profile profile,
-    String candidateYaml, {
-    required bool Function() commitGuard,
-  }) async {
-    if (!commitGuard()) return;
-    commitCount++;
-    await ref.read(profilesProvider.notifier).putAsync(profile);
-  }
-
-  @override
-  Future<bool> applyCommittedCurrentProfile({
-    required bool Function() activationGuard,
-  }) async {
-    committedBeforeApply = commitCount == 1;
-    return super.applyCommittedCurrentProfile(
-      activationGuard: activationGuard,
-    );
-  }
-}
-
 void main() {
   group('ProfilesAction', () {
-    test('non-current update commits without preparing or activating', () async {
-      final current = Profile.normal(label: 'Current');
-      final other = Profile.normal(label: 'Other');
-      final updatedOther = other.copyWith(label: 'Updated other');
-      final container = ProviderContainer(
-        overrides: [
-          currentProfileIdProvider.overrideWithBuild((_, _) => current.id),
-          profilesProvider.overrideWith(() => TestProfiles([current, other])),
-          profilesActionProvider.overrideWith(_ProfileUpdateAction.new),
-          setupActionProvider.overrideWith(_ProfileUpdateSetupAction.new),
-        ],
-      );
-      addTearDown(container.dispose);
-      final action = container.read(profilesActionProvider.notifier)
-          as _ProfileUpdateAction;
-      final setup = container.read(setupActionProvider.notifier)
-          as _ProfileUpdateSetupAction;
-
-      await action.commitPreparedUpdate(updatedOther, 'mode: rule');
-
-      expect(action.commitCount, 1);
-      expect(container.read(profilesProvider).getProfile(other.id)?.label,
-          'Updated other');
-      expect(setup.applyCount, 0);
-    });
-
-    test('current update commits before normal guarded activation', () async {
-      final current = Profile.normal(label: 'Current');
-      final updated = current.copyWith(label: 'Updated current');
-      final container = ProviderContainer(
-        overrides: [
-          currentProfileIdProvider.overrideWithBuild((_, _) => current.id),
-          profilesProvider.overrideWith(() => TestProfiles([current])),
-          profilesActionProvider.overrideWith(_ProfileUpdateAction.new),
-          setupActionProvider.overrideWith(_ProfileUpdateSetupAction.new),
-        ],
-      );
-      addTearDown(container.dispose);
-      final action = container.read(profilesActionProvider.notifier)
-          as _ProfileUpdateAction;
-      final setup = container.read(setupActionProvider.notifier)
-          as _ProfileUpdateSetupAction;
-
-      await action.commitPreparedUpdate(updated, 'mode: rule');
-
-      expect(action.committedBeforeApply, isTrue);
-      expect(setup.applyCount, 1);
-      expect(setup.activationGuardResult, isTrue);
-    });
-
-    test('current update keeps committed yaml and reports setup failure', () async {
-      final current = Profile.normal(label: 'Current');
-      final updated = current.copyWith(label: 'Committed update');
-      final container = ProviderContainer(
-        overrides: [
-          currentProfileIdProvider.overrideWithBuild((_, _) => current.id),
-          profilesProvider.overrideWith(() => TestProfiles([current])),
-          profilesActionProvider.overrideWith(_ProfileUpdateAction.new),
-          setupActionProvider.overrideWith(() => _ProfileUpdateSetupAction()
-            ..result = false),
-        ],
-      );
-      addTearDown(container.dispose);
-      final action = container.read(profilesActionProvider.notifier)
-          as _ProfileUpdateAction;
-      final setup = container.read(setupActionProvider.notifier)
-          as _ProfileUpdateSetupAction;
-
-      await expectLater(
-        action.commitPreparedUpdate(updated, 'mode: rule'),
-        throwsA(isA<StateError>()),
-      );
-
-      expect(setup.applyCount, 1);
-      expect(container.read(profilesProvider).getProfile(current.id)?.label,
-          'Committed update');
-    });
-
     test('keeps edited profile data when remote update fails', () async {
       final original = Profile.normal(label: 'old label', url: 'bad-url');
       final edited = original.copyWith(
@@ -175,7 +50,9 @@ void main() {
       expect(profile?.url, edited.url);
     });
 
-    test('updates selection, inserts first profile, and reorders profiles', () async {
+    test(
+      'updates selection, inserts first profile, and reorders profiles',
+      () async {
       final first = Profile.normal(label: 'First');
       final second = Profile.normal(label: 'Second');
       final container = ProviderContainer(
@@ -965,6 +842,7 @@ class _TestSetupAction extends SetupAction {
     bool allowRuleGenerationPreparation = false,
     bool Function()? activationGuard,
     Future<void> Function()? preloadInvoke,
+    ProfileSwitchPhaseTimer? timing,
   }) async {
     applyProfileCount++;
     if (applyProfileCount == 1) {
@@ -1053,6 +931,7 @@ class _InitializingSetupAction extends _RaceSetupAction {
     bool allowRuleGenerationPreparation = false,
     bool Function()? activationGuard,
     Future<void> Function()? preloadInvoke,
+    ProfileSwitchPhaseTimer? timing,
   }) async {
     await _initializationCompleter.future;
     await preloadInvoke?.call();

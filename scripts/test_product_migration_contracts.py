@@ -17,35 +17,24 @@ class ProductMigrationContractTest(unittest.TestCase):
         self.assertLess(normalize, decrypt)
         self.assertLess(decrypt, validate)
 
-    def test_profile_import_keeps_prepare_and_commit_in_one_loading_boundary(self):
+    def test_profile_import_follows_upstream_save_then_put_flow(self):
         source = self.read("lib/providers/actions/profiles.dart")
-        self.assertIn("Future<void> _addPreparedProfile", source)
-        self.assertIn("await putPreparedProfile(", source)
-        self.assertIn(
-            "ProfileCommitPreparationPolicy.validateAndCommitOnly",
-            source,
-        )
-        helper_start = source.index("Future<void> _addPreparedProfile")
+        self.assertIn("Future<void> _addSavedProfile", source)
+        helper_start = source.index("Future<void> _addSavedProfile")
         helper_end = source.index("Future<void> addOppaProfile", helper_start)
         helper = source[helper_start:helper_end]
-        self.assertIn("globalState.loadingRun<void>", helper)
-        self.assertLess(
-            helper.index("globalState.loadingRun<void>"),
-            helper.index("await putPreparedProfile"),
-        )
-        self.assertIn("showCoreUnavailableErrors: true", helper)
-        state = self.read("lib/state.dart")
-        self.assertIn("bool showCoreUnavailableErrors = false", state)
-        self.assertIn(
-            "if (!showCoreUnavailableErrors && isCoreUnavailableError(e))",
-            state,
-        )
-        self.assertIn("final prepared = await futureFunction();", helper)
+        self.assertIn("globalState.loadingRun", helper)
+        self.assertIn("final profile = await globalState.loadingRun(", helper)
+        self.assertIn("futureFunction,", helper)
+        self.assertIn("putProfile(profile);", helper)
+        self.assertNotIn("putPreparedProfile", helper)
+        self.assertNotIn("validateAndCommitOnly", helper)
+        self.assertLess(helper.index("globalState.loadingRun("), helper.index("putProfile(profile)"))
 
     def test_file_url_and_qr_share_prepare_pipeline(self):
         source = self.read("lib/providers/actions/profiles.dart")
-        self.assertIn("prepareFile(bytes, prepare: prepareProfileConfig)", source)
-        self.assertIn(".prepareUpdate(prepare: prepareProfileConfig)", source)
+        self.assertIn("saveFile(bytes, prepare: prepareProfileConfig)", source)
+        self.assertIn(".update(prepare: prepareProfileConfig)", source)
         self.assertIn("addProfileFormURL(url)", source)
 
     def test_oppa_product_flow_and_explicit_read_only_policy(self):
@@ -79,42 +68,19 @@ class ProductMigrationContractTest(unittest.TestCase):
         self.assertNotIn("await file.length()", app)
         self.assertNotIn("await file.readAsBytes()", app)
         self.assertIn("Future<void> addProfileFromDroppedFile", actions)
-        self.assertIn("prepareFile(bytes, prepare: prepareProfileConfig)", actions)
+        self.assertIn("saveFile(bytes, prepare: prepareProfileConfig)", actions)
 
-    def test_subscription_addition_waits_for_resource_readiness_before_database_commit(self):
+    def test_subscription_addition_uses_upstream_profile_persistence(self):
         actions = self.read("lib/providers/actions/profiles.dart")
         database = self.read("lib/providers/database.dart")
-        setup = self.read("lib/providers/actions/setup.dart")
 
-        self.assertIn("bool Function()? postCommitGuard", actions)
-        self.assertIn("if (postCommitGuard != null && !postCommitGuard())", actions)
-        commit_start = actions.index("Future<void> _commitPreparedProfile")
-        commit_end = actions.index("Future<void> putPreparedProfile", commit_start)
-        commit = actions[commit_start:commit_end]
-        db_put = commit.index("await ref.read(profilesProvider.notifier).putAsync(profile)")
-        after_db_put = commit[db_put:]
-        self.assertNotIn(
-            "if (commitGuard != null && !commitGuard())",
-            after_db_put,
-        )
-        update_start = actions.index("Future<void> updateProfile")
-        update_end = actions.index("Future<void> _addPreparedProfile", update_start)
-        self.assertIn("postCommitGuard:", actions[update_start:update_end])
-        self.assertIn("Future<void> putPreparedProfile", actions)
-        self.assertIn("await putPreparedProfile(", actions)
-        self.assertIn(
-            "ProfileCommitPreparationPolicy.validateAndCommitOnly",
-            actions,
-        )
-        self.assertIn("candidateYaml: candidateYaml", actions)
-        self.assertIn("await _core.activateRuleGeneration", actions)
-        self.assertIn("await ref.read(profilesProvider.notifier).putAsync(profile)", actions)
+        self.assertNotIn("ProfileCommitPreparationPolicy", actions)
+        self.assertNotIn("validateAndCommitOnly", actions)
+        self.assertNotIn("_commitPreparedProfile", actions)
+        self.assertIn(".saveFile(bytes, prepare: prepareProfileConfig)", actions)
+        self.assertIn(".update(prepare: prepareProfileConfig)", actions)
+        self.assertIn("putProfile(profile);", actions)
         self.assertIn("Future<void> putAsync(Profile profile)", database)
-        self.assertIn("allowUncommittedProfile = false", setup)
-        put_profile = actions.split("void putProfile(Profile profile)", 1)[1].split(
-            "Future<void> updateProfiles", 1
-        )[0]
-        self.assertNotIn("_scheduleRulePrewarm", put_profile)
 
     def test_ci_preserves_matrix_and_adds_protocol_gates(self):
         workflow = self.read(".github/workflows/build.yaml")

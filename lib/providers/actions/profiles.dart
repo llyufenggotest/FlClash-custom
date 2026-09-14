@@ -1,44 +1,28 @@
 part of '../action.dart';
 
-enum ProfileCommitPreparationPolicy {
-  validateAndCommitOnly,
-  prepareAndActivate,
-}
-
 @Riverpod(keepAlive: true)
 class ProfilesAction extends _$ProfilesAction {
   CoreController get _core => ref.read(coreHandlerProvider);
 
-  final Map<int, int> _profileUpdateGenerations = {};
-  final Map<int, Future<void>> _profileTransactionTails = {};
-
-  Future<void> _withProfileTransaction(
-    int profileId,
-    Future<void> Function() action,
-  ) async {
-    final previous = _profileTransactionTails[profileId] ?? Future<void>.value();
-    final completer = Completer<void>();
-    _profileTransactionTails[profileId] = completer.future;
-    try {
-      await previous.catchError((_) {});
-      await action();
-    } finally {
-      completer.complete();
-      if (identical(_profileTransactionTails[profileId], completer.future)) {
-        unawaited(_profileTransactionTails.remove(profileId));
-      }
-    }
-  }
+  final Map<int, Future<void>> _selectionTransactionTails = {};
+  final Map<int, Future<void>> _switchTransactionTails = {};
 
   Future<T> withProfileTransaction<T>(
     int profileId,
     Future<T> Function() action,
   ) async {
-    late T result;
-    await _withProfileTransaction(profileId, () async {
-      result = await action();
-    });
-    return result;
+    final previous = _switchTransactionTails[profileId] ?? Future<void>.value();
+    final completer = Completer<void>();
+    _switchTransactionTails[profileId] = completer.future;
+    try {
+      await previous.catchError((_) {});
+      return await action();
+    } finally {
+      completer.complete();
+      if (identical(_switchTransactionTails[profileId], completer.future)) {
+        unawaited(_switchTransactionTails.remove(profileId));
+      }
+    }
   }
 
   Future<void> ensureProfileFile(Profile profile) async {
@@ -47,14 +31,27 @@ class ProfilesAction extends _$ProfilesAction {
     await updateProfile(profile);
   }
 
-  int _beginProfileUpdate(int profileId) => _profileUpdateGenerations.update(
-    profileId,
-    (value) => value + 1,
-    ifAbsent: () => 1,
-  );
-
-  bool _isCurrentProfileUpdate(int profileId, int generation) =>
-      _profileUpdateGenerations[profileId] == generation;
+  Future<void> _withSelectionTransaction(
+    int profileId,
+    Future<void> Function() action,
+  ) async {
+    final previous =
+        _selectionTransactionTails[profileId] ?? Future<void>.value();
+    final completer = Completer<void>();
+    _selectionTransactionTails[profileId] = completer.future;
+    try {
+      await previous.catchError((_) {});
+      await action();
+    } finally {
+      completer.complete();
+      if (identical(
+        _selectionTransactionTails[profileId],
+        completer.future,
+      )) {
+        unawaited(_selectionTransactionTails.remove(profileId));
+      }
+    }
+  }
 
   @override
   void build() {}
@@ -65,7 +62,7 @@ class ProfilesAction extends _$ProfilesAction {
   ) async {
     final currentProfile = ref.read(currentProfileProvider);
     if (currentProfile == null) return;
-    await _withProfileTransaction(currentProfile.id, () async {
+    await _withSelectionTransaction(currentProfile.id, () async {
       final profile = ref.read(profilesProvider).getProfile(currentProfile.id);
       if (profile == null || profile.selectedMap[groupName] == proxyName) return;
       final selectedMap = Map<String, String>.from(profile.selectedMap);
@@ -81,61 +78,18 @@ class ProfilesAction extends _$ProfilesAction {
   }
 
   Future<void> deleteProfile(int id) async {
-    _beginProfileUpdate(id);
-    await _withProfileTransaction(id, () async {
-      final oldProfile = ref.read(profilesProvider).getProfile(id);
-      if (oldProfile == null) return;
-      final profilePath = await appPath.getProfilePath(id.toString());
-      final profileFile = File(profilePath);
-      final backup = File(
-        '$profilePath.delete-rollback.$pid.${DateTime.now().microsecondsSinceEpoch}',
-      );
-      final hadFile = await profileFile.exists();
-      if (hadFile) await profileFile.copy(backup.path);
-      var preserveBackup = false;
-      try {
-        if (hadFile) await profileFile.safeDelete();
-        await ref.read(profilesProvider.notifier).del(id);
-      } catch (error, stackTrace) {
-        try {
-          if (hadFile && await backup.exists()) {
-            await backup.rename(profilePath);
-          }
-          await ref.read(profilesProvider.notifier).putAsync(oldProfile);
-        } catch (restoreError, restoreStack) {
-          preserveBackup = hadFile && await backup.exists();
-          Error.throwWithStackTrace(
-            StateError(
-              'profile deletion failed ($error); rollback failed '
-              '($restoreError); preserved backup: ${backup.path}',
-            ),
-            restoreStack,
-          );
-        }
-        Error.throwWithStackTrace(error, stackTrace);
-      } finally {
-        if (!preserveBackup) await backup.safeDelete();
+    await ref.read(profilesProvider.notifier).del(id);
+    await clearEffect(id);
+    final currentProfileId = ref.read(currentProfileIdProvider);
+    if (currentProfileId == id) {
+      final profiles = ref.read(profilesProvider);
+      if (profiles.isNotEmpty) {
+        ref.read(currentProfileIdProvider.notifier).value = profiles.first.id;
+      } else {
+        ref.read(currentProfileIdProvider.notifier).value = null;
+        unawaited(ref.read(setupActionProvider.notifier).setRunning(false));
       }
-      try {
-        await clearProviderEffect(id);
-      } catch (error) {
-        commonPrint.log(
-          'profile $id deleted; deferred provider cleanup failed: $error',
-          logLevel: LogLevel.warning,
-        );
-      }
-      final currentProfileId = ref.read(currentProfileIdProvider);
-      if (currentProfileId == id) {
-        final profiles = ref.read(profilesProvider);
-        if (profiles.isNotEmpty) {
-          final updateId = profiles.first.id;
-          ref.read(currentProfileIdProvider.notifier).value = updateId;
-        } else {
-          ref.read(currentProfileIdProvider.notifier).value = null;
-          unawaited(ref.read(setupActionProvider.notifier).setRunning(false));
-        }
-      }
-    });
+    }
   }
 
   Future<String> validateConfigWithData(String data) async {
@@ -149,14 +103,10 @@ class ProfilesAction extends _$ProfilesAction {
     var prepared = convertFastupSubscription(content);
     if (ageSecretKey?.isNotEmpty == true) {
       final decrypted = await _core.decryptAgeConfig(prepared, ageSecretKey!);
-      if (decrypted.isNotEmpty) {
-        prepared = decrypted;
-      }
+      if (decrypted.isNotEmpty) prepared = decrypted;
     }
     final message = await _core.validateConfig(prepared);
-    if (message.isNotEmpty) {
-      throw MessageException(message);
-    }
+    if (message.isNotEmpty) throw MessageException(message);
     return prepared;
   }
 
@@ -166,9 +116,7 @@ class ProfilesAction extends _$ProfilesAction {
       final isNotNeedUpdate = profile.lastUpdateDate
           ?.add(profile.autoUpdateDuration)
           .isBeforeNow;
-      if (isNotNeedUpdate == false || profile.type == ProfileType.file) {
-        continue;
-      }
+      if (isNotNeedUpdate == false || profile.type == ProfileType.file) continue;
       try {
         await updateProfile(profile);
       } catch (e) {
@@ -177,193 +125,16 @@ class ProfilesAction extends _$ProfilesAction {
     }
   }
 
-  Future<void> _commitPreparedProfile({
-    required Profile profile,
-    required String candidateYaml,
-    required bool isNew,
-    bool Function()? commitGuard,
-    bool Function()? postCommitGuard,
-    required ProfileCommitPreparationPolicy preparationPolicy,
-  }) async {
-    await _withProfileTransaction(profile.id, () async {
-      if (commitGuard != null && !commitGuard()) return;
-      final validationMessage = await _core.validateConfig(candidateYaml);
-      if (validationMessage.isNotEmpty) {
-        throw MessageException(validationMessage);
-      }
-      final setupAction = ref.read(setupActionProvider.notifier);
-      final preparation =
-          preparationPolicy == ProfileCommitPreparationPolicy.prepareAndActivate
-          ? await setupAction.prewarmProfile(
-              profile,
-              candidateYaml: candidateYaml,
-              allowUncommittedProfile: isNew,
-            )
-          : null;
-      if (commitGuard != null && !commitGuard()) return;
-      final target = File(await appPath.getProfilePath(profile.id.toString()));
-      await target.parent.create(recursive: true);
-      final temporary = File(
-        '${target.path}.candidate.$pid.${DateTime.now().microsecondsSinceEpoch}',
-      );
-      final backup = File(
-        '${target.path}.rollback.$pid.${DateTime.now().microsecondsSinceEpoch}',
-      );
-      final hadOld = await target.exists();
-      final oldProfile = ref.read(profilesProvider).getProfile(profile.id);
-      var preserveBackup = false;
-      var activationAttempted = false;
-      try {
-        await temporary.writeAsString(candidateYaml, flush: true);
-        if (hadOld) await target.copy(backup.path);
-        if (commitGuard != null && !commitGuard()) return;
-        await temporary.rename(target.path);
-        try {
-          await ref.read(profilesProvider.notifier).putAsync(profile);
-          if (postCommitGuard != null && !postCommitGuard()) {
-            throw StateError('profile commit is no longer current');
-          }
-          if (preparation != null) {
-            activationAttempted = true;
-            await _core.activateRuleGeneration(
-              profileId: profile.id,
-              preparation: preparation,
-            );
-          }
-        } catch (error, stackTrace) {
-          try {
-            if (activationAttempted && preparation != null) {
-              await _core.restoreRuleGeneration(
-                profileId: profile.id,
-                failedGeneration: preparation.generation,
-              );
-            }
-            if (hadOld) {
-              await backup.rename(target.path);
-            } else {
-              await target.safeDelete();
-            }
-            if (oldProfile != null) {
-              await ref.read(profilesProvider.notifier).putAsync(oldProfile);
-            } else {
-              await ref.read(profilesProvider.notifier).del(profile.id);
-            }
-          } catch (restoreError, restoreStack) {
-            preserveBackup = hadOld && await backup.exists();
-            Error.throwWithStackTrace(
-              StateError(
-                'profile commit failed ($error); rollback failed '
-                '($restoreError); preserved backup: ${backup.path}',
-              ),
-              restoreStack,
-            );
-          }
-          Error.throwWithStackTrace(error, stackTrace);
-        }
-        if (isNew && ref.read(currentProfileIdProvider) == null) {
-          ref.read(currentProfileIdProvider.notifier).value = profile.id;
-        }
-      } finally {
-        await temporary.safeDelete();
-        if (!preserveBackup) await backup.safeDelete();
-      }
-    });
-  }
-
-  Future<void> putPreparedProfile(
-    Profile profile,
-    String candidateYaml, {
-    required ProfileCommitPreparationPolicy preparationPolicy,
-  }) async {
-    final existing = ref.read(profilesProvider).getProfile(profile.id);
-    await _commitPreparedProfile(
-      profile: profile,
-      candidateYaml: candidateYaml,
-      isNew: existing == null,
-      commitGuard: existing == null
-          ? () => ref.read(profilesProvider).getProfile(profile.id) == null
-          : () => identical(
-              ref.read(profilesProvider).getProfile(profile.id),
-              existing,
-            ),
-      preparationPolicy: preparationPolicy,
-    );
-    if (preparationPolicy ==
-        ProfileCommitPreparationPolicy.prepareAndActivate) {
-      await ref.read(setupActionProvider.notifier).applyProfile(
-        force: true,
-        allowRuleGenerationPreparation: true,
-      );
-    }
-  }
-
   void putProfile(Profile profile) {
     ref.read(profilesProvider.notifier).put(profile);
-    if (ref.read(currentProfileIdProvider) == null) {
-      ref.read(currentProfileIdProvider.notifier).value = profile.id;
-    }
+    if (ref.read(currentProfileIdProvider) != null) return;
+    ref.read(currentProfileIdProvider.notifier).value = profile.id;
   }
 
   Future<void> updateProfiles() async {
     for (final profile in ref.read(profilesProvider)) {
       if (profile.type == ProfileType.file) continue;
       await updateProfile(profile);
-    }
-  }
-
-  @protected
-  Future<void> commitProfileUpdateOnly(
-    Profile profile,
-    String candidateYaml, {
-    required bool Function() commitGuard,
-  }) => _commitPreparedProfile(
-    profile: profile,
-    candidateYaml: candidateYaml,
-    isNew: false,
-    commitGuard: commitGuard,
-    postCommitGuard: commitGuard,
-    preparationPolicy: ProfileCommitPreparationPolicy.validateAndCommitOnly,
-  );
-
-  @protected
-  Future<bool> applyCommittedCurrentProfile({
-    required bool Function() activationGuard,
-  }) => ref.read(setupActionProvider.notifier).applyProfile(
-    force: true,
-    allowRuleGenerationPreparation: true,
-    activationGuard: activationGuard,
-  );
-
-  @visibleForTesting
-  Future<void> commitPreparedUpdate(
-    Profile profile,
-    String candidateYaml, {
-    bool Function()? updateGuard,
-  }) async {
-    bool isCurrentUpdate() => updateGuard?.call() ?? true;
-
-    await commitProfileUpdateOnly(
-      profile,
-      candidateYaml,
-      commitGuard: isCurrentUpdate,
-    );
-    if (!isCurrentUpdate() ||
-        ref.read(currentProfileIdProvider) != profile.id) {
-      return;
-    }
-
-    final applied = await applyCommittedCurrentProfile(
-      activationGuard: () =>
-          isCurrentUpdate() &&
-          ref.read(currentProfileIdProvider) == profile.id,
-    );
-    if (!applied &&
-        isCurrentUpdate() &&
-        ref.read(currentProfileIdProvider) == profile.id) {
-      throw StateError(
-        'updated profile ${profile.id} was committed but could not be activated; '
-        'the existing tunnel remains active',
-      );
     }
   }
 
@@ -374,21 +145,15 @@ class ProfilesAction extends _$ProfilesAction {
     final operation = showLoading
         ? ref.read(updatingKeysProvider.notifier).start(profile.updatingKey)
         : null;
-    final generation = _beginProfileUpdate(profile.id);
     try {
-      final prepared = await profile.prepareUpdate(
-        prepare: prepareProfileConfig,
-        commitGuard: () => _isCurrentProfileUpdate(profile.id, generation),
-      );
-      if (!_isCurrentProfileUpdate(profile.id, generation) ||
-          prepared.content.isEmpty) {
-        return;
+      ref.read(profilesProvider.notifier).put(profile);
+      final newProfile = await profile.update(prepare: prepareProfileConfig);
+      ref.read(profilesProvider.notifier).put(newProfile);
+      if (profile.id == ref.read(currentProfileIdProvider)) {
+        ref
+            .read(setupActionProvider.notifier)
+            .applyProfileDebounce(silence: true);
       }
-      await commitPreparedUpdate(
-        prepared.profile,
-        prepared.content,
-        updateGuard: () => _isCurrentProfileUpdate(profile.id, generation),
-      );
     } finally {
       if (operation != null) {
         ref
@@ -398,31 +163,20 @@ class ProfilesAction extends _$ProfilesAction {
     }
   }
 
-  Future<void> _addPreparedProfile({
-    required Future<PreparedProfileContent> Function() futureFunction,
+  Future<void> _addSavedProfile({
+    required Future<Profile> Function() futureFunction,
   }) async {
-    await globalState.loadingRun<void>(
+    final profile = await globalState.loadingRun(
       tag: LoadingTag.profiles,
-      () async {
-        final prepared = await futureFunction();
-        if (prepared.content.isEmpty) {
-          throw StateError('candidate profile rendered an empty configuration');
-        }
-        await putPreparedProfile(
-          prepared.profile,
-          prepared.content,
-          preparationPolicy:
-              ProfileCommitPreparationPolicy.validateAndCommitOnly,
-        );
-      },
+      futureFunction,
       title: currentAppLocalizations.addProfile,
-      showCoreUnavailableErrors: true,
     );
+    if (profile != null) putProfile(profile);
   }
 
   Future<void> addOppaProfile(OppaProxyConfig config) async {
-    await _addPreparedProfile(
-      futureFunction: () => Profile.normal(label: config.name).prepareFile(
+    await _addSavedProfile(
+      futureFunction: () => Profile.normal(label: config.name).saveFile(
         Uint8List.fromList(utf8.encode(config.toYaml())),
         prepare: prepareProfileConfig,
       ),
@@ -435,10 +189,10 @@ class ProfilesAction extends _$ProfilesAction {
   }) async {
     globalState.navigatorKey.currentState?.popUntil((route) => route.isFirst);
     ref.read(currentPageLabelProvider.notifier).toProfiles();
-    await _addPreparedProfile(
+    await _addSavedProfile(
       futureFunction: () => Profile.normal(
         label: name,
-      ).prepareFile(bytes, prepare: prepareProfileConfig),
+      ).saveFile(bytes, prepare: prepareProfileConfig),
     );
   }
 
@@ -456,11 +210,11 @@ class ProfilesAction extends _$ProfilesAction {
       globalState.navigatorKey.currentState?.popUntil((route) => route.isFirst);
     }
     ref.read(currentPageLabelProvider.notifier).value = PageLabel.profiles;
-    await _addPreparedProfile(
+    await _addSavedProfile(
       futureFunction: () => Profile.normal(
         url: url,
         ageSecretKey: ageSecretKey,
-      ).prepareUpdate(prepare: prepareProfileConfig),
+      ).update(prepare: prepareProfileConfig),
     );
   }
 
@@ -481,7 +235,12 @@ class ProfilesAction extends _$ProfilesAction {
     ref.read(profilesProvider.notifier).reorder(profiles);
   }
 
-  Future<void> clearProviderEffect(int profileId) async {
+  Future<void> clearEffect(int profileId) async {
+    final profilePath = await appPath.getProfilePath(profileId.toString());
+    final profileFile = File(profilePath);
+    if (await profileFile.exists()) {
+      await profileFile.safeDelete(recursive: true);
+    }
     final error = await _core.deleteManagedPath(
       DeleteManagedPathParams(
         scope: ManagedPathScope.providers,
@@ -489,17 +248,7 @@ class ProfilesAction extends _$ProfilesAction {
       ),
     );
     if (error.isNotEmpty) {
-      throw MessageException(error);
+      commonPrint.log(error, logLevel: LogLevel.warning);
     }
-  }
-
-  Future<void> clearEffect(int profileId) async {
-    final profilePath = await appPath.getProfilePath(profileId.toString());
-    final profileFile = File(profilePath);
-    final isExists = await profileFile.exists();
-    if (isExists) {
-      await profileFile.safeDelete(recursive: true);
-    }
-    await clearProviderEffect(profileId);
   }
 }

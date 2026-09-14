@@ -129,6 +129,7 @@ class TestSetupAction extends SetupAction {
     bool allowRuleGenerationPreparation = false,
     bool Function()? activationGuard,
     Future<void> Function()? preloadInvoke,
+    ProfileSwitchPhaseTimer? timing,
   }) async {
     applyProfileCalls++;
     await preloadInvoke?.call();

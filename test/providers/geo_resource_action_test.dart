@@ -25,6 +25,7 @@ class _NoopSetupAction extends SetupAction {
     bool allowRuleGenerationPreparation = false,
     bool Function()? activationGuard,
     Future<void> Function()? preloadInvoke,
+    ProfileSwitchPhaseTimer? timing,
   }) async => true;
 }
 
