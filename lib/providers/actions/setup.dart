@@ -164,15 +164,17 @@ class SetupAction extends _$SetupAction {
       final selectedMap = ref.read(
         currentProfileProvider.select((state) => state?.selectedMap ?? {}),
       );
-      final groups = await computeGroups(
-        proxiesData: proxiesData,
-        selectedMap: selectedMap,
-        sortType: ref.read(
-          proxiesStyleSettingProvider.select((state) => state.sortType),
-        ),
-        delayMap: ref.read(delayDataSourceProvider),
-        defaultTestUrl: ref.read(
-          appSettingProvider.select((state) => state.testUrl),
+      final groups = await toGroupsTask(
+        ComputeGroupsState(
+          proxiesData: proxiesData,
+          selectedMap: selectedMap,
+          sortType: ref.read(
+            proxiesStyleSettingProvider.select((state) => state.sortType),
+          ),
+          delayMap: ref.read(delayDataSourceProvider),
+          defaultTestUrl: ref.read(
+            appSettingProvider.select((state) => state.testUrl),
+          ),
         ),
       );
       timing?.mark('groups_sync');
