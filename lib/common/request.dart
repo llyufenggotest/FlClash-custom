@@ -64,42 +64,58 @@ class Request {
     required Map<String, String> headers,
     required int sizeLimit,
     required String destinationPath,
+    required Duration timeout,
+    CancelToken? cancelToken,
   }) async {
     if (sizeLimit <= 0) {
       throw ArgumentError.value(sizeLimit, 'sizeLimit', 'must be positive');
     }
+    if (timeout <= Duration.zero) {
+      throw TimeoutException('rule provider download deadline expired');
+    }
     final effectiveLimit = sizeLimit > _ruleProviderHardLimit
         ? _ruleProviderHardLimit
         : sizeLimit;
-    final dio =
-        _ruleProviderDioFactory?.call() ??
-        Dio(
-          BaseOptions(
-            connectTimeout: const Duration(seconds: 10),
-            receiveTimeout: const Duration(seconds: 30),
-          ),
-        );
+    final dio = _ruleProviderDioFactory?.call() ?? Dio();
     if (_ruleProviderDioFactory == null) {
       dio.httpClientAdapter = IOHttpClientAdapter(
         createHttpClient: () => HttpClient()..findProxy = (_) => 'DIRECT',
       );
     }
-    final cancelToken = CancelToken();
+    final requestCancelToken = CancelToken();
+    if (cancelToken != null) {
+      unawaited(
+        cancelToken.whenCancel.then(
+          (error) => requestCancelToken.cancel(error.error),
+        ),
+      );
+    }
+    var deadlineExpired = false;
+    final deadlineTimer = Timer(timeout, () {
+      deadlineExpired = true;
+      requestCancelToken.cancel('rule provider download deadline expired');
+    });
     final destination = File(destinationPath);
     IOSink? sink;
     var completed = false;
     try {
       final response = await dio.get<ResponseBody>(
         url,
-        cancelToken: cancelToken,
-        options: Options(headers: headers, responseType: ResponseType.stream),
+        cancelToken: requestCancelToken,
+        options: Options(
+          headers: headers,
+          responseType: ResponseType.stream,
+          connectTimeout: _minDuration(timeout, const Duration(seconds: 10)),
+          sendTimeout: timeout,
+          receiveTimeout: timeout,
+        ),
       );
       final body = response.data;
       final contentLength = int.tryParse(
         response.headers.value(Headers.contentLengthHeader) ?? '',
       );
       if (contentLength != null && contentLength > effectiveLimit) {
-        cancelToken.cancel('rule provider exceeds size-limit');
+        requestCancelToken.cancel('rule provider exceeds size-limit');
         throw StateError('rule provider exceeds size-limit');
       }
 
@@ -115,7 +131,7 @@ class Request {
             in body?.stream ?? const Stream<Uint8List>.empty()) {
           received += chunk.length;
           if (received > effectiveLimit) {
-            cancelToken.cancel('rule provider exceeds size-limit');
+            requestCancelToken.cancel('rule provider exceeds size-limit');
             throw StateError('rule provider exceeds size-limit');
           }
           output.add(chunk);
@@ -136,7 +152,23 @@ class Request {
       } finally {
         if (!hashClosed) hashSink.close();
       }
+    } on DioException catch (error, stackTrace) {
+      if (deadlineExpired) {
+        Error.throwWithStackTrace(
+          DioException(
+            requestOptions: error.requestOptions,
+            type: DioExceptionType.receiveTimeout,
+            error: TimeoutException(
+              'rule provider download exceeded $timeout',
+              timeout,
+            ),
+          ),
+          stackTrace,
+        );
+      }
+      rethrow;
     } finally {
+      deadlineTimer.cancel();
       await sink?.close();
       if (!completed && await destination.exists()) {
         await destination.delete();
@@ -302,6 +334,9 @@ class Request {
 }
 
 final request = Request();
+
+Duration _minDuration(Duration left, Duration right) =>
+    left <= right ? left : right;
 
 String? getFileNameForDisposition(String? disposition) {
   if (disposition == null) return null;

@@ -17,7 +17,8 @@ const _providerDownloadConcurrency = 4;
 const _providerDownloadMaxAttempts = 3;
 const _providerDownloadRetryBase = Duration(milliseconds: 250);
 const _providerDownloadRetryCap = Duration(seconds: 1);
-const _providerDownloadRetryBudget = Duration(seconds: 2);
+const _providerDownloadDeadline = Duration(seconds: 60);
+const _providerDownloadAttemptCap = Duration(seconds: 20);
 
 class _AsyncLimiter {
   final int limit;
@@ -44,9 +45,6 @@ class _AsyncLimiter {
   }
 }
 
-final _providerPreparationLimiter = _AsyncLimiter(
-  _providerDownloadConcurrency,
-);
 final Map<String, Future<void>> _providerCacheFlights = {};
 int _cacheNonce = 0;
 
@@ -56,6 +54,8 @@ typedef RuleProviderDownload =
       Map<String, String> headers,
       int sizeLimit,
       String destinationPath,
+      Duration timeout,
+      CancelToken cancelToken,
     );
 
 class RuleGenerationPreparer {
@@ -65,9 +65,12 @@ class RuleGenerationPreparer {
   final Future<void> Function(Duration duration) _sleeper;
   final DateTime Function() _clock;
   final double Function() _retryJitter;
+  final Duration _downloadDeadline;
+  final Duration _downloadAttemptCap;
   final void Function(RulePreparationProgress progress)? _onProgress;
   int _activeProfileId = 0;
-  late final String _operationId = '${pid}_${DateTime.now().microsecondsSinceEpoch}';
+  late final String _operationId =
+      '${pid}_${DateTime.now().microsecondsSinceEpoch}';
 
   RuleGenerationPreparer({
     required this.core,
@@ -76,13 +79,32 @@ class RuleGenerationPreparer {
     Future<void> Function(Duration duration)? sleeper,
     DateTime Function()? clock,
     double Function()? retryJitter,
+    Duration downloadDeadline = _providerDownloadDeadline,
+    Duration downloadAttemptCap = _providerDownloadAttemptCap,
     void Function(RulePreparationProgress progress)? onProgress,
   }) : _download = download ?? _downloadWithSharedRequest,
        _homeDir = homeDir ?? (() => appPath.homeDirPath),
        _sleeper = sleeper ?? Future<void>.delayed,
        _clock = clock ?? DateTime.now,
        _retryJitter = retryJitter ?? Random().nextDouble,
-       _onProgress = onProgress;
+       _downloadDeadline = downloadDeadline,
+       _downloadAttemptCap = downloadAttemptCap,
+       _onProgress = onProgress {
+    if (downloadDeadline <= Duration.zero) {
+      throw ArgumentError.value(
+        downloadDeadline,
+        'downloadDeadline',
+        'must be positive',
+      );
+    }
+    if (downloadAttemptCap <= Duration.zero) {
+      throw ArgumentError.value(
+        downloadAttemptCap,
+        'downloadAttemptCap',
+        'must be positive',
+      );
+    }
+  }
 
   Future<RuleGenerationPreparation?> findPrepared({
     required int profileId,
@@ -127,7 +149,9 @@ class RuleGenerationPreparer {
     await staging.create(recursive: true);
 
     try {
-      final limiter = _providerPreparationLimiter;
+      // A timed-out preparation must not leave work holding permits needed by
+      // a later profile switch. Concurrency is shared only within this run.
+      final limiter = _AsyncLimiter(_providerDownloadConcurrency);
       final proxyProviders = _stringMap(document['proxy-providers']);
       final proxyEntries = proxyProviders.entries.where((entry) {
         final definition = _stringMap(entry.value);
@@ -137,11 +161,7 @@ class RuleGenerationPreparer {
         return limiter.run(() async {
           final definition = _stringMap(entry.value);
           final stableId = _sha256String(entry.key);
-          final stagingRaw = p.join(
-            staging.path,
-            'proxies',
-            '$stableId.yaml',
-          );
+          final stagingRaw = p.join(staging.path, 'proxies', '$stableId.yaml');
           final cacheRoot = p.join(home, 'prewarm', 'cache');
           _progress(
             RulePreparationPhase.queued,
@@ -163,13 +183,14 @@ class RuleGenerationPreparer {
               name: entry.key,
               path: stagingRaw,
             );
-            final cachedDefinition = <String, dynamic>{
-              ...definition,
-              'type': 'file',
-              'path': cached.path,
-            }
-              ..remove('url')
-              ..remove('interval');
+            final cachedDefinition =
+                <String, dynamic>{
+                    ...definition,
+                    'type': 'file',
+                    'path': cached.path,
+                  }
+                  ..remove('url')
+                  ..remove('interval');
             result = await core.prewarmProxyProvider(
               name: entry.key,
               definition: cachedDefinition,
@@ -281,10 +302,7 @@ class RuleGenerationPreparer {
                 'rule provider "${entry.key}" exceeds size-limit',
               );
             }
-            final count = await _classicalRuleCount(
-              download.path,
-              definition,
-            );
+            final count = await _classicalRuleCount(download.path, definition);
             if (count > _classicalRuleLimit) {
               throw StateError(
                 'rule provider "${entry.key}" exceeds classical rule limit of $_classicalRuleLimit ($count rules)',
@@ -495,16 +513,35 @@ class RuleGenerationPreparer {
         if (cached != null) return cached;
         RuleProviderFileDownload downloaded;
         var attempts = 0;
-        final retryStartedAt = _clock();
+        final deadline = _clock().add(_downloadDeadline);
         Object? lastError;
         while (attempts < _providerDownloadMaxAttempts) {
+          final remaining = deadline.difference(_clock());
+          if (remaining <= Duration.zero) {
+            lastError ??= TimeoutException(
+              'rule provider download deadline expired',
+              _downloadDeadline,
+            );
+            break;
+          }
           attempts++;
+          final attemptTimeout = remaining < _downloadAttemptCap
+              ? remaining
+              : _downloadAttemptCap;
+          final cancelToken = CancelToken();
           try {
-            downloaded = await _download(
-              url,
-              _headers(definition['header']),
-              _sizeLimit(definition),
-              destinationPath,
+            downloaded = await _runDownloadAttempt(
+              () => _download(
+                url,
+                _headers(definition['header']),
+                _sizeLimit(definition),
+                destinationPath,
+                attemptTimeout,
+                cancelToken,
+              ),
+              timeout: attemptTimeout,
+              cancelToken: cancelToken,
+              url: url,
             );
             final verified = await _verifyDownload(downloaded);
             await _writeCachedProvider(cacheRoot, definition, verified);
@@ -516,16 +553,14 @@ class RuleGenerationPreparer {
                 _isTransientDownloadError(error);
             if (!canRetry) break;
             final delay = _retryDelay(attempts);
-            if (_clock().difference(retryStartedAt) + delay >
-                _providerDownloadRetryBudget) {
-              break;
-            }
+            final retryRemaining = deadline.difference(_clock());
+            if (retryRemaining <= delay) break;
             await _sleeper(delay);
           }
         }
         throw StateError(
           'rule provider "$name" download failed after $attempts attempt${attempts == 1 ? '' : 's'}: '
-          '${compactError(lastError)}',
+          '${compactError(lastError ?? TimeoutException('download failed'))}',
         );
       case 'file':
         final path = definition['path']?.toString() ?? '';
@@ -572,9 +607,37 @@ class RuleGenerationPreparer {
     }
   }
 
+  Future<RuleProviderFileDownload> _runDownloadAttempt(
+    Future<RuleProviderFileDownload> Function() operation, {
+    required Duration timeout,
+    required CancelToken cancelToken,
+    required String url,
+  }) async {
+    try {
+      return await operation().timeout(
+        timeout,
+        onTimeout: () {
+          cancelToken.cancel('rule provider download attempt timed out');
+          throw DioException(
+            requestOptions: RequestOptions(path: url),
+            type: DioExceptionType.receiveTimeout,
+            error: TimeoutException(
+              'rule provider download attempt exceeded $timeout',
+              timeout,
+            ),
+          );
+        },
+      );
+    } finally {
+      if (!cancelToken.isCancelled) {
+        cancelToken.cancel('rule provider download attempt complete');
+      }
+    }
+  }
+
   Duration _retryDelay(int failedAttempt) {
-    final exponential = _providerDownloadRetryBase.inMilliseconds *
-        (1 << (failedAttempt - 1));
+    final exponential =
+        _providerDownloadRetryBase.inMilliseconds * (1 << (failedAttempt - 1));
     final capped = min(exponential, _providerDownloadRetryCap.inMilliseconds);
     final jitterSample = _retryJitter();
     final normalizedJitter = jitterSample.isFinite
@@ -590,11 +653,13 @@ class RuleGenerationPreparer {
       case DioExceptionType.connectionTimeout:
       case DioExceptionType.sendTimeout:
       case DioExceptionType.receiveTimeout:
+      case DioExceptionType.transformTimeout:
       case DioExceptionType.connectionError:
         return true;
       case DioExceptionType.badResponse:
         final status = error.response?.statusCode;
-        return status == 429 || (status != null && status >= 500 && status < 600);
+        return status == 429 ||
+            (status != null && status >= 500 && status < 600);
       case DioExceptionType.cancel:
       case DioExceptionType.badCertificate:
       case DioExceptionType.unknown:
@@ -625,12 +690,12 @@ class RuleGenerationPreparer {
       final record = jsonDecode(await metadata.readAsString());
       if (record is! Map || record['identity'] != identity) return null;
       final cachedAt = DateTime.tryParse(record['cached-at']?.toString() ?? '');
-      final intervalSeconds = int.tryParse(
-        definition['interval']?.toString() ?? '',
-      ) ?? 86400;
+      final intervalSeconds =
+          int.tryParse(definition['interval']?.toString() ?? '') ?? 86400;
       if (cachedAt == null ||
           intervalSeconds <= 0 ||
-          DateTime.now().difference(cachedAt) >= Duration(seconds: intervalSeconds)) {
+          DateTime.now().difference(cachedAt) >=
+              Duration(seconds: intervalSeconds)) {
         return null;
       }
       final digest = record['sha256']?.toString().toLowerCase();
@@ -691,8 +756,8 @@ class RuleGenerationPreparer {
     _providerCacheFlights[flightKey] = completer.future;
     try {
       final source = File(p.join(root, '$digest.raw'));
-      final sourceValid = await source.exists() &&
-          await _fileSHA256(source.path) == digest;
+      final sourceValid =
+          await source.exists() && await _fileSHA256(source.path) == digest;
       if (!sourceValid) {
         if (await source.exists()) await source.delete();
         final temporarySource = File(
@@ -776,6 +841,7 @@ class RuleGenerationPreparer {
         results[index] = await operation(items[index]);
       }
     }
+
     final workers = List.generate(
       items.length < _providerDownloadConcurrency
           ? items.length
@@ -811,12 +877,16 @@ class RuleGenerationPreparer {
     Map<String, String> headers,
     int sizeLimit,
     String destinationPath,
+    Duration timeout,
+    CancelToken cancelToken,
   ) {
     return request.downloadRuleProviderToFile(
       url: url,
       headers: headers,
       sizeLimit: sizeLimit,
       destinationPath: destinationPath,
+      timeout: timeout,
+      cancelToken: cancelToken,
     );
   }
 }
@@ -827,11 +897,17 @@ Future<(A, B)> _settleBoth<A, B>(Future<A> first, Future<B> second) async {
   Object? firstError;
   StackTrace? firstStack;
   await Future.wait<void>([
-    first.then<void>((value) => firstValue = value).catchError((Object error, StackTrace stack) {
+    first.then<void>((value) => firstValue = value).catchError((
+      Object error,
+      StackTrace stack,
+    ) {
       firstError ??= error;
       firstStack ??= stack;
     }),
-    second.then<void>((value) => secondValue = value).catchError((Object error, StackTrace stack) {
+    second.then<void>((value) => secondValue = value).catchError((
+      Object error,
+      StackTrace stack,
+    ) {
       firstError ??= error;
       firstStack ??= stack;
     }),

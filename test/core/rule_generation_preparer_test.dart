@@ -85,7 +85,7 @@ void main() {
         await RuleGenerationPreparer(
           core: core,
           homeDir: () async => home.path,
-          download: (url, headers, _, destinationPath) async {
+          download: (url, headers, _, destinationPath, _, _) async {
             downloadedUrl = url;
             downloadedHeaders = headers;
             final bytes = Uint8List.fromList('example.com\n'.codeUnits);
@@ -132,117 +132,129 @@ rules:
     expect((yaml['rules'] as YamlList).single, 'RULE-SET,ads,DIRECT');
   });
 
-  test('retries only transient Dio failures with deterministic backoff', () async {
-    var attempts = 0;
-    final sleeps = <Duration>[];
-    var now = DateTime.utc(2026);
-    when(
-      () => core.publishRuleGeneration(
-        profileId: 15,
-        fingerprint: any(named: 'fingerprint'),
-        generation: any(named: 'generation'),
-        stagingPath: any(named: 'stagingPath'),
-        configPath: any(named: 'configPath'),
-        artifacts: any(named: 'artifacts'),
-      ),
-    ).thenAnswer((invocation) async {
-      final staging = invocation.namedArguments[#stagingPath] as String;
-      final generation = invocation.namedArguments[#generation] as String;
-      final target = p.join(
-        Directory(staging).parent.parent.path,
-        'generations',
-        generation,
-      );
-      await Directory(p.dirname(target)).create(recursive: true);
-      await Directory(staging).rename(target);
-      return {'generation': generation, 'config-path': p.join(target, 'config.yaml')};
-    });
-
-    await RuleGenerationPreparer(
-      core: core,
-      homeDir: () async => home.path,
-      clock: () => now,
-      sleeper: (duration) async {
-        sleeps.add(duration);
-        now = now.add(duration);
-      },
-      retryJitter: () => 0,
-      download: (_, _, _, destinationPath) async {
-        attempts++;
-        if (attempts < 3) {
-          throw DioException(
-            requestOptions: RequestOptions(path: '/ads'),
-            type: attempts == 1
-                ? DioExceptionType.receiveTimeout
-                : DioExceptionType.connectionError,
-          );
-        }
-        return _writeDownload(
-          destinationPath,
-          Uint8List.fromList('payload:\n  - example.com\n'.codeUnits),
-        );
-      },
-    ).prepare(
-      profileId: 15,
-      config: '''
-rule-providers:
-  ads: {type: http, url: https://example.test/ads, behavior: classical}
-rules: [RULE-SET,ads,DIRECT]
-''',
-    );
-
-    expect(attempts, 3);
-    expect(sleeps, const [Duration(milliseconds: 250), Duration(milliseconds: 500)]);
-  });
-
-  test('does not retry non-transient failures and retains provider name', () async {
-    for (final error in <Object>[
-      DioException(
-        requestOptions: RequestOptions(path: '/ads'),
-        type: DioExceptionType.badResponse,
-        response: Response<void>(
-          requestOptions: RequestOptions(path: '/ads'),
-          statusCode: 404,
-        ),
-      ),
-      const FormatException('bad payload'),
-    ]) {
+  test(
+    'retries only transient Dio failures with deterministic backoff',
+    () async {
       var attempts = 0;
       final sleeps = <Duration>[];
-      final profileId = error is FormatException ? 18 : 16;
-      await expectLater(
-        RuleGenerationPreparer(
-          core: core,
-          homeDir: () async => home.path,
-          sleeper: (duration) async => sleeps.add(duration),
-          retryJitter: () => 0,
-          download: (_, _, _, __) async {
-            attempts++;
-            throw error;
-          },
-        ).prepare(
-          profileId: profileId,
-          config: '''
+      var now = DateTime.utc(2026);
+      when(
+        () => core.publishRuleGeneration(
+          profileId: 15,
+          fingerprint: any(named: 'fingerprint'),
+          generation: any(named: 'generation'),
+          stagingPath: any(named: 'stagingPath'),
+          configPath: any(named: 'configPath'),
+          artifacts: any(named: 'artifacts'),
+        ),
+      ).thenAnswer((invocation) async {
+        final staging = invocation.namedArguments[#stagingPath] as String;
+        final generation = invocation.namedArguments[#generation] as String;
+        final target = p.join(
+          Directory(staging).parent.parent.path,
+          'generations',
+          generation,
+        );
+        await Directory(p.dirname(target)).create(recursive: true);
+        await Directory(staging).rename(target);
+        return {
+          'generation': generation,
+          'config-path': p.join(target, 'config.yaml'),
+        };
+      });
+
+      await RuleGenerationPreparer(
+        core: core,
+        homeDir: () async => home.path,
+        clock: () => now,
+        sleeper: (duration) async {
+          sleeps.add(duration);
+          now = now.add(duration);
+        },
+        retryJitter: () => 0,
+        download: (_, _, _, destinationPath, _, _) async {
+          attempts++;
+          if (attempts < 3) {
+            throw DioException(
+              requestOptions: RequestOptions(path: '/ads'),
+              type: attempts == 1
+                  ? DioExceptionType.receiveTimeout
+                  : DioExceptionType.connectionError,
+            );
+          }
+          return _writeDownload(
+            destinationPath,
+            Uint8List.fromList('payload:\n  - example.com\n'.codeUnits),
+          );
+        },
+      ).prepare(
+        profileId: 15,
+        config: '''
 rule-providers:
   ads: {type: http, url: https://example.test/ads, behavior: classical}
 rules: [RULE-SET,ads,DIRECT]
 ''',
-        ),
-        throwsA(
-          isA<StateError>().having(
-            (value) => value.message,
-            'message',
-            allOf(
-              contains('rule provider "ads" download failed'),
-              contains('after 1 attempt'),
-            ),
+      );
+
+      expect(attempts, 3);
+      expect(sleeps, const [
+        Duration(milliseconds: 250),
+        Duration(milliseconds: 500),
+      ]);
+    },
+  );
+
+  test(
+    'does not retry non-transient failures and retains provider name',
+    () async {
+      for (final error in <Object>[
+        DioException(
+          requestOptions: RequestOptions(path: '/ads'),
+          type: DioExceptionType.badResponse,
+          response: Response<void>(
+            requestOptions: RequestOptions(path: '/ads'),
+            statusCode: 404,
           ),
         ),
-      );
-      expect(attempts, 1);
-      expect(sleeps, isEmpty);
-    }
-  });
+        const FormatException('bad payload'),
+      ]) {
+        var attempts = 0;
+        final sleeps = <Duration>[];
+        final profileId = error is FormatException ? 18 : 16;
+        await expectLater(
+          RuleGenerationPreparer(
+            core: core,
+            homeDir: () async => home.path,
+            sleeper: (duration) async => sleeps.add(duration),
+            retryJitter: () => 0,
+            download: (_, _, _, _, _, _) async {
+              attempts++;
+              throw error;
+            },
+          ).prepare(
+            profileId: profileId,
+            config: '''
+rule-providers:
+  ads: {type: http, url: https://example.test/ads, behavior: classical}
+rules: [RULE-SET,ads,DIRECT]
+''',
+          ),
+          throwsA(
+            isA<StateError>().having(
+              (value) => value.message,
+              'message',
+              allOf(
+                contains('rule provider "ads" download failed'),
+                contains('after 1 attempt'),
+              ),
+            ),
+          ),
+        );
+        expect(attempts, 1);
+        expect(sleeps, isEmpty);
+      }
+    },
+  );
 
   test('retries 429 but stops at the explicit attempt bound', () async {
     var attempts = 0;
@@ -253,7 +265,7 @@ rules: [RULE-SET,ads,DIRECT]
         homeDir: () async => home.path,
         sleeper: (duration) async => sleeps.add(duration),
         retryJitter: () => 0,
-        download: (_, _, _, __) async {
+        download: (_, _, _, _, _, _) async {
           attempts++;
           final options = RequestOptions(path: '/limited');
           throw DioException(
@@ -286,12 +298,52 @@ rules: [RULE-SET,limited,DIRECT]
     );
   });
 
+  test('passes the remaining total deadline into each retry', () async {
+    var now = DateTime.utc(2026);
+    final timeouts = <Duration>[];
+    var attempts = 0;
+    await expectLater(
+      RuleGenerationPreparer(
+        core: core,
+        homeDir: () async => home.path,
+        clock: () => now,
+        downloadDeadline: const Duration(seconds: 45),
+        downloadAttemptCap: const Duration(seconds: 30),
+        retryJitter: () => 0,
+        sleeper: (delay) async => now = now.add(delay),
+        download: (_, _, _, _, timeout, _) async {
+          timeouts.add(timeout);
+          attempts++;
+          now = now.add(const Duration(seconds: 25));
+          throw DioException(
+            requestOptions: RequestOptions(path: '/slow'),
+            type: DioExceptionType.receiveTimeout,
+          );
+        },
+      ).prepare(
+        profileId: 19,
+        config: '''
+rule-providers:
+  slow: {type: http, url: https://example.test/slow, behavior: classical}
+rules: []
+''',
+      ),
+      throwsA(isA<StateError>()),
+    );
+
+    expect(attempts, 2);
+    expect(timeouts, const [
+      Duration(seconds: 30),
+      Duration(milliseconds: 19750),
+    ]);
+  });
+
   test('named proxy fails explicitly without downloading', () async {
     var downloads = 0;
     final preparer = RuleGenerationPreparer(
       core: core,
       homeDir: () async => home.path,
-      download: (_, _, _, destinationPath) async {
+      download: (_, _, _, destinationPath, _, _) async {
         downloads++;
         return _writeDownload(destinationPath, Uint8List(0));
       },
@@ -357,7 +409,7 @@ rules: [RULE-SET,ads,DIRECT]
           await RuleGenerationPreparer(
             core: core,
             homeDir: () async => home.path,
-            download: (_, headers, sizeLimit, destinationPath) async {
+            download: (_, headers, sizeLimit, destinationPath, _, _) async {
               expect(headers, {'Authorization': 'Bearer token'});
               expect(sizeLimit, 32 * 1024 * 1024);
               return _writeDownload(
@@ -439,7 +491,7 @@ rules: [RULE-SET,legacy,DIRECT]
     await RuleGenerationPreparer(
       core: core,
       homeDir: () async => home.path,
-      download: (_, _, sizeLimit, destinationPath) async {
+      download: (_, _, sizeLimit, destinationPath, _, _) async {
         observedLimit = sizeLimit;
         return _writeDownload(destinationPath, Uint8List.fromList([1]));
       },
@@ -479,13 +531,16 @@ rules: [RULE-SET,ads,DIRECT]
       final target = p.join(root, 'generations', generation);
       await Directory(p.dirname(target)).create(recursive: true);
       await Directory(staging).rename(target);
-      return {'generation': generation, 'config-path': p.join(target, 'config.yaml')};
+      return {
+        'generation': generation,
+        'config-path': p.join(target, 'config.yaml'),
+      };
     });
     Future<RuleGenerationPreparation> prepare(int profileId) {
       return RuleGenerationPreparer(
         core: core,
         homeDir: () async => home.path,
-        download: (_, _, _, destinationPath) async {
+        download: (_, _, _, destinationPath, _, _) async {
           downloads++;
           return _writeDownload(
             destinationPath,
@@ -519,7 +574,7 @@ rules: [RULE-SET,ads,DIRECT]
       RuleGenerationPreparer(
         core: core,
         homeDir: () async => home.path,
-        download: (_, _, _, destinationPath) => _writeDownload(
+        download: (_, _, _, destinationPath, _, _) => _writeDownload(
           destinationPath,
           Uint8List.fromList('payload:\n  - example.com\n'.codeUnits),
         ),
@@ -531,11 +586,13 @@ rule-providers:
 rules: [RULE-SET,ads,DIRECT]
 ''',
       ),
-      throwsA(isA<StateError>().having(
-        (error) => error.message,
-        'message',
-        contains('invalid rule reference'),
-      )),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          contains('invalid rule reference'),
+        ),
+      ),
     );
     verifyNever(
       () => core.publishRuleGeneration(
@@ -549,46 +606,49 @@ rules: [RULE-SET,ads,DIRECT]
     );
   });
 
-  test('downloads independent rule providers concurrently with a limit', () async {
-    final started = <String>[];
-    final releases = <Completer<void>>[];
-    when(
-      () => core.publishRuleGeneration(
-        profileId: 8,
-        fingerprint: any(named: 'fingerprint'),
-        generation: any(named: 'generation'),
-        stagingPath: any(named: 'stagingPath'),
-        configPath: any(named: 'configPath'),
-        artifacts: any(named: 'artifacts'),
-      ),
-    ).thenAnswer((invocation) async {
-      final staging = invocation.namedArguments[#stagingPath] as String;
-      final generation = invocation.namedArguments[#generation] as String;
-      final root = Directory(staging).parent.parent.path;
-      final target = p.join(root, 'generations', generation);
-      await Directory(p.dirname(target)).create(recursive: true);
-      await Directory(staging).rename(target);
-      return {
-        'generation': generation,
-        'config-path': p.join(target, 'config.yaml'),
-      };
-    });
-    final future = RuleGenerationPreparer(
-      core: core,
-      homeDir: () async => home.path,
-      download: (url, _, _, destinationPath) async {
-        started.add(url);
-        final release = Completer<void>();
-        releases.add(release);
-        await release.future;
-        return _writeDownload(
-          destinationPath,
-          Uint8List.fromList('payload:\n  - example.com\n'.codeUnits),
-        );
-      },
-    ).prepare(
-      profileId: 8,
-      config: '''
+  test(
+    'downloads independent rule providers concurrently with a limit',
+    () async {
+      final started = <String>[];
+      final releases = <Completer<void>>[];
+      when(
+        () => core.publishRuleGeneration(
+          profileId: 8,
+          fingerprint: any(named: 'fingerprint'),
+          generation: any(named: 'generation'),
+          stagingPath: any(named: 'stagingPath'),
+          configPath: any(named: 'configPath'),
+          artifacts: any(named: 'artifacts'),
+        ),
+      ).thenAnswer((invocation) async {
+        final staging = invocation.namedArguments[#stagingPath] as String;
+        final generation = invocation.namedArguments[#generation] as String;
+        final root = Directory(staging).parent.parent.path;
+        final target = p.join(root, 'generations', generation);
+        await Directory(p.dirname(target)).create(recursive: true);
+        await Directory(staging).rename(target);
+        return {
+          'generation': generation,
+          'config-path': p.join(target, 'config.yaml'),
+        };
+      });
+      final future =
+          RuleGenerationPreparer(
+            core: core,
+            homeDir: () async => home.path,
+            download: (url, _, _, destinationPath, _, _) async {
+              started.add(url);
+              final release = Completer<void>();
+              releases.add(release);
+              await release.future;
+              return _writeDownload(
+                destinationPath,
+                Uint8List.fromList('payload:\n  - example.com\n'.codeUnits),
+              );
+            },
+          ).prepare(
+            profileId: 8,
+            config: '''
 rule-providers:
   a: {type: http, url: https://example.test/a, behavior: classical}
   b: {type: http, url: https://example.test/b, behavior: classical}
@@ -597,17 +657,18 @@ rule-providers:
   e: {type: http, url: https://example.test/e, behavior: classical}
 rules: []
 ''',
-    );
-    await Future<void>.delayed(Duration.zero);
-    expect(started.length, 4);
-    for (final release in releases.toList()) {
-      release.complete();
-    }
-    await Future<void>.delayed(Duration.zero);
-    expect(started.length, 5);
-    releases.last.complete();
-    await future;
-  });
+          );
+      await Future<void>.delayed(Duration.zero);
+      expect(started.length, 4);
+      for (final release in releases.toList()) {
+        release.complete();
+      }
+      await Future<void>.delayed(Duration.zero);
+      expect(started.length, 5);
+      releases.last.complete();
+      await future;
+    },
+  );
 
   test('shares the limit across proxy and rule providers', () async {
     var active = 0;
@@ -621,6 +682,7 @@ rules: []
       await release.future;
       active--;
     }
+
     when(
       () => core.prewarmProxyProvider(
         name: any(named: 'name'),
@@ -631,10 +693,16 @@ rules: []
     ).thenAnswer((invocation) async {
       final target = invocation.namedArguments[#targetPath] as String;
       await block();
-      final bytes = Uint8List.fromList('proxies:\n  - {name: x, type: direct}\n'.codeUnits);
+      final bytes = Uint8List.fromList(
+        'proxies:\n  - {name: x, type: direct}\n'.codeUnits,
+      );
       await File(target).parent.create(recursive: true);
       await File(target).writeAsBytes(bytes);
-      return {'path': target, 'digest': sha256.convert(bytes).toString(), 'count': 1};
+      return {
+        'path': target,
+        'digest': sha256.convert(bytes).toString(),
+        'count': 1,
+      };
     });
     when(
       () => core.publishRuleGeneration(
@@ -648,24 +716,32 @@ rules: []
     ).thenAnswer((invocation) async {
       final staging = invocation.namedArguments[#stagingPath] as String;
       final generation = invocation.namedArguments[#generation] as String;
-      final target = p.join(Directory(staging).parent.parent.path, 'generations', generation);
+      final target = p.join(
+        Directory(staging).parent.parent.path,
+        'generations',
+        generation,
+      );
       await Directory(p.dirname(target)).create(recursive: true);
       await Directory(staging).rename(target);
-      return {'generation': generation, 'config-path': p.join(target, 'config.yaml')};
+      return {
+        'generation': generation,
+        'config-path': p.join(target, 'config.yaml'),
+      };
     });
-    final future = RuleGenerationPreparer(
-      core: core,
-      homeDir: () async => home.path,
-      download: (_, _, _, destinationPath) async {
-        await block();
-        return _writeDownload(
-          destinationPath,
-          Uint8List.fromList('payload:\n  - example.com\n'.codeUnits),
-        );
-      },
-    ).prepare(
-      profileId: 14,
-      config: '''
+    final future =
+        RuleGenerationPreparer(
+          core: core,
+          homeDir: () async => home.path,
+          download: (_, _, _, destinationPath, _, _) async {
+            await block();
+            return _writeDownload(
+              destinationPath,
+              Uint8List.fromList('payload:\n  - example.com\n'.codeUnits),
+            );
+          },
+        ).prepare(
+          profileId: 14,
+          config: '''
 proxy-providers:
   p1: {type: http, url: https://example.test/p1}
   p2: {type: http, url: https://example.test/p2}
@@ -675,7 +751,7 @@ rule-providers:
   r2: {type: http, url: https://example.test/r2, behavior: classical}
 rules: []
 ''',
-    );
+        );
     await pumpEventQueue(times: 20);
     expect(releases.length, 4);
     for (final release in releases.toList()) {
@@ -689,6 +765,88 @@ rules: []
   });
 
   test(
+    'timed-out operation releases slots and cannot starve the next operation',
+    () async {
+      when(
+        () => core.publishRuleGeneration(
+          profileId: 22,
+          fingerprint: any(named: 'fingerprint'),
+          generation: any(named: 'generation'),
+          stagingPath: any(named: 'stagingPath'),
+          configPath: any(named: 'configPath'),
+          artifacts: any(named: 'artifacts'),
+        ),
+      ).thenAnswer((invocation) async {
+        final staging = invocation.namedArguments[#stagingPath] as String;
+        final generation = invocation.namedArguments[#generation] as String;
+        final target = p.join(
+          Directory(staging).parent.parent.path,
+          'generations',
+          generation,
+        );
+        await Directory(p.dirname(target)).create(recursive: true);
+        await Directory(staging).rename(target);
+        return {
+          'generation': generation,
+          'config-path': p.join(target, 'config.yaml'),
+        };
+      });
+
+      final firstStarted = <String>[];
+      final cancelled = <CancelToken>[];
+      final first =
+          RuleGenerationPreparer(
+            core: core,
+            homeDir: () async => home.path,
+            downloadDeadline: const Duration(milliseconds: 40),
+            downloadAttemptCap: const Duration(milliseconds: 10),
+            retryJitter: () => 0,
+            download: (url, _, _, _, _, cancelToken) {
+              firstStarted.add(url);
+              cancelled.add(cancelToken);
+              return Completer<RuleProviderFileDownload>().future;
+            },
+          ).prepare(
+            profileId: 21,
+            config: '''
+rule-providers:
+  a: {type: http, url: https://example.test/a, behavior: classical}
+  b: {type: http, url: https://example.test/b, behavior: classical}
+  c: {type: http, url: https://example.test/c, behavior: classical}
+  d: {type: http, url: https://example.test/d, behavior: classical}
+  e: {type: http, url: https://example.test/e, behavior: classical}
+rules: []
+''',
+          );
+      await pumpEventQueue(times: 5);
+      expect(firstStarted, hasLength(4));
+
+      final second =
+          RuleGenerationPreparer(
+            core: core,
+            homeDir: () async => home.path,
+            download: (_, _, _, destinationPath, _, _) => _writeDownload(
+              destinationPath,
+              Uint8List.fromList('payload:\n  - second.example\n'.codeUnits),
+            ),
+          ).prepare(
+            profileId: 22,
+            config: '''
+rule-providers:
+  next: {type: http, url: https://example.test/next, behavior: classical}
+rules: []
+''',
+          );
+      await expectLater(second.timeout(const Duration(seconds: 1)), completes);
+
+      await expectLater(first, throwsA(isA<StateError>()));
+      expect(firstStarted.length, greaterThanOrEqualTo(5));
+      expect(cancelled, isNotEmpty);
+      expect(cancelled.every((token) => token.isCancelled), isTrue);
+    },
+  );
+
+  test(
     'classical provider over 10000 rules is rejected before publish',
     () async {
       final raw = List.generate(
@@ -700,7 +858,7 @@ rules: []
         RuleGenerationPreparer(
           core: core,
           homeDir: () async => home.path,
-          download: (_, _, _, destinationPath) async => _writeDownload(
+          download: (_, _, _, destinationPath, _, _) async => _writeDownload(
             destinationPath,
             Uint8List.fromList(raw.codeUnits),
           ),

@@ -45,10 +45,14 @@ void main() {
         headers: {'Authorization': 'Bearer token'},
         sizeLimit: 3,
         destinationPath: destination,
+        timeout: const Duration(seconds: 5),
       );
 
       expect(captured.responseType, ResponseType.stream);
       expect(captured.headers['Authorization'], 'Bearer token');
+      expect(captured.connectTimeout, const Duration(seconds: 5));
+      expect(captured.sendTimeout, const Duration(seconds: 5));
+      expect(captured.receiveTimeout, const Duration(seconds: 5));
       expect(await File(destination).readAsBytes(), [1, 2, 3]);
       expect(result.path, destination);
       expect(result.length, 3);
@@ -83,6 +87,7 @@ void main() {
           headers: const {},
           sizeLimit: 64 * 1024 * 1024,
           destinationPath: destination,
+          timeout: const Duration(seconds: 5),
         ),
         throwsA(isA<StateError>()),
       );
@@ -117,6 +122,7 @@ void main() {
           headers: const {},
           sizeLimit: 10,
           destinationPath: p.join(home.path, 'content-length.raw'),
+          timeout: const Duration(seconds: 5),
         ),
         throwsA(isA<StateError>()),
       );
@@ -166,6 +172,7 @@ void main() {
           headers: const {},
           sizeLimit: 3,
           destinationPath: p.join(home.path, 'chunked.raw'),
+          timeout: const Duration(seconds: 5),
         ),
         throwsA(isA<StateError>()),
       );
@@ -177,10 +184,52 @@ void main() {
       expect(File(p.join(home.path, 'chunked.raw')).existsSync(), isFalse);
     },
   );
+  test(
+    'deadline cancels a hanging Dio request and surfaces receiveTimeout',
+    () async {
+      late RequestOptions captured;
+      final adapter = _RuleProviderAdapter((options, cancelFuture) async {
+        captured = options;
+        await cancelFuture;
+        throw DioException(
+          requestOptions: options,
+          type: DioExceptionType.cancel,
+        );
+      });
+      final client = Request(
+        ruleProviderDioFactory: () => Dio()..httpClientAdapter = adapter,
+      );
+      const timeout = Duration(milliseconds: 30);
+
+      await expectLater(
+        client.downloadRuleProviderToFile(
+          url: 'https://example.test/hanging',
+          headers: const {},
+          sizeLimit: 1024,
+          destinationPath: p.join(home.path, 'hanging.raw'),
+          timeout: timeout,
+        ),
+        throwsA(
+          isA<DioException>().having(
+            (error) => error.type,
+            'type',
+            DioExceptionType.receiveTimeout,
+          ),
+        ),
+      );
+
+      expect(captured.connectTimeout, timeout);
+      expect(captured.sendTimeout, timeout);
+      expect(captured.receiveTimeout, timeout);
+      expect(adapter.cancelled, isTrue);
+      expect(adapter.closed, isTrue);
+      expect(File(p.join(home.path, 'hanging.raw')).existsSync(), isFalse);
+    },
+  );
 }
 
 final class _RuleProviderAdapter implements HttpClientAdapter {
-  final ResponseBody Function(
+  final FutureOr<ResponseBody> Function(
     RequestOptions options,
     Future<void>? cancelFuture,
   )
@@ -199,7 +248,7 @@ final class _RuleProviderAdapter implements HttpClientAdapter {
     if (cancelFuture != null) {
       unawaited(cancelFuture.then((_) => cancelled = true));
     }
-    return response(options, cancelFuture);
+    return await response(options, cancelFuture);
   }
 
   @override
