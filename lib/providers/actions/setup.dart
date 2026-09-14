@@ -839,7 +839,8 @@ class SetupAction extends _$SetupAction {
             if (activationGuard != null && !activationGuard()) {
               throw StateError('iOS activation request is no longer current');
             }
-            final onlineSwitch = _isRunning && preloadInvoke == null;
+            final onlineSwitch = _isRunning &&
+                (preloadInvoke == null || profileSwitched);
             Future<String> applyFormalConfig() {
               return coreController.applyFormalConfig(_setupParams);
             }
