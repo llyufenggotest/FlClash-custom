@@ -22,6 +22,8 @@ class SetupAction extends _$SetupAction {
 
   final _setupScheduler = SerialTaskScheduler();
   final _listenerScheduler = SerialTaskScheduler();
+  final _profilePrewarmScheduler = SerialTaskScheduler();
+  final Map<String, Future<void>> _profilePrewarmFlights = {};
   _RunRequest? _latestRunRequest;
   DateTime? _startTime;
   int _profileSwitchGeneration = 0;
@@ -48,7 +50,8 @@ class SetupAction extends _$SetupAction {
   ProfileSwitchPhaseTimer? _profileSwitchTimer(int generation, bool enabled) {
     if (!enabled) return null;
     return ProfileSwitchPhaseTimer(
-      label: '${system.isAndroid ? 'android' : 'ios'}.profile_switch.$generation',
+      label:
+          '${system.isAndroid ? 'android' : 'ios'}.profile_switch.$generation',
       sink: (phase, phaseElapsed, totalElapsed) {
         commonPrint.log(
           'timing $phase phase_ms=${phaseElapsed.inMilliseconds} '
@@ -73,7 +76,8 @@ class SetupAction extends _$SetupAction {
         _activationOwnership.isLatest(activationEpoch) &&
         (!ownsProfileSelection || generation == _profileSwitchGeneration);
     final timing = _profileSwitchTimer(generation, profileSwitched);
-    final barrierToken = '${generation}_${DateTime.now().microsecondsSinceEpoch}';
+    final barrierToken =
+        '${generation}_${DateTime.now().microsecondsSinceEpoch}';
     var barrierHeld = false;
     var setupSucceeded = false;
     var barrierResumed = true;
@@ -410,13 +414,13 @@ class SetupAction extends _$SetupAction {
   @protected
   bool get rulePrewarmEnabled => true;
 
-  /// Prepares external rule-provider artifacts without activating the profile.
+  /// Prepares external provider artifacts without activating the profile.
   Future<RuleGenerationPreparation?> prewarmProfile(
     Profile profile, {
     String? candidateYaml,
     bool allowUncommittedProfile = false,
   }) async {
-    if (!rulePrewarmEnabled) {
+    if (!ref.mounted || !rulePrewarmEnabled) {
       return null;
     }
     final knownProfile = ref.read(profileProvider(profile.id));
@@ -426,6 +430,7 @@ class SetupAction extends _$SetupAction {
     final baseSetupState = await ref.read(
       setupStateProvider(knownProfile == null ? null : profile.id).future,
     );
+    if (!ref.mounted) return null;
     final setupState = baseSetupState.copyWith(
       profileId: profile.id,
       profileLastUpdateDate: profile.lastUpdateDate?.millisecondsSinceEpoch,
@@ -436,11 +441,13 @@ class SetupAction extends _$SetupAction {
     final candidateRawConfig = candidateYaml == null
         ? null
         : await _core.parseProfileConfigData(candidateYaml);
+    if (!ref.mounted) return null;
     final rendered = await getProfile(
       setupState: setupState,
       patchConfig: patchConfig,
       candidateRawConfig: candidateRawConfig,
     );
+    if (!ref.mounted) return null;
     if (rendered.yaml.isEmpty) {
       throw StateError('candidate profile rendered an empty configuration');
     }
@@ -460,24 +467,63 @@ class SetupAction extends _$SetupAction {
     }
     RulePreparationProgress? lastProgress;
     try {
-      final preparation = await _core.prepareRuleGeneration(
+      final preparation = await _core.findOrPrepareRuleGeneration(
         config: rendered.yaml,
         profileId: profile.id,
         onProgress: (progress) {
           lastProgress = progress;
-          ref
-              .read(rulePreparationProgressProvider.notifier)
-              .update(progress);
+          if (ref.mounted) {
+            ref.read(rulePreparationProgressProvider.notifier).update(progress);
+          }
         },
       );
       return preparation;
     } finally {
       final progress = lastProgress;
-      if (progress != null) {
+      if (progress != null && ref.mounted) {
         ref
             .read(rulePreparationProgressProvider.notifier)
             .clear(key: progress.key);
       }
+    }
+  }
+
+  Future<void> scheduleProfilePrewarm(Profile profile) {
+    final key = jsonEncode({
+      'profile-id': profile.id,
+      'last-update': profile.lastUpdateDate?.millisecondsSinceEpoch,
+      'type': profile.type.name,
+    });
+    final existing = _profilePrewarmFlights[key];
+    if (existing != null) return existing;
+    late final Future<void> flight;
+    flight = _profilePrewarmScheduler
+        .run(() async {
+          if (!ref.mounted) return;
+          final current = ref.read(profilesProvider).getProfile(profile.id);
+          if (current == null) return;
+          try {
+            await prewarmProfile(current);
+          } catch (e, s) {
+            commonPrint.log(
+              'profile ${profile.id} provider prewarm failed: ${compactError(e)}, $s',
+              logLevel: LogLevel.warning,
+            );
+          }
+        })
+        .whenComplete(() {
+          if (identical(_profilePrewarmFlights[key], flight)) {
+            _profilePrewarmFlights.remove(key);
+          }
+        });
+    _profilePrewarmFlights[key] = flight;
+    return flight;
+  }
+
+  Future<void> scheduleAllProfilePrewarms() async {
+    if (!ref.mounted) return;
+    for (final profile in ref.read(profilesProvider)) {
+      unawaited(scheduleProfilePrewarm(profile));
     }
   }
 
@@ -503,7 +549,12 @@ class SetupAction extends _$SetupAction {
       preloadInvoke: preloadInvoke,
       timing: timing,
     );
-    return result != _SetupTaskResult.failed;
+    final succeeded = result != _SetupTaskResult.failed;
+    if (succeeded && !profileSwitched) {
+      final profile = ref.read(currentProfileProvider);
+      if (profile != null) unawaited(scheduleProfilePrewarm(profile));
+    }
+    return succeeded;
   }
 
   Future<_SetupTaskResult> _runSetup({
@@ -596,8 +647,7 @@ class SetupAction extends _$SetupAction {
     final overrideDns = ref.read(overrideDnsProvider);
     final appendSystemDns = networkSetting.appendSystemDns;
     final routeMode = networkSetting.routeMode;
-    final configMap =
-        candidateRawConfig ?? await _core.getConfig(profileId);
+    final configMap = candidateRawConfig ?? await _core.getConfig(profileId);
     String? scriptContent;
     final List<Rule> addedRules = [];
     final List<ProxyGroup> proxyGroups = [];
@@ -829,7 +879,9 @@ class SetupAction extends _$SetupAction {
               (hasExternalProvider(parsedSetupConfig['rule-providers']) ||
                   hasExternalProvider(parsedSetupConfig['proxy-providers']));
           if (activationGuard != null && !activationGuard()) {
-            commonPrint.log('dropping stale setup after provider directory preparation');
+            commonPrint.log(
+              'dropping stale setup after provider directory preparation',
+            );
             setupStale = true;
             return;
           }
@@ -840,8 +892,8 @@ class SetupAction extends _$SetupAction {
             if (activationGuard != null && !activationGuard()) {
               throw StateError('iOS activation request is no longer current');
             }
-            final onlineSwitch = _isRunning &&
-                (preloadInvoke == null || profileSwitched);
+            final onlineSwitch =
+                _isRunning && (preloadInvoke == null || profileSwitched);
             Future<String> applyFormalConfig() {
               return coreController.applyFormalConfig(_setupParams);
             }
@@ -914,9 +966,12 @@ class SetupAction extends _$SetupAction {
           final message = await coreController.setupConfig(
             params: _setupParams,
             preparationConfig: requiresCommittedGeneration ? yamlString : null,
-            preparationProfileId: requiresCommittedGeneration ? profileId : null,
+            preparationProfileId: requiresCommittedGeneration
+                ? profileId
+                : null,
             allowRuleGenerationPreparation: allowRuleGenerationPreparation,
             preloadInvoke: system.isIOS ? commitAndActivate : preloadInvoke,
+            activationGuard: activationGuard,
             timing: timing,
           );
           if (message.isNotEmpty) {

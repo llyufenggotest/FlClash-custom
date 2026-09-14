@@ -33,16 +33,19 @@ void main() {
     expect(published, ['new A']);
   });
 
-  test('a failed newer activation cannot restore old publication ownership', () {
-    final ownership = ActivationEpochOwnership();
-    final active = ownership.begin();
-    expect(ownership.activate(active), isTrue);
+  test(
+    'a failed newer activation cannot restore old publication ownership',
+    () {
+      final ownership = ActivationEpochOwnership();
+      final active = ownership.begin();
+      expect(ownership.activate(active), isTrue);
 
-    final failed = ownership.begin();
-    expect(ownership.activate(failed - 1), isFalse);
-    expect(ownership.owns(active), isFalse);
-    expect(ownership.owns(failed), isFalse);
-  });
+      final failed = ownership.begin();
+      expect(ownership.activate(failed - 1), isFalse);
+      expect(ownership.owns(active), isFalse);
+      expect(ownership.owns(failed), isFalse);
+    },
+  );
 
   test('empty snapshots are publishable values', () {
     final ownership = ActivationEpochOwnership();

@@ -61,7 +61,7 @@ class RulePreparationProgressNotifier
 }
 
 final rulePreparationProgressProvider =
-    NotifierProvider<RulePreparationProgressNotifier,
-        Map<String, RulePreparationProgress>>(
-      RulePreparationProgressNotifier.new,
-    );
+    NotifierProvider<
+      RulePreparationProgressNotifier,
+      Map<String, RulePreparationProgress>
+    >(RulePreparationProgressNotifier.new);

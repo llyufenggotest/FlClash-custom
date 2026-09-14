@@ -134,62 +134,65 @@ void main() {
       expect(result, 'ok');
     });
 
-    test('generation controller APIs delegate without signature drift', () async {
-      const preparation = RuleGenerationPreparation(
-        fingerprint: 'fingerprint',
-        config: 'mode: direct',
-        generation: 'generation',
-        configPath: '/managed/config.yaml',
-      );
-      when(
-        () => mock.activateRuleGeneration(
-          profileId: 7,
+    test(
+      'generation controller APIs delegate without signature drift',
+      () async {
+        const preparation = RuleGenerationPreparation(
+          fingerprint: 'fingerprint',
+          config: 'mode: direct',
           generation: 'generation',
-        ),
-      ).thenAnswer((_) async => {'config-path': '/managed/config.yaml'});
-      when(
-        () => mock.restoreRuleGeneration(
+          configPath: '/managed/config.yaml',
+        );
+        when(
+          () => mock.activateRuleGeneration(
+            profileId: 7,
+            generation: 'generation',
+          ),
+        ).thenAnswer((_) async => {'config-path': '/managed/config.yaml'});
+        when(
+          () => mock.restoreRuleGeneration(
+            profileId: 7,
+            failedGeneration: 'generation',
+          ),
+        ).thenAnswer((_) async => const {});
+        when(
+          () => mock.validateCandidateConfigAtPath('/managed/config.yaml'),
+        ).thenAnswer((_) async => '');
+
+        expect(
+          await controller.activateRuleGeneration(
+            profileId: 7,
+            preparation: preparation,
+          ),
+          same(preparation),
+        );
+        await controller.restoreRuleGeneration(
           profileId: 7,
           failedGeneration: 'generation',
-        ),
-      ).thenAnswer((_) async => const {});
-      when(
-        () => mock.validateCandidateConfigAtPath('/managed/config.yaml'),
-      ).thenAnswer((_) async => '');
+        );
+        expect(
+          await controller.validateCandidateConfigAtPath(
+            '/managed/config.yaml',
+          ),
+          '',
+        );
 
-      expect(
-        await controller.activateRuleGeneration(
-          profileId: 7,
-          preparation: preparation,
-        ),
-        same(preparation),
-      );
-      await controller.restoreRuleGeneration(
-        profileId: 7,
-        failedGeneration: 'generation',
-      );
-      expect(
-        await controller.validateCandidateConfigAtPath('/managed/config.yaml'),
-        '',
-      );
-
-      verify(
-        () => mock.restoreRuleGeneration(
-          profileId: 7,
-          failedGeneration: 'generation',
-        ),
-      ).called(1);
-    });
+        verify(
+          () => mock.restoreRuleGeneration(
+            profileId: 7,
+            failedGeneration: 'generation',
+          ),
+        ).called(1);
+      },
+    );
 
     test('isolated preparation admits its published candidate path', () async {
       const params = SetupParams(selectedMap: {}, testUrl: 'http://x.com');
       const candidatePath = '/app-group/prewarm/7/generations/id/config.yaml';
       final events = <String>[];
       when(
-        () => mock.activateRuleGeneration(
-          profileId: 7,
-          generation: 'generation',
-        ),
+        () =>
+            mock.activateRuleGeneration(profileId: 7, generation: 'generation'),
       ).thenAnswer((_) async => {'config-path': candidatePath});
       when(() => mock.validateCandidateConfigAtPath(candidatePath)).thenAnswer((
         _,
@@ -226,28 +229,42 @@ void main() {
     test('restores activated generation when persistence fails', () async {
       const params = SetupParams(selectedMap: {}, testUrl: 'http://x.com');
       const path = '/app-group/prewarm/7/generations/g/config.yaml';
-      when(() => mock.activateRuleGeneration(profileId: 7, generation: 'g'))
-          .thenAnswer((_) async => {'config-path': path});
-      when(() => mock.restoreRuleGeneration(profileId: 7, failedGeneration: 'g'))
-          .thenAnswer((_) async => const {});
+      when(
+        () => mock.activateRuleGeneration(profileId: 7, generation: 'g'),
+      ).thenAnswer((_) async => {'config-path': path});
+      when(
+        () => mock.restoreRuleGeneration(profileId: 7, failedGeneration: 'g'),
+      ).thenAnswer((_) async => const {});
       final result = await controller.setupConfig(
-        params: params, preparationConfig: 'rules: []', preparationProfileId: 7,
+        params: params,
+        preparationConfig: 'rules: []',
+        preparationProfileId: 7,
         prepareBeforePreload: true,
-        prepareRuleGenerationOverride: ({required config, required profileId}) async =>
-            const RuleGenerationPreparation(fingerprint: 'f', config: 'x', generation: 'g', configPath: path),
+        prepareRuleGenerationOverride:
+            ({required config, required profileId}) async =>
+                const RuleGenerationPreparation(
+                  fingerprint: 'f',
+                  config: 'x',
+                  generation: 'g',
+                  configPath: path,
+                ),
         persistPreparedConfig: (_) async => throw StateError('persist failed'),
       );
       expect(result, contains('persist failed'));
-      verify(() => mock.restoreRuleGeneration(profileId: 7, failedGeneration: 'g')).called(1);
+      verify(
+        () => mock.restoreRuleGeneration(profileId: 7, failedGeneration: 'g'),
+      ).called(1);
     });
 
     test('restores activated generation when preload fails', () async {
       const params = SetupParams(selectedMap: {}, testUrl: 'http://x.com');
       const path = '/app-group/prewarm/7/generations/g/config.yaml';
-      when(() => mock.activateRuleGeneration(profileId: 7, generation: 'g'))
-          .thenAnswer((_) async => {'config-path': path});
-      when(() => mock.restoreRuleGeneration(profileId: 7, failedGeneration: 'g'))
-          .thenAnswer((_) async => const {});
+      when(
+        () => mock.activateRuleGeneration(profileId: 7, generation: 'g'),
+      ).thenAnswer((_) async => {'config-path': path});
+      when(
+        () => mock.restoreRuleGeneration(profileId: 7, failedGeneration: 'g'),
+      ).thenAnswer((_) async => const {});
       when(
         () => mock.validateCandidateConfigAtPath(path),
       ).thenAnswer((_) async => '');
@@ -267,28 +284,46 @@ void main() {
         preloadInvoke: () async => throw StateError('preload failed'),
       );
       expect(result, contains('preload failed'));
-      verify(() => mock.restoreRuleGeneration(profileId: 7, failedGeneration: 'g')).called(1);
+      verify(
+        () => mock.restoreRuleGeneration(profileId: 7, failedGeneration: 'g'),
+      ).called(1);
     });
 
-    test('restores activated generation when candidate validation fails', () async {
-      const params = SetupParams(selectedMap: {}, testUrl: 'http://x.com');
-      const path = '/app-group/prewarm/7/generations/g/config.yaml';
-      when(() => mock.activateRuleGeneration(profileId: 7, generation: 'g'))
-          .thenAnswer((_) async => {'config-path': path});
-      when(() => mock.restoreRuleGeneration(profileId: 7, failedGeneration: 'g'))
-          .thenAnswer((_) async => const {});
-      when(() => mock.validateCandidateConfigAtPath(path))
-          .thenAnswer((_) async => 'validate failed');
-      final result = await controller.setupConfig(
-        params: params, preparationConfig: 'rules: []', preparationProfileId: 7,
-        prepareBeforePreload: true,
-        prepareRuleGenerationOverride: ({required config, required profileId}) async =>
-            const RuleGenerationPreparation(fingerprint: 'f', config: 'x', generation: 'g', configPath: path),
-        preloadInvoke: () async {},
-      );
-      expect(result, 'validate failed');
-      verify(() => mock.restoreRuleGeneration(profileId: 7, failedGeneration: 'g')).called(1);
-    });
+    test(
+      'restores activated generation when candidate validation fails',
+      () async {
+        const params = SetupParams(selectedMap: {}, testUrl: 'http://x.com');
+        const path = '/app-group/prewarm/7/generations/g/config.yaml';
+        when(
+          () => mock.activateRuleGeneration(profileId: 7, generation: 'g'),
+        ).thenAnswer((_) async => {'config-path': path});
+        when(
+          () => mock.restoreRuleGeneration(profileId: 7, failedGeneration: 'g'),
+        ).thenAnswer((_) async => const {});
+        when(
+          () => mock.validateCandidateConfigAtPath(path),
+        ).thenAnswer((_) async => 'validate failed');
+        final result = await controller.setupConfig(
+          params: params,
+          preparationConfig: 'rules: []',
+          preparationProfileId: 7,
+          prepareBeforePreload: true,
+          prepareRuleGenerationOverride:
+              ({required config, required profileId}) async =>
+                  const RuleGenerationPreparation(
+                    fingerprint: 'f',
+                    config: 'x',
+                    generation: 'g',
+                    configPath: path,
+                  ),
+          preloadInvoke: () async {},
+        );
+        expect(result, 'validate failed');
+        verify(
+          () => mock.restoreRuleGeneration(profileId: 7, failedGeneration: 'g'),
+        ).called(1);
+      },
+    );
 
     test(
       'isolated preparation preserves the original error when no path exists',
@@ -320,10 +355,8 @@ void main() {
       final gate = Completer<void>();
       var prepareInvocations = 0;
       when(
-        () => mock.activateRuleGeneration(
-          profileId: 7,
-          generation: 'generation',
-        ),
+        () =>
+            mock.activateRuleGeneration(profileId: 7, generation: 'generation'),
       ).thenAnswer((_) async => {'config-path': candidatePath});
       when(() => mock.setupConfig(params)).thenAnswer((_) async => '');
       when(
@@ -574,6 +607,44 @@ void main() {
       await Future<void>.delayed(Duration.zero);
       expect(events, ['setup']);
     });
+
+    test(
+      'timed-out generation preparation cannot activate after completing late',
+      () async {
+        const params = SetupParams(selectedMap: {}, testUrl: 'http://x.com');
+        final preparation = Completer<RuleGenerationPreparation>();
+
+        final result = await controller.setupConfig(
+          params: params,
+          preparationConfig: 'rules: []',
+          preparationProfileId: 7,
+          prepareBeforePreload: true,
+          rulePreparationTimeout: const Duration(milliseconds: 10),
+          prepareRuleGenerationOverride:
+              ({required String config, required int profileId}) =>
+                  preparation.future,
+        );
+
+        expect(result, contains('rule preparation timed out'));
+        preparation.complete(
+          const RuleGenerationPreparation(
+            fingerprint: 'late',
+            config: 'rules: []',
+            generation: 'late-generation',
+            configPath: '/late/config.yaml',
+          ),
+        );
+        await Future<void>.delayed(Duration.zero);
+        await Future<void>.delayed(Duration.zero);
+
+        verifyNever(
+          () => mock.activateRuleGeneration(
+            profileId: any(named: 'profileId'),
+            generation: any(named: 'generation'),
+          ),
+        );
+      },
+    );
 
     test(
       'iOS setup exception is preserved and does not start the extension',

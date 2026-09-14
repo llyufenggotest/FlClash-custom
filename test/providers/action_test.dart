@@ -54,32 +54,33 @@ void main() {
     test(
       'updates selection, inserts first profile, and reorders profiles',
       () async {
-      final first = Profile.normal(label: 'First');
-      final second = Profile.normal(label: 'Second');
-      final container = ProviderContainer(
-        overrides: [
-          currentProfileIdProvider.overrideWithBuild((_, _) => first.id),
-          profilesProvider.overrideWith(() => TestProfiles([first])),
-        ],
-      );
-      addTearDown(container.dispose);
-      final action = container.read(profilesActionProvider.notifier);
+        final first = Profile.normal(label: 'First');
+        final second = Profile.normal(label: 'Second');
+        final container = ProviderContainer(
+          overrides: [
+            currentProfileIdProvider.overrideWithBuild((_, _) => first.id),
+            profilesProvider.overrideWith(() => TestProfiles([first])),
+          ],
+        );
+        addTearDown(container.dispose);
+        final action = container.read(profilesActionProvider.notifier);
 
-      await action.updateCurrentSelectedMap('Group', 'Proxy');
-      final updatedFirst = container.read(profilesProvider).single;
-      expect(updatedFirst.selectedMap['Group'], 'Proxy');
+        await action.updateCurrentSelectedMap('Group', 'Proxy');
+        final updatedFirst = container.read(profilesProvider).single;
+        expect(updatedFirst.selectedMap['Group'], 'Proxy');
 
-      await action.updateCurrentSelectedMap('Group', 'Proxy');
-      expect(container.read(profilesProvider), hasLength(1));
+        await action.updateCurrentSelectedMap('Group', 'Proxy');
+        expect(container.read(profilesProvider), hasLength(1));
 
-      container.read(currentProfileIdProvider.notifier).value = null;
-      action.putProfile(second);
-      expect(container.read(currentProfileIdProvider), second.id);
-      expect(container.read(profilesProvider), [updatedFirst, second]);
+        container.read(currentProfileIdProvider.notifier).value = null;
+        action.putProfile(second);
+        expect(container.read(currentProfileIdProvider), second.id);
+        expect(container.read(profilesProvider), [updatedFirst, second]);
 
-      action.reorder([second, updatedFirst]);
-      expect(container.read(profilesProvider), [second, updatedFirst]);
-    });
+        action.reorder([second, updatedFirst]);
+        expect(container.read(profilesProvider), [second, updatedFirst]);
+      },
+    );
 
     test(
       'skips profile updates that are disabled, fresh, or file-based',

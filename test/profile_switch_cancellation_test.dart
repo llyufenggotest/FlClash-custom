@@ -55,9 +55,7 @@ void main() {
     });
 
     test('profile switch controls bypass normal Runner admission', () {
-      final tunnel = source(
-        'ios/Runner/Tunnel/TunnelController.swift',
-      );
+      final tunnel = source('ios/Runner/Tunnel/TunnelController.swift');
       final router = source('ios/Runner/Core/CoreMessageRouter.swift');
       expect(tunnel, contains('providerMessageLane'));
       expect(tunnel, contains('acquireProviderMessageSlot(lane:'));
@@ -84,9 +82,19 @@ void main() {
       expect(setup, contains('barrierResumed'));
       expect(setup, contains('generation != _profileSwitchGeneration'));
       expect(goConstants, contains('setProfileSwitchProbeBarrierMethod'));
-      expect(goMethods, contains('setProfileSwitchProbeBarrier(params.Token, params.Suspended)'));
+      expect(
+        goMethods,
+        contains(
+          'setProfileSwitchProbeBarrier(params.Token, params.Suspended)',
+        ),
+      );
       final barrier = source('core/profile_switch_probe_barrier.go');
-      expect(barrier, contains('provider.SuspendHealthCheck(providerHealthChecksSuspended())'));
+      expect(
+        barrier,
+        contains(
+          'provider.SuspendHealthCheck(providerHealthChecksSuspended())',
+        ),
+      );
       expect(barrier, contains('profileSwitchProbeAdmissionCurrent'));
       expect(barrier, contains('cancelDelayTests()'));
       final extensionScheduler = source('core/delay_scheduler_extension.go');

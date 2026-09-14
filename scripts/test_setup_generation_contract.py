@@ -18,8 +18,17 @@ class SetupGenerationContracts(unittest.TestCase):
         self.assertIn(".update(prepare: prepareProfileConfig)", profiles)
         self.assertIn("final requiresCommittedGeneration =", setup)
         self.assertIn("profileSwitched &&", setup)
-        self.assertIn("preparationConfig: requiresCommittedGeneration ? yamlString : null", setup)
-        self.assertIn("preparationProfileId: requiresCommittedGeneration ? profileId : null", setup)
+        compact_setup = " ".join(setup.split())
+        self.assertIn(
+            "preparationConfig: requiresCommittedGeneration ? yamlString : null",
+            compact_setup,
+        )
+        self.assertIn(
+            "preparationProfileId: requiresCommittedGeneration ? profileId : null",
+            compact_setup,
+        )
+        self.assertIn("scheduleProfilePrewarm", setup)
+        self.assertIn("scheduleAllProfilePrewarms", setup)
         self.assertIn("allowRuleGenerationPreparation: true", setup)
         self.assertIn("profileSwitched: profileSwitched", setup)
         self.assertIn("allowRuleGenerationPreparation: allowRuleGenerationPreparation", setup)

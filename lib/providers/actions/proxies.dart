@@ -102,7 +102,7 @@ class ProxiesAction extends _$ProxiesAction {
       commonPrint.log('updateGroups');
       final expectedProfileId =
           profileId ?? ref.read(currentProfileProvider)?.id;
-      final groups = await retry<List<Group>>(
+      final snapshot = await retry<({List<Group> groups, bool succeeded})>(
         task: () async {
           final sortType = ref.read(
             proxiesStyleSettingProvider.select((state) => state.sortType),
@@ -115,31 +115,32 @@ class ProxiesAction extends _$ProxiesAction {
             currentProfileProvider.select((state) => state?.selectedMap ?? {}),
           );
           try {
-            return await _core.getProxiesGroups(
+            final groups = await _core.getProxiesGroups(
               selectedMap: selectedMap,
               sortType: sortType,
               delayMap: delayMap,
               defaultTestUrl: testUrl,
             );
+            return (groups: groups, succeeded: true);
           } catch (e) {
             commonPrint.log(
               'updateGroups error: $e',
               logLevel: coreFailureLogLevel(e),
             );
-            return <Group>[];
+            return (groups: <Group>[], succeeded: false);
           }
         },
-        retryIf: (res) => res.isEmpty,
+        retryIf: (res) => !res.succeeded,
       );
       if (ref.read(currentProfileProvider)?.id != expectedProfileId) {
         commonPrint.log('updateGroups: dropping stale profile result');
         return;
       }
-      if (groups.isEmpty && ref.read(groupsProvider).isNotEmpty) {
-        commonPrint.log('updateGroups: ignoring transient empty result');
+      if (!snapshot.succeeded) {
+        commonPrint.log('updateGroups: keeping the last successful snapshot');
         return;
       }
-      ref.read(groupsProvider.notifier).value = groups;
+      ref.read(groupsProvider.notifier).value = snapshot.groups;
       // Core group snapshots can be non-empty while providers are still
       // materializing. Keep per-profile history and let runtime selection
       // resolution fall back to Core's `now`/available entries instead of

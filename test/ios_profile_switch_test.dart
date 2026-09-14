@@ -10,6 +10,22 @@ import 'package:flutter_test/flutter_test.dart';
 /// `core/mihomo/tunnel/provider_close_test.go`), so the previous subscription's
 /// health-check goroutines kept probing its nodes forever and pinned them in
 /// memory -- the 42-48MB footprint peaks in the 2026-09-01 tester trace.
+String methodBody(String source, String signature) {
+  final start = source.indexOf(signature);
+  expect(start, greaterThanOrEqualTo(0), reason: 'missing $signature');
+  final asyncBody = source.indexOf('async {', start);
+  expect(asyncBody, greaterThan(start), reason: 'missing body for $signature');
+  final openingBrace = source.indexOf('{', asyncBody);
+  var depth = 0;
+  for (var index = openingBrace; index < source.length; index++) {
+    if (source[index] == '{') depth++;
+    if (source[index] != '}') continue;
+    depth--;
+    if (depth == 0) return source.substring(start, index + 1);
+  }
+  fail('unterminated body for $signature');
+}
+
 void main() {
   String source(String relativePath) =>
       File(relativePath).readAsStringSync().replaceAll('\r\n', '\n');
@@ -41,9 +57,7 @@ void main() {
 
     test('fullSetup forwards the switch flag into the setup run', () {
       final setup = source('lib/providers/actions/setup.dart');
-      final start = setup.indexOf('Future<bool> fullSetup(');
-      expect(start, greaterThan(-1));
-      final body = setup.substring(start, setup.indexOf('\n  }', start));
+      final body = methodBody(setup, 'Future<bool> fullSetup(');
 
       expect(body, contains('bool profileSwitched = false'));
       expect(body, contains('profileSwitched: profileSwitched'));
@@ -65,48 +79,71 @@ void main() {
     });
 
     test(
-      'first activation may prepare missing generation before atomic switch',
+      'prewarm is scheduled before switches consume a committed generation',
       () {
         final setup = source('lib/providers/actions/setup.dart');
+        final profiles = source('lib/providers/actions/profiles.dart');
+        final bootstrap = source('lib/bootstrap.dart');
         final controller = source('lib/core/controller.dart');
-        final fullSetup = setup.substring(
-          setup.indexOf('Future<bool> fullSetup({'),
-          setup.indexOf('void _setLocalRunning'),
+        final applyProfile = methodBody(setup, 'Future<bool> applyProfile({');
+        final setupConfig = methodBody(
+          setup,
+          'Future<_SetupTaskResult> _setupConfig(',
         );
-        expect(
-          fullSetup,
-          contains('allowRuleGenerationPreparation: true'),
-          reason: 'an imported profile has no generation until first enable',
-        );
-        expect(
-          fullSetup.indexOf('allowRuleGenerationPreparation: true'),
-          lessThan(fullSetup.indexOf('setupSucceeded = await setupResult')),
-          reason: 'preparation finishes before the switch is reported complete',
-        );
-        expect(
-          controller,
-          contains(
-            'final existing = await getPreparedRuleGeneration(',
-          ),
-          reason: 'switches consume a local generation before considering download',
-        );
-        expect(
-          controller,
-          contains(
-            "throw StateError(\n                'prepared rule generation is missing for profile \$profileId'",
-          ),
-          reason: 'missing generation must remain an explicit failure',
-        );
+
+        expect(setup, contains('Future<void> scheduleProfilePrewarm('));
+        expect(setup, contains('final _profilePrewarmScheduler ='));
         expect(
           setup,
+          contains('final Map<String, Future<void>> _profilePrewarmFlights'),
+        );
+        expect(
+          applyProfile,
+          contains('if (succeeded && !profileSwitched)'),
+          reason:
+              'ordinary profile apply moves provider IO before a later switch',
+        );
+        expect(applyProfile, contains('scheduleProfilePrewarm(profile)'));
+        expect(
+          profiles,
+          contains('scheduleProfilePrewarm('),
+          reason: 'profile updates and additions must schedule prewarm',
+        );
+        expect(
+          bootstrap,
+          contains('.scheduleAllProfilePrewarms()'),
+          reason: 'startup must seed generations for existing profiles',
+        );
+        expect(setupConfig, contains('final requiresCommittedGeneration ='));
+        expect(setupConfig, contains('profileSwitched &&'));
+        expect(
+          setupConfig,
           contains(
             'preparationConfig: requiresCommittedGeneration ? yamlString : null',
           ),
+          reason: 'external-provider switches must keep the safety generation',
         );
         expect(
-          setup.indexOf('final message = await coreController.setupConfig('),
-          lessThan(setup.indexOf('await onUpdated?.call()')),
-          reason: 'groups must not publish as switched before preparation/activation',
+          setupConfig,
+          contains(
+            'allowRuleGenerationPreparation: allowRuleGenerationPreparation',
+          ),
+        );
+        expect(
+          controller,
+          contains('final existing = await getPreparedRuleGeneration('),
+          reason: 'switches consume a fingerprint-matched committed generation',
+        );
+        final findOrPrepare = methodBody(
+          controller,
+          'Future<RuleGenerationPreparation> findOrPrepareRuleGeneration({',
+        );
+        expect(
+          findOrPrepare,
+          contains(
+            'prepared rule generation is missing for profile \$profileId',
+          ),
+          reason: 'missing generation must remain fail-closed',
         );
       },
     );
@@ -118,14 +155,9 @@ void main() {
       expect(end, greaterThan(start));
       final body = setup.substring(start, end);
 
-      expect(
-        body,
-        contains('final onlineSwitch = _isRunning &&'),
-      );
-      expect(
-        body,
-        contains('(preloadInvoke == null || profileSwitched)'),
-      );
+      expect(body, contains('final onlineSwitch ='));
+      expect(body, contains('_isRunning &&'));
+      expect(body, contains('(preloadInvoke == null || profileSwitched)'));
       expect(body, contains('if (onlineSwitch)'));
       final hotApplyAt = body.indexOf('commitAndHotApplyIOSConfig(');
       final restartAt = body.indexOf('commitAndActivateIOSConfig(');
@@ -208,27 +240,25 @@ void main() {
 
     test('profile switches keep the last proxy page usable while applying', () {
       final setup = source('lib/providers/actions/setup.dart');
-      final start = setup.indexOf('Future<bool> fullSetup(');
-      final end = setup.indexOf('\n  }', start);
-      expect(end, greaterThan(start));
-      final body = setup.substring(start, end);
+      final body = methodBody(setup, 'Future<bool> fullSetup(');
 
       expect(body, contains('silence: profileSwitched'));
     });
 
-    test('derived runtime state is published after visible switch completion', () {
-      final setup = source('lib/providers/actions/setup.dart');
-      final fullSetupStart = setup.indexOf('Future<bool> fullSetup(');
-      final fullSetupEnd = setup.indexOf('\n  }', fullSetupStart);
-      final body = setup.substring(fullSetupStart, fullSetupEnd);
+    test(
+      'derived runtime state is published after visible switch completion',
+      () {
+        final setup = source('lib/providers/actions/setup.dart');
+        final body = methodBody(setup, 'Future<bool> fullSetup(');
 
-      expect(body, contains('unawaited(_publishActivatedRuntimeState('));
-      expect(
-        body.indexOf('setupSucceeded = await setupResult'),
-        lessThan(body.indexOf('unawaited(_publishActivatedRuntimeState(')),
-      );
-      expect(body, isNot(contains('await onUpdated?.call()')));
-    });
+        expect(body, contains('_publishActivatedRuntimeState('));
+        expect(
+          body.indexOf('setupSucceeded = await setupResult'),
+          lessThan(body.indexOf('_publishActivatedRuntimeState(')),
+        );
+        expect(body, isNot(contains('await onUpdated?.call()')));
+      },
+    );
 
     test('background publication failures do not fail an activated setup', () {
       final setup = source('lib/providers/actions/setup.dart');
@@ -249,7 +279,10 @@ void main() {
       final publishStart = setup.indexOf(
         'Future<void> _publishActivatedRuntimeState(',
       );
-      final publishEnd = setup.indexOf('\n  void _setLocalRunning', publishStart);
+      final publishEnd = setup.indexOf(
+        '\n  void _setLocalRunning',
+        publishStart,
+      );
       final publishBody = setup.substring(publishStart, publishEnd);
       expect(publishBody, isNot(contains('retry<List<Group>>')));
       expect(publishBody, isNot(contains('return <Group>[]')));

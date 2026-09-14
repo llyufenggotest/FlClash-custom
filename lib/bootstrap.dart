@@ -179,6 +179,11 @@ class Bootstrap {
       await _container.read(setupActionProvider.notifier).initStatus();
     }
     _container.read(initProvider.notifier).value = true;
+    unawaited(
+      _container
+          .read(setupActionProvider.notifier)
+          .scheduleAllProfilePrewarms(),
+    );
     await bootGuard.markRunning();
     permissions.check(_container.read);
   }

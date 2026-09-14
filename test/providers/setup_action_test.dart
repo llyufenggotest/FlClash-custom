@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/core/controller.dart';
 import 'package:fl_clash/core/interface.dart';
@@ -72,6 +73,53 @@ class TestCommonAction extends CommonAction {
   @override
   Future<void> updateTraffic() async {
     trafficUpdates++;
+  }
+}
+
+class _ControlledPrewarmSetupAction extends SetupAction {
+  final List<int> started = [];
+  final List<int> finished = [];
+  final Map<int, Completer<void>> releases = {};
+  int active = 0;
+  int maxActive = 0;
+
+  @override
+  Future<RuleGenerationPreparation?> prewarmProfile(
+    Profile profile, {
+    String? candidateYaml,
+    bool allowUncommittedProfile = false,
+  }) async {
+    started.add(profile.id);
+    active++;
+    if (active > maxActive) maxActive = active;
+    final release = releases.putIfAbsent(profile.id, Completer<void>.new);
+    await release.future;
+    active--;
+    finished.add(profile.id);
+    return null;
+  }
+}
+
+class _VersionedPrewarmSetupAction extends SetupAction {
+  final List<DateTime?> started = [];
+  final List<Completer<void>> releases = [];
+  int active = 0;
+  int maxActive = 0;
+
+  @override
+  Future<RuleGenerationPreparation?> prewarmProfile(
+    Profile profile, {
+    String? candidateYaml,
+    bool allowUncommittedProfile = false,
+  }) async {
+    started.add(profile.lastUpdateDate);
+    active++;
+    if (active > maxActive) maxActive = active;
+    final release = Completer<void>();
+    releases.add(release);
+    await release.future;
+    active--;
+    return null;
   }
 }
 
@@ -177,22 +225,124 @@ void main() {
     container.read(initProvider.notifier).value = true;
   }
 
+  group('profile prewarm scheduling', () {
+    test(
+      'deduplicates one profile and serializes different profiles',
+      () async {
+        final first = Profile.normal(label: 'first');
+        final second = Profile.normal(label: 'second');
+        final scoped = ProviderContainer(
+          overrides: [
+            profilesProvider.overrideWith(() => TestProfiles([first, second])),
+            setupActionProvider.overrideWith(_ControlledPrewarmSetupAction.new),
+          ],
+        );
+        addTearDown(scoped.dispose);
+        final prewarm =
+            scoped.read(setupActionProvider.notifier)
+                as _ControlledPrewarmSetupAction;
+
+        final firstFlight = prewarm.scheduleProfilePrewarm(first);
+        final duplicateFlight = prewarm.scheduleProfilePrewarm(first);
+        final secondFlight = prewarm.scheduleProfilePrewarm(second);
+        await Future<void>.delayed(Duration.zero);
+
+        expect(identical(firstFlight, duplicateFlight), isTrue);
+        expect(prewarm.started, [first.id]);
+        expect(prewarm.active, 1);
+        expect(prewarm.maxActive, 1);
+
+        prewarm.releases[first.id]!.complete();
+        await firstFlight;
+        await Future<void>.delayed(Duration.zero);
+
+        expect(prewarm.started, [first.id, second.id]);
+        expect(prewarm.finished, [first.id]);
+        expect(prewarm.active, 1);
+        expect(prewarm.maxActive, 1);
+
+        prewarm.releases[second.id]!.complete();
+        await secondFlight;
+        expect(prewarm.finished, [first.id, second.id]);
+        expect(prewarm.maxActive, 1);
+      },
+    );
+
+    test(
+      'queues revision requests and resolves each against the latest persisted profile',
+      () async {
+        final firstUpdated = DateTime.fromMillisecondsSinceEpoch(1000);
+        final secondUpdated = DateTime.fromMillisecondsSinceEpoch(2000);
+        final first = Profile.normal(
+          label: 'profile',
+        ).copyWith(lastUpdateDate: firstUpdated);
+        final second = first.copyWith(lastUpdateDate: secondUpdated);
+        final scoped = ProviderContainer(
+          overrides: [
+            profilesProvider.overrideWith(() => TestProfiles([second])),
+            setupActionProvider.overrideWith(_VersionedPrewarmSetupAction.new),
+          ],
+        );
+        addTearDown(scoped.dispose);
+        final prewarm =
+            scoped.read(setupActionProvider.notifier)
+                as _VersionedPrewarmSetupAction;
+
+        final firstFlight = prewarm.scheduleProfilePrewarm(first);
+        await Future<void>.delayed(Duration.zero);
+        final secondFlight = prewarm.scheduleProfilePrewarm(second);
+        await Future<void>.delayed(Duration.zero);
+
+        expect(identical(firstFlight, secondFlight), isFalse);
+        expect(prewarm.started, [secondUpdated]);
+        expect(prewarm.maxActive, 1);
+
+        prewarm.releases.single.complete();
+        await firstFlight;
+        await Future<void>.delayed(Duration.zero);
+        expect(prewarm.started, [secondUpdated, secondUpdated]);
+        expect(prewarm.maxActive, 1);
+
+        prewarm.releases.last.complete();
+        await secondFlight;
+      },
+    );
+  });
+
   group('rule preparation progress provider', () {
-    test('publishes and clears the latest per-resource event', () {
-      const progress = RulePreparationProgress(
+    test('publishes and clears progress by operation', () {
+      const first = RulePreparationProgress(
+        profileId: 1,
+        operationId: 'first',
         phase: RulePreparationPhase.downloading,
         kind: 'rule-provider',
         name: 'ads',
         path: '/rules/ads.yaml',
       );
+      const second = RulePreparationProgress(
+        profileId: 1,
+        operationId: 'second',
+        phase: RulePreparationPhase.validating,
+        kind: 'rule-provider',
+        name: 'private',
+        path: '/rules/private.yaml',
+      );
+      final notifier = container.read(rulePreparationProgressProvider.notifier);
 
-      container
-          .read(rulePreparationProgressProvider.notifier)
-          .update(progress);
-      expect(container.read(rulePreparationProgressProvider), same(progress));
+      notifier.update(first);
+      notifier.update(second);
+      final progress = container.read(rulePreparationProgressProvider);
+      expect(progress.keys, {first.key, second.key});
+      expect(progress[first.key], same(first));
+      expect(progress[second.key], same(second));
 
-      container.read(rulePreparationProgressProvider.notifier).clear();
-      expect(container.read(rulePreparationProgressProvider), isNull);
+      notifier.clear(key: first.key);
+      final remaining = container.read(rulePreparationProgressProvider);
+      expect(remaining.keys, {second.key});
+      expect(remaining[second.key], same(second));
+
+      notifier.clear(profileId: second.profileId);
+      expect(container.read(rulePreparationProgressProvider), isEmpty);
     });
   });
 
@@ -589,6 +739,12 @@ void main() {
       tempDir = Directory.systemTemp.createTempSync('setup_action_test');
       PathProviderPlatform.instance = _FakePathProvider(tempDir.path);
       await AppLocalizations.load(const Locale('en'));
+      globalState.packageInfo = PackageInfo(
+        appName: 'FlClash',
+        packageName: 'com.follow.clash',
+        version: '0.0.0',
+        buildNumber: '0',
+      );
       originalLastConfigMd5 = globalState.lastConfigMd5;
     });
 
@@ -617,9 +773,16 @@ void main() {
     );
 
     test(
-      'a refresh failure still runs core.setupConfig and preloadInvoke',
+      'a refresh failure keeps the cached profile and still configures core',
       () async {
-        final profile = Profile.normal(label: 'p', url: 'http://127.0.0.1:9/');
+        final profile = Profile.normal(
+          label: 'p',
+          url: 'http://cached.invalid/profile',
+        );
+        final cachedPath = await appPath.getProfilePath(profile.id.toString());
+        final cachedFile = File(cachedPath);
+        await cachedFile.parent.create(recursive: true);
+        await cachedFile.writeAsString('proxies: []\nrules: []\n', flush: true);
         final core = _MockCoreHandlerInterface();
         when(() => core.setupConfig(any())).thenAnswer((_) async => '');
         var preloadRan = false;
@@ -649,6 +812,154 @@ void main() {
     );
 
     test(
+      'a switch consumes its matching prepared generation without prewarming',
+      () async {
+        final profile = Profile.normal(label: 'switched');
+        final core = _MockCoreHandlerInterface();
+        when(core.cancelDelayTests).thenAnswer((_) async => true);
+        when(
+          () => core.setProfileSwitchProbeBarrier(
+            token: any(named: 'token'),
+            suspended: any(named: 'suspended'),
+          ),
+        ).thenAnswer((_) async => true);
+        when(() => core.getProfileConfig(profile.id)).thenAnswer(
+          (_) async => <String, dynamic>{
+            'proxies': [
+              {
+                'name': 'New node',
+                'type': 'ss',
+                'server': '127.0.0.1',
+                'port': 443,
+                'cipher': 'aes-128-gcm',
+                'password': 'test',
+              },
+            ],
+            'proxy-groups': [
+              {
+                'name': 'Proxy',
+                'type': 'select',
+                'proxies': ['New node'],
+              },
+            ],
+            'proxy-providers': {
+              'remote': {
+                'type': 'http',
+                'url': 'https://provider.invalid/proxies.yaml',
+                'interval': 86400,
+              },
+            },
+            'rules': ['MATCH,Proxy'],
+          },
+        );
+        when(() => core.setupConfig(any())).thenAnswer((_) async => '');
+        when(() => core.getProxies()).thenAnswer(
+          (_) async => const ProxiesData(
+            all: ['Proxy', 'New node'],
+            proxies: {
+              'Proxy': {
+                'name': 'Proxy',
+                'type': 'Selector',
+                'now': 'New node',
+                'all': ['New node'],
+              },
+              'New node': {'name': 'New node', 'type': 'ss'},
+            },
+          ),
+        );
+        when(
+          () => core.getExternalProviders(),
+        ).thenAnswer((_) async => const []);
+        final scoped = ProviderContainer(
+          overrides: [
+            initProvider.overrideWithBuild((_, _) => true),
+            profilesProvider.overrideWith(() => TestProfiles([profile])),
+            currentProfileIdProvider.overrideWithBuild((_, _) => profile.id),
+            setupStateProvider.overrideWith(
+              (_, profileId) =>
+                  nullProfileSetupState.copyWith(profileId: profileId),
+            ),
+            coreHandlerProvider.overrideWithValue(CoreController.scoped(core)),
+            setupActionProvider.overrideWith(SetupAction.new),
+          ],
+        );
+        addTearDown(scoped.dispose);
+        globalState.container = scoped;
+        final setup = scoped.read(setupActionProvider.notifier);
+        final rendered = await setup.getProfile(
+          setupState: nullProfileSetupState.copyWith(profileId: profile.id),
+          patchConfig: scoped.read(patchClashConfigProvider),
+        );
+        final generationDir = Directory(
+          '${tempDir.path}${Platform.pathSeparator}prepared-${profile.id}',
+        );
+        await generationDir.create(recursive: true);
+        final generationConfig = File(
+          '${generationDir.path}${Platform.pathSeparator}config.yaml',
+        );
+        await generationConfig.writeAsString(rendered.yaml, flush: true);
+        String? requestedFingerprint;
+        when(
+          () => core.getPreparedRuleGeneration(
+            profileId: profile.id,
+            fingerprint: any(named: 'fingerprint'),
+          ),
+        ).thenAnswer((invocation) async {
+          requestedFingerprint =
+              invocation.namedArguments[#fingerprint]! as String;
+          return {
+            'generation': 'verified-generation',
+            'config-path': generationConfig.path,
+          };
+        });
+        when(
+          () => core.activateRuleGeneration(
+            profileId: profile.id,
+            generation: 'verified-generation',
+          ),
+        ).thenAnswer((_) async => {'config-path': generationConfig.path});
+
+        final stopwatch = Stopwatch()..start();
+        expect(await setup.fullSetup(profileSwitched: true), isTrue);
+        while (scoped.read(groupsProvider).isEmpty &&
+            stopwatch.elapsed < const Duration(seconds: 1)) {
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        }
+
+        expect(
+          requestedFingerprint,
+          sha256.convert(rendered.yaml.codeUnits).toString(),
+        );
+        verify(
+          () => core.activateRuleGeneration(
+            profileId: profile.id,
+            generation: 'verified-generation',
+          ),
+        ).called(1);
+        verify(() => core.setupConfig(any())).called(1);
+        verifyNever(
+          () => core.prewarmProxyProvider(
+            name: any(named: 'name'),
+            definition: any(named: 'definition'),
+            targetPath: any(named: 'targetPath'),
+            timeoutMilliseconds: any(named: 'timeoutMilliseconds'),
+          ),
+        );
+        verifyNever(
+          () => core.prewarmRuleProvider(
+            name: any(named: 'name'),
+            definition: any(named: 'definition'),
+            targetPath: any(named: 'targetPath'),
+          ),
+        );
+        expect(scoped.read(groupsProvider).map((group) => group.name), [
+          'Proxy',
+        ]);
+        expect(stopwatch.elapsed, lessThan(const Duration(seconds: 1)));
+      },
+    );
+
+    test(
       'a profile that fails to build still pushes the empty config to core',
       () async {
         final profile = Profile.normal(label: 'p');
@@ -663,12 +974,6 @@ void main() {
           ).readAsString();
           return '';
         });
-        globalState.packageInfo = PackageInfo(
-          appName: 'FlClash',
-          packageName: 'com.follow.clash',
-          version: '0.0.0',
-          buildNumber: '0',
-        );
         final scoped = ProviderContainer(
           overrides: [
             profilesProvider.overrideWith(() => TestProfiles([profile])),

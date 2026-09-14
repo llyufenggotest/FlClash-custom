@@ -36,7 +36,7 @@ jobs:
       - name: Verify recursive submodule SHAs
         shell: bash
         run: |
-          test "$(git -C core/mihomo rev-parse HEAD)" = af55fb9e55ea180d4a7bd1875c329df2d59d9ae6
+          test "$(git -C core/mihomo rev-parse HEAD)" = f296a896ac0dc0705c89c47071250a8bcb2a75c4
           test "$(git -C core/sing-shadowsocks2 rev-parse HEAD)" = 5b97d1f820639c51057be1115df6327e6a2dc8be
           git submodule status --recursive
 
@@ -45,8 +45,8 @@ jobs:
         run: |
           (cd core/mihomo && go test ./transport/oppa)
           (cd core/mihomo && go test ./adapter -run '^(TestParseOppa|TestParseFastupTrojan|TestParseStandardTrojan)' -count=1)
-          (cd core/mihomo && go test ./adapter/outbound -run '^(TestFastup|TestStandardTrojan|TestVlessX365|TestXHTTP|TestBlackstone)' -count=1)
-          (cd core/mihomo && go test ./transport/vless -run '^TestX365' -count=1)
+          (cd core/mihomo && go test ./adapter/outbound -run '^(TestFastup|TestStandardTrojan|TestVlessX365|TestXHTTP|TestBlackstone|TestConfigurePureVless|TestNewPureVless)' -count=1)
+          (cd core/mihomo && go test ./transport/vless -run '^(TestX365|TestPrivateSuffixIsolation|TestJuziHMACWire|TestPure)' -count=1)
           (cd core/sing-shadowsocks2 && go test ./shadowstream -run '^TestBlackstone' -count=1)
           (cd core/sing-shadowsocks2 && go test ./cipher -run '^(TestParseViewTurbo|TestViewTurbo)' -count=1)
           (cd core && CGO_ENABLED=0 go test ./...)
@@ -72,6 +72,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          submodules: recursive
 
       - name: Test commit message hook
         run: bash tool/check_commit_msg_test.sh

@@ -695,7 +695,8 @@ abstract class CoreHandlerInterface with CoreInterface {
 
   @override
   Future<bool> cancelDelayTests() async {
-    return await _invokeMethod<bool>(method: CoreMethod.cancelDelayTests) ?? false;
+    return await _invokeMethod<bool>(method: CoreMethod.cancelDelayTests) ??
+        false;
   }
 
   @override

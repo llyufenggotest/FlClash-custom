@@ -100,12 +100,14 @@ void main() {
     test('loadingRun swallows core-unavailable failures', () {
       final state = source('lib/state.dart');
       expect(state, contains("import 'core/core.dart';"));
-      final catchStart = state.indexOf('if (isCoreUnavailableError(e))');
+      final catchStart = state.indexOf('isCoreUnavailableError(e)');
       expect(catchStart, greaterThan(-1));
-      final body = state.substring(catchStart, catchStart + 500);
+      final body = state.substring(catchStart);
+      final notifier = body.indexOf('dialogs.showNotifier(message');
+      expect(notifier, greaterThan(-1));
       expect(
         body.indexOf('isCoreUnavailableError(e)'),
-        lessThan(body.indexOf('dialogs.showNotifier(message')),
+        lessThan(notifier),
         reason: 'the guard must run before the notifier',
       );
     });
@@ -132,24 +134,40 @@ void main() {
 
     test('onUpdated is what reloads the groups', () {
       final setup = source('lib/providers/actions/setup.dart');
-      final onUpdated = setup.indexOf('onUpdated: () async {');
+      final onUpdated = setup.indexOf('onUpdated: profileSwitched');
       expect(onUpdated, greaterThan(-1));
-      final body = setup.substring(onUpdated, onUpdated + 260);
-      expect(body, contains('updateGroups()'));
+      final updateGroups = setup.indexOf('.updateGroups(', onUpdated);
+      expect(updateGroups, greaterThan(onUpdated));
+      final syncProviders = setup.indexOf('.syncProviders(', updateGroups);
+      expect(syncProviders, greaterThan(updateGroups));
+      final body = setup.substring(onUpdated, syncProviders);
+      expect(body, contains('.updateGroups('));
     });
 
-    test('a transient empty or failed refresh keeps the last known groups', () {
+    test('a failed refresh keeps the last known groups', () {
       final proxies = source('lib/providers/actions/proxies.dart');
-      expect(proxies, contains('ignoring transient empty result'));
-      final catchStart = proxies.indexOf("'updateGroups error: \$e'");
-      expect(catchStart, greaterThan(-1));
-      final tail = proxies.substring(catchStart);
-      final nextMethod = tail.indexOf('void updateCurrentGroupName');
-      expect(nextMethod, greaterThan(-1));
       expect(
-        tail.substring(0, nextMethod),
-        isNot(contains('.value = []')),
-        reason: 'clearing groups on a transient error hid the whole tab',
+        proxies,
+        contains('updateGroups: keeping the last successful snapshot'),
+      );
+      expect(proxies, contains('if (!snapshot.succeeded)'));
+      final failureGuard = proxies.indexOf('if (!snapshot.succeeded)');
+      final publish = proxies.indexOf(
+        'ref.read(groupsProvider.notifier).value = snapshot.groups',
+        failureGuard,
+      );
+      expect(failureGuard, greaterThan(-1));
+      expect(publish, greaterThan(failureGuard));
+      expect(
+        proxies.substring(failureGuard, publish),
+        contains('return;'),
+        reason: 'failed Core reads keep the last successful snapshot',
+      );
+      expect(
+        proxies.substring(publish),
+        contains('snapshot.groups'),
+        reason:
+            'a successful authoritative empty snapshot must clear old groups',
       );
     });
 

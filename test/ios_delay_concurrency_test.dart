@@ -87,7 +87,9 @@ void main() {
       expect(source, contains('private var inFlightProviderMessages = 0'));
       expect(
         source,
-        contains('func acquireProviderMessageSlot(lane: ProviderMessageLane) async'),
+        contains(
+          'func acquireProviderMessageSlot(lane: ProviderMessageLane) async',
+        ),
       );
       expect(
         source,

@@ -1,4 +1,4 @@
-import 'package:fl_clash/common/ios_profile_budget.dart';
+import 'package:fl_clash/common/common.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -126,6 +126,22 @@ void main() {
       final providers = out['rule-providers'] as Map;
       expect(providers['cn']['interval'], 604800);
       expect(providers['inline'].containsKey('interval'), isFalse);
+    });
+  });
+
+  group('generation integration', () {
+    test('sanitizes only the iOS config handed to the encoder', () {
+      final input = desktopProfile();
+
+      final ios = finalizeProfileConfig(input, isIOS: true);
+      final desktop = finalizeProfileConfig(input, isIOS: false);
+
+      expect(ios.containsKey('port'), isFalse);
+      expect((ios['proxies'] as List).first['pre-connect'], iosPreConnectCap);
+      expect(desktop['port'], 7891);
+      expect((desktop['proxies'] as List).first['pre-connect'], 8);
+      expect(input['port'], 7891);
+      expect((input['proxies'] as List).first['pre-connect'], 8);
     });
   });
 

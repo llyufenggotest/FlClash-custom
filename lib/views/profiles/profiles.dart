@@ -21,16 +21,17 @@ import 'add.dart';
 import 'edit.dart';
 import 'preview.dart';
 
-String _localizedPhase(AppLocalizations l10n, RulePreparationPhase phase) => switch (phase) {
-  RulePreparationPhase.queued => l10n.loading,
-  RulePreparationPhase.downloading => l10n.download,
-  RulePreparationPhase.cacheHit => l10n.resources,
-  RulePreparationPhase.validating => l10n.loading,
-  RulePreparationPhase.compiling => l10n.loading,
-  RulePreparationPhase.commit => l10n.loading,
-  RulePreparationPhase.complete => l10n.resources,
-  RulePreparationPhase.error => l10n.tip,
-};
+String _localizedPhase(AppLocalizations l10n, RulePreparationPhase phase) =>
+    switch (phase) {
+      RulePreparationPhase.queued => l10n.loading,
+      RulePreparationPhase.downloading => l10n.download,
+      RulePreparationPhase.cacheHit => l10n.resources,
+      RulePreparationPhase.validating => l10n.loading,
+      RulePreparationPhase.compiling => l10n.loading,
+      RulePreparationPhase.commit => l10n.loading,
+      RulePreparationPhase.complete => l10n.resources,
+      RulePreparationPhase.error => l10n.tip,
+    };
 
 String _localizedKind(AppLocalizations l10n, String kind) => switch (kind) {
   'proxy' => l10n.proxyProviders,
@@ -38,6 +39,7 @@ String _localizedKind(AppLocalizations l10n, String kind) => switch (kind) {
   'generation' => l10n.resources,
   _ => l10n.resources,
 };
+
 class ProfilesView extends ConsumerStatefulWidget {
   const ProfilesView({super.key});
 
@@ -148,7 +150,7 @@ class _ProfilesViewState extends ConsumerState<ProfilesView> {
           body: Column(
             children: [
               if (progress != null)
-                              Semantics(
+                Semantics(
                   liveRegion: true,
                   child: Material(
                     color: context.colorScheme.secondaryContainer,

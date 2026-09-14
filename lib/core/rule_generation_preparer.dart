@@ -869,7 +869,16 @@ class RuleGenerationPreparer {
           if (await _fileSHA256(temporarySource.path) != digest) {
             throw StateError('cache blob digest mismatch');
           }
-          await temporarySource.rename(source.path);
+          try {
+            await temporarySource.rename(source.path);
+          } on FileSystemException {
+            // Providers with different identities can share the same payload.
+            // Another concurrent writer may have published this digest first.
+            if (!await source.exists() ||
+                await _fileSHA256(source.path) != digest) {
+              rethrow;
+            }
+          }
         } finally {
           if (await temporarySource.exists()) await temporarySource.delete();
         }

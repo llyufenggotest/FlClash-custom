@@ -22,6 +22,17 @@ import '../helpers/test_profiles.dart';
 
 class MockCoreHandlerInterface extends Mock implements CoreHandlerInterface {}
 
+Future<void> _waitUntil(
+  bool Function() condition, {
+  required String reason,
+}) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 2));
+  while (!condition()) {
+    if (DateTime.now().isAfter(deadline)) fail(reason);
+    await Future<void>.delayed(const Duration(milliseconds: 1));
+  }
+}
+
 const _testUrl = 'http://delay.test';
 
 Group _group(String name, List<Proxy> all) =>
@@ -180,24 +191,37 @@ void main() {
       },
     );
 
-    test(
-      'clears the groups once retry is exhausted after core throws',
-      () async {
-        when(core.getProxies).thenThrow(StateError('core down'));
-        final container = buildContainer(profile: _selectedProfile('HK-01'));
-        container.read(groupsProvider.notifier).value = [
-          _group('Stale', const []),
-        ];
+    test('publishes an authoritative empty Core snapshot', () async {
+      when(
+        core.getProxies,
+      ).thenAnswer((_) async => const ProxiesData(all: [], proxies: {}));
+      final container = buildContainer(profile: _selectedProfile('HK-01'));
+      container.read(groupsProvider.notifier).value = [
+        _group('Cached', const []),
+      ];
 
-        await actionOf(container).updateGroups();
+      await actionOf(container).updateGroups();
 
-        expect(container.read(groupsProvider), isEmpty);
-        expect(container.read(currentProfileProvider)?.selectedMap, {
-          'Proxy': 'HK-01',
-        });
-        verify(core.getProxies).called(3);
-      },
-    );
+      expect(container.read(groupsProvider), isEmpty);
+      verify(core.getProxies).called(1);
+    });
+
+    test('keeps cached groups when refresh retries are exhausted', () async {
+      when(core.getProxies).thenThrow(StateError('core down'));
+      final container = buildContainer(profile: _selectedProfile('HK-01'));
+      final cachedGroups = [_group('Cached', const [])];
+      final groupsNotifier = container.read(groupsProvider.notifier);
+      groupsNotifier.value = cachedGroups;
+      final cachedState = container.read(groupsProvider);
+
+      await actionOf(container).updateGroups();
+
+      expect(container.read(groupsProvider), same(cachedState));
+      expect(container.read(currentProfileProvider)?.selectedMap, {
+        'Proxy': 'HK-01',
+      });
+      verify(core.getProxies).called(3);
+    });
 
     test('a core status change alone does not clear the groups', () {
       final container = buildContainer();
@@ -361,6 +385,7 @@ void main() {
       await action.updateCurrentSelectedMap('B', 'Proxy B');
 
       expect(container.read(currentProfileProvider)?.selectedMap, {
+        'Proxy': 'HK-00',
         'A': 'Proxy A',
         'B': 'Proxy B',
       });
@@ -398,6 +423,12 @@ void main() {
 
         action.changeProxyDebounce('Proxy', 'HK-01');
         action.changeProxyDebounce('Proxy', 'HK-02');
+        await _waitUntil(
+          () =>
+              container.read(currentProfileProvider)?.selectedMap['Proxy'] ==
+              'HK-02',
+          reason: 'the debounced selection was not persisted',
+        );
         expect(container.read(currentProfileProvider)?.selectedMap, {
           'Proxy': 'HK-02',
         });

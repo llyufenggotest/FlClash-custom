@@ -54,18 +54,18 @@ class _OppaProfileDialogState extends State<OppaProfileDialog> {
     );
   }
 
+  void _disposeControllers() {
+    _name.dispose();
+    _server.dispose();
+    _port.dispose();
+    _password.dispose();
+    _sni.dispose();
+    _preConnect.dispose();
+  }
+
   @override
   void dispose() {
-    for (final controller in [
-      _name,
-      _server,
-      _port,
-      _password,
-      _sni,
-      _preConnect,
-    ]) {
-      controller.dispose();
-    }
+    _disposeControllers();
     super.dispose();
   }
 

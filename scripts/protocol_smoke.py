@@ -12,6 +12,8 @@ CONTRACTS = {
     "oppa": ("oppa", ["transport/oppa", "adapter"]),
     "fastup": ("fastup", ["adapter", "adapter/outbound"]),
     "x365": ("x365", ["adapter", "adapter/outbound"]),
+    "juzi": ("juzi", ["transport/vless", "adapter/outbound"]),
+    "pure": ("pure", ["transport/vless", "adapter/outbound"]),
     "blackstone-xhttp": ("blackstone", ["transport", "adapter"]),
     "viewturbo": ("sing-shadowsocks2", ["go.mod"]),
 }

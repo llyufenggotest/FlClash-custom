@@ -44,10 +44,7 @@ class ProfilesAction extends _$ProfilesAction {
       await action();
     } finally {
       completer.complete();
-      if (identical(
-        _selectionTransactionTails[profileId],
-        completer.future,
-      )) {
+      if (identical(_selectionTransactionTails[profileId], completer.future)) {
         unawaited(_selectionTransactionTails.remove(profileId));
       }
     }
@@ -64,7 +61,9 @@ class ProfilesAction extends _$ProfilesAction {
     if (currentProfile == null) return;
     await _withSelectionTransaction(currentProfile.id, () async {
       final profile = ref.read(profilesProvider).getProfile(currentProfile.id);
-      if (profile == null || profile.selectedMap[groupName] == proxyName) return;
+      if (profile == null || profile.selectedMap[groupName] == proxyName) {
+        return;
+      }
       final selectedMap = Map<String, String>.from(profile.selectedMap);
       if (proxyName.isEmpty) {
         selectedMap.remove(groupName);
@@ -116,7 +115,9 @@ class ProfilesAction extends _$ProfilesAction {
       final isNotNeedUpdate = profile.lastUpdateDate
           ?.add(profile.autoUpdateDuration)
           .isBeforeNow;
-      if (isNotNeedUpdate == false || profile.type == ProfileType.file) continue;
+      if (isNotNeedUpdate == false || profile.type == ProfileType.file) {
+        continue;
+      }
       try {
         await updateProfile(profile);
       } catch (e) {
@@ -153,6 +154,12 @@ class ProfilesAction extends _$ProfilesAction {
         ref
             .read(setupActionProvider.notifier)
             .applyProfileDebounce(silence: true);
+      } else {
+        unawaited(
+          ref
+              .read(setupActionProvider.notifier)
+              .scheduleProfilePrewarm(newProfile),
+        );
       }
     } finally {
       if (operation != null) {
@@ -171,7 +178,16 @@ class ProfilesAction extends _$ProfilesAction {
       futureFunction,
       title: currentAppLocalizations.addProfile,
     );
-    if (profile != null) putProfile(profile);
+    if (profile != null) {
+      putProfile(profile);
+      if (ref.read(currentProfileIdProvider) != profile.id) {
+        unawaited(
+          ref
+              .read(setupActionProvider.notifier)
+              .scheduleProfilePrewarm(profile),
+        );
+      }
+    }
   }
 
   Future<void> addOppaProfile(OppaProxyConfig config) async {

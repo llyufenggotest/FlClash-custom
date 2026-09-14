@@ -16,6 +16,25 @@ import 'package:yaml/yaml.dart';
 
 class _MockCore extends Mock implements CoreHandlerInterface {}
 
+Future<void> _waitUntil(
+  bool Function() condition, {
+  String reason = 'condition did not become true',
+}) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 2));
+  while (!condition()) {
+    if (DateTime.now().isAfter(deadline)) {
+      fail(reason);
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 1));
+  }
+}
+
+void _completeAll(List<Completer<void>> releases) {
+  for (final release in releases) {
+    if (!release.isCompleted) release.complete();
+  }
+}
+
 void main() {
   late Directory home;
   late _MockCore core;
@@ -39,6 +58,12 @@ void main() {
     when(
       () => core.validateCandidateConfigAtPath(any()),
     ).thenAnswer((_) async => '');
+    when(
+      () => core.setProfileSwitchProbeBarrier(
+        token: any(named: 'token'),
+        suspended: any(named: 'suspended'),
+      ),
+    ).thenAnswer((_) async => true);
   });
 
   tearDown(() => home.deleteSync(recursive: true));
@@ -208,7 +233,7 @@ rules: [RULE-SET,ads,DIRECT]
   test(
     'does not retry non-transient failures and retains provider name',
     () async {
-      for (final error in <Object>[
+      for (final error in <Exception>[
         DioException(
           requestOptions: RequestOptions(path: '/ads'),
           type: DioExceptionType.badResponse,
@@ -537,6 +562,17 @@ rules: [RULE-SET,ads,DIRECT]
         'config-path': p.join(target, 'config.yaml'),
       };
     });
+    when(
+      () => core.prewarmRuleProvider(
+        name: any(named: 'name'),
+        definition: any(named: 'definition'),
+        targetPath: any(named: 'targetPath'),
+      ),
+    ).thenAnswer((invocation) async {
+      final target = invocation.namedArguments[#targetPath] as String;
+      await File('$target.mrs').writeAsBytes([1, 2, 3]);
+      return {'sidecar': '$target.mrs', 'count': 1};
+    });
     Future<RuleGenerationPreparation> prepare(int profileId) {
       return RuleGenerationPreparer(
         core: core,
@@ -659,15 +695,23 @@ rule-providers:
 rules: []
 ''',
           );
-      await Future<void>.delayed(Duration.zero);
-      expect(started.length, 4);
-      for (final release in releases.toList()) {
-        release.complete();
+      try {
+        await _waitUntil(
+          () => started.length == 4,
+          reason: 'the first four provider downloads did not start',
+        );
+        expect(started.length, 4);
+        _completeAll(releases.toList());
+        await _waitUntil(
+          () => started.length == 5,
+          reason: 'the queued provider download did not start',
+        );
+        expect(started.length, 5);
+        releases.last.complete();
+        await future.timeout(const Duration(seconds: 2));
+      } finally {
+        _completeAll(releases);
       }
-      await Future<void>.delayed(Duration.zero);
-      expect(started.length, 5);
-      releases.last.complete();
-      await future;
     },
   );
 
@@ -753,16 +797,24 @@ rule-providers:
 rules: []
 ''',
         );
-    await pumpEventQueue(times: 20);
-    expect(releases.length, 4);
-    for (final release in releases.toList()) {
-      release.complete();
+    try {
+      await _waitUntil(
+        () => releases.length == 4,
+        reason: 'the shared pool did not fill all four slots',
+      );
+      expect(releases.length, 4);
+      _completeAll(releases.toList());
+      await _waitUntil(
+        () => releases.length == 5,
+        reason: 'the fifth provider did not acquire a released slot',
+      );
+      expect(releases.length, 5);
+      releases.last.complete();
+      await future.timeout(const Duration(seconds: 2));
+      expect(maximum, 4);
+    } finally {
+      _completeAll(releases);
     }
-    await pumpEventQueue(times: 20);
-    expect(releases.length, 5);
-    releases.last.complete();
-    await future;
-    expect(maximum, 4);
   });
 
   test(
@@ -819,7 +871,11 @@ rule-providers:
 rules: []
 ''',
           );
-      await pumpEventQueue(times: 5);
+      final firstFailure = expectLater(first, throwsA(isA<StateError>()));
+      await _waitUntil(
+        () => firstStarted.length == 4,
+        reason: 'the timed-out operation did not occupy the pool',
+      );
       expect(firstStarted, hasLength(4));
 
       final second =
@@ -840,8 +896,8 @@ rules: []
           );
       await expectLater(second.timeout(const Duration(seconds: 1)), completes);
 
-      await expectLater(first, throwsA(isA<StateError>()));
-      expect(firstStarted.length, greaterThanOrEqualTo(5));
+      await firstFailure;
+      expect(firstStarted, hasLength(4));
       expect(cancelled, isNotEmpty);
       expect(cancelled.every((token) => token.isCancelled), isTrue);
     },

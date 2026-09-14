@@ -160,6 +160,12 @@ rules:
     (tester) async {
       final core = _MockCoreHandlerInterface();
       when(core.cancelDelayTests).thenAnswer((_) async => true);
+      when(
+        () => core.setProfileSwitchProbeBarrier(
+          token: any(named: 'token'),
+          suspended: any(named: 'suspended'),
+        ),
+      ).thenAnswer((_) async => true);
       when(() => core.validateConfig(any())).thenAnswer((_) async => '');
       when(() => core.getProfileConfig(any())).thenAnswer(
         (_) async => <String, dynamic>{

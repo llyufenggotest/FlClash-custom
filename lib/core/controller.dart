@@ -36,8 +36,7 @@ class ActivationEpochOwnership {
     return true;
   }
 
-  bool owns(int epoch) =>
-      epoch == _latestEpoch && epoch == _activeEpoch;
+  bool owns(int epoch) => epoch == _latestEpoch && epoch == _activeEpoch;
 
   bool publishIfOwned(int epoch, void Function() publish) {
     if (!owns(epoch)) return false;
@@ -195,6 +194,47 @@ class CoreController {
     ).findPrepared(profileId: profileId, config: config);
   }
 
+  Future<RuleGenerationPreparation> findOrPrepareRuleGeneration({
+    required String config,
+    required int profileId,
+    bool allowPreparation = true,
+    void Function(RulePreparationProgress progress)? onProgress,
+    @visibleForTesting
+    Future<RuleGenerationPreparation> Function({
+      required String config,
+      required int profileId,
+    })?
+    prepareRuleGenerationOverride,
+  }) {
+    final fingerprint = sha256.convert(utf8.encode(config)).toString();
+    return preparedGenerationScheduler.prepare(
+      jsonEncode({'profile-id': profileId, 'fingerprint': fingerprint}),
+      () async {
+        if (prepareRuleGenerationOverride != null) {
+          return prepareRuleGenerationOverride(
+            config: config,
+            profileId: profileId,
+          );
+        }
+        final existing = await getPreparedRuleGeneration(
+          config: config,
+          profileId: profileId,
+        );
+        if (existing != null) return existing;
+        if (!allowPreparation) {
+          throw StateError(
+            'prepared rule generation is missing for profile $profileId',
+          );
+        }
+        return prepareRuleGeneration(
+          config: config,
+          profileId: profileId,
+          onProgress: onProgress,
+        );
+      },
+    );
+  }
+
   Future<String> setupConfig({
     required SetupParams params,
     Future<void> Function()? preloadInvoke,
@@ -211,6 +251,7 @@ class CoreController {
     @visibleForTesting bool? prepareBeforePreload,
     @visibleForTesting
     Duration rulePreparationTimeout = const Duration(seconds: 60),
+    bool Function()? activationGuard,
     ProfileSwitchPhaseTimer? timing,
   }) async {
     final prepareFirst =
@@ -219,6 +260,10 @@ class CoreController {
     String? candidateConfigPath;
     String? activatedGeneration;
     var generationRestored = false;
+    var generationActivationAllowed = true;
+    bool ownsGenerationActivation() =>
+        generationActivationAllowed &&
+        (activationGuard == null || activationGuard());
     Future<void> restoreActivatedGeneration() async {
       final generation = activatedGeneration;
       final profileId = preparationProfileId;
@@ -233,53 +278,37 @@ class CoreController {
         // Preserve the original setup failure; restoration is best effort.
       }
     }
+
     Future<String> preparation() async {
       final config = preparationConfig;
       final profileId = preparationProfileId;
       if (prepareFirst && config != null && profileId != null) {
         try {
-          final fingerprint = sha256.convert(utf8.encode(config)).toString();
-          Future<RuleGenerationPreparation> findOrPrepare() async {
-            // Tests may inject the preparation seam directly; production
-            // switches always consult the committed-generation index first.
-            if (prepareRuleGenerationOverride != null) {
-              return prepareRuleGenerationOverride(
-                config: config,
-                profileId: profileId,
-              );
-            }
-            final existing = await getPreparedRuleGeneration(
-              config: config,
-              profileId: profileId,
-            );
-            timing?.mark('generation_lookup');
-            if (existing != null) return existing;
-            if (!allowRuleGenerationPreparation) {
-              throw StateError(
-                'prepared rule generation is missing for profile $profileId',
-              );
-            }
-            return prepareRuleGeneration(
-              config: config,
-              profileId: profileId,
-            );
-          }
-
-          final prepared = await preparedGenerationScheduler.prepare(
-            jsonEncode({'profile-id': profileId, 'fingerprint': fingerprint}),
-            findOrPrepare,
+          timing?.mark('generation_lookup');
+          final prepared = await findOrPrepareRuleGeneration(
+            config: config,
+            profileId: profileId,
+            allowPreparation: allowRuleGenerationPreparation,
+            prepareRuleGenerationOverride: prepareRuleGenerationOverride,
           );
+          if (!ownsGenerationActivation()) {
+            return 'profile activation was superseded before generation activation';
+          }
           final activated = await _interface.activateRuleGeneration(
             profileId: profileId,
             generation: prepared.generation,
           );
+          activatedGeneration = prepared.generation;
+          if (!ownsGenerationActivation()) {
+            await restoreActivatedGeneration();
+            return 'profile activation was superseded after generation activation';
+          }
           timing?.mark('generation_activate');
           final activatedPath = activated['config-path']?.toString();
           if (activatedPath == null || activatedPath != prepared.configPath) {
             throw StateError('Core did not activate prepared generation');
           }
           candidateConfigPath = activatedPath;
-          activatedGeneration = prepared.generation;
           await persistPreparedConfig?.call(prepared.config);
           return '';
         } on Object catch (error) {
@@ -324,9 +353,11 @@ class CoreController {
         : '${rulePreparationTimeout.inMilliseconds}ms';
     var result = await prepare().timeout(
       rulePreparationTimeout,
-      onTimeout: () =>
-          'iOS rule preparation timed out after $timeoutLabel; '
-          'network extension was not started',
+      onTimeout: () {
+        generationActivationAllowed = false;
+        return 'rule preparation timed out after $timeoutLabel; '
+            'the current runtime was kept';
+      },
     );
     if (result.isEmpty && isolatedPreparation && candidateConfigPath == null) {
       try {

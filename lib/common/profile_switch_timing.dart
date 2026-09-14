@@ -1,8 +1,5 @@
-typedef ProfileSwitchTimingSink = void Function(
-  String phase,
-  Duration phaseElapsed,
-  Duration totalElapsed,
-);
+typedef ProfileSwitchTimingSink =
+    void Function(String phase, Duration phaseElapsed, Duration totalElapsed);
 
 /// Emits monotonic phase durations without coupling switch code to a metrics SDK.
 ///

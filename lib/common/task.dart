@@ -105,6 +105,15 @@ ClashConfig buildClashConfig(Map<String, dynamic> configMap) {
   return clashConfig.copyWith(proxyTypeMap: proxyTypeMap);
 }
 
+@visibleForTesting
+Map<String, dynamic> finalizeProfileConfig(
+  Map<String, dynamic> rawConfig, {
+  required bool isIOS,
+}) {
+  final config = Map<String, dynamic>.from(rawConfig);
+  return isIOS ? sanitizeProfileForIOS(config) : config;
+}
+
 Future<({String yaml, String md5})> makeRealProfileTask(
   MakeRealProfileState data,
 ) async {
@@ -319,11 +328,10 @@ Future<({String yaml, String md5})> _makeRealProfileTask(
     rawConfig['proxy-groups'] = data.proxyGroups;
   }
   rawConfig['rules'] = rules;
-  Map<String, dynamic> finalConfig = Map<String, dynamic>.from(rawConfig);
-  final isIOS = system.isIOS;
-  if (isIOS) {
-    finalConfig = sanitizeProfileForIOS(finalConfig);
-  }
+  final finalConfig = finalizeProfileConfig(
+    Map<String, dynamic>.from(rawConfig),
+    isIOS: system.isIOS,
+  );
   final yaml = await _encodeYaml(finalConfig);
   return (yaml: yaml, md5: yaml.toMd5());
 }

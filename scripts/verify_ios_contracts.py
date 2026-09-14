@@ -364,7 +364,7 @@ check(
 
 check(
     'lib/common/task.dart',
-    present=['sanitizeProfileForIOS(finalConfig)', 'isIOS: system.isIOS', 'required bool isIOS'],
+    present=['finalizeProfileConfig(', 'sanitizeProfileForIOS(config)', 'isIOS: system.isIOS', 'required bool isIOS'],
 )
 
 check(
