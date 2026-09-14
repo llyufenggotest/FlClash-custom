@@ -120,7 +120,11 @@ void main() {
 
       expect(
         body,
-        contains('final onlineSwitch = _isRunning && preloadInvoke == null;'),
+        contains('final onlineSwitch = _isRunning &&'),
+      );
+      expect(
+        body,
+        contains('(preloadInvoke == null || profileSwitched)'),
       );
       expect(body, contains('if (onlineSwitch)'));
       final hotApplyAt = body.indexOf('commitAndHotApplyIOSConfig(');
