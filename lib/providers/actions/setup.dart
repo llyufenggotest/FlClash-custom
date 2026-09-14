@@ -103,10 +103,6 @@ class SetupAction extends _$SetupAction {
         force: true,
         silence: profileSwitched,
         profileSwitched: profileSwitched,
-        // A validation-only import intentionally has no generation yet. Every
-        // explicit profile selection may fill that one missing generation;
-        // the controller always consults the local committed index first, so
-        // later A/B/A switches remain offline and reuse it.
         allowRuleGenerationPreparation: true,
         activationGuard: activationIsCurrent,
         timing: timing,
@@ -182,11 +178,14 @@ class SetupAction extends _$SetupAction {
           ref.read(currentProfileProvider)?.id != profileId) {
         return;
       }
+      _activationOwnership.publishIfOwned(epoch, () {
+        if (ref.read(currentProfileProvider)?.id != profileId) return;
+        ref.read(groupsProvider.notifier).value = groups;
+      });
       final providers = await _core.getExternalProviders();
       timing?.mark('providers_sync');
       _activationOwnership.publishIfOwned(epoch, () {
         if (ref.read(currentProfileProvider)?.id != profileId) return;
-        ref.read(groupsProvider.notifier).value = groups;
         ref.read(providersProvider.notifier).value = providers;
       });
     } catch (e, s) {
