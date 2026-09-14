@@ -843,6 +843,8 @@ class _TestSetupAction extends SetupAction {
     bool profileSwitched = false,
     bool allowRuleGenerationPreparation = false,
     bool Function()? activationGuard,
+    void Function(String fingerprint)? onGenerationPending,
+    Future<void> Function()? onGenerationReady,
     Future<void> Function()? preloadInvoke,
     ProfileSwitchPhaseTimer? timing,
   }) async {
@@ -932,6 +934,8 @@ class _InitializingSetupAction extends _RaceSetupAction {
     bool profileSwitched = false,
     bool allowRuleGenerationPreparation = false,
     bool Function()? activationGuard,
+    void Function(String fingerprint)? onGenerationPending,
+    Future<void> Function()? onGenerationReady,
     Future<void> Function()? preloadInvoke,
     ProfileSwitchPhaseTimer? timing,
   }) async {

@@ -266,18 +266,36 @@ class RuleGenerationPreparer {
             name: entry.key,
             path: stagingRaw,
           );
-          _progress(
-            RulePreparationPhase.downloading,
-            kind: 'rule',
-            name: entry.key,
-            path: stagingRaw,
-          );
-          final download = await _loadProvider(
-            entry.key,
+          final cacheRoot = p.join(home, 'prewarm', 'cache');
+          final cached = await _readCachedProvider(
+            cacheRoot,
             definition,
             stagingRaw,
-            cacheRoot: p.join(home, 'prewarm', 'cache'),
+            kind: 'rule',
           );
+          late final RuleProviderFileDownload download;
+          if (cached != null) {
+            _progress(
+              RulePreparationPhase.cacheHit,
+              kind: 'rule',
+              name: entry.key,
+              path: stagingRaw,
+            );
+            download = cached;
+          } else {
+            _progress(
+              RulePreparationPhase.downloading,
+              kind: 'rule',
+              name: entry.key,
+              path: stagingRaw,
+            );
+            download = await _loadProvider(
+              entry.key,
+              definition,
+              stagingRaw,
+              cacheRoot: cacheRoot,
+            );
+          }
           if (p.normalize(download.path) != p.normalize(stagingRaw)) {
             throw StateError(
               'rule provider "${entry.key}" wrote outside controlled staging',
@@ -327,7 +345,7 @@ class RuleGenerationPreparer {
 
       final identity = jsonEncode({
         'version': 2,
-        'compiler': 'MRS-SC02',
+        'compiler': 'MRS-SC03',
         'profile-id': profileId,
         'fingerprint': fingerprint,
         'proxy-providers': [
@@ -350,14 +368,23 @@ class RuleGenerationPreparer {
       final generation = _sha256String(identity);
       final finalRoot = p.join(profileRoot, 'generations', generation);
       final artifacts = <Map<String, dynamic>>[];
+      final cacheRoot = p.join(home, 'prewarm', 'cache');
       for (final provider in prepared) {
         final stableId = _sha256String(provider.name);
         final stagingRaw = provider.rawPath;
         final finalRaw = p.join(finalRoot, 'rules', '$stableId.raw');
         Map<String, dynamic> artifact;
         if (provider.compileMRS) {
+          final stagingMRS = '$stagingRaw.mrs';
+          final mrsCached = await _readCachedMRS(
+            cacheRoot,
+            provider,
+            stagingMRS,
+          );
           _progress(
-            RulePreparationPhase.compiling,
+            mrsCached
+                ? RulePreparationPhase.cacheHit
+                : RulePreparationPhase.compiling,
             kind: 'rule',
             name: provider.name,
             path: stagingRaw,
@@ -369,13 +396,24 @@ class RuleGenerationPreparer {
               targetPath: stagingRaw,
             ),
           );
-          final stagingMRS = result['sidecar']?.toString() ?? '$stagingRaw.mrs';
+          final actualMRS = result['sidecar']?.toString() ?? stagingMRS;
+          final mrsDigest = await _fileSHA256(actualMRS);
+          if (!mrsCached) {
+            await _writeCachedMRS(
+              cacheRoot,
+              provider,
+              actualMRS,
+              mrsDigest,
+              result['count'],
+              result['digest']?.toString(),
+            );
+          }
           artifact = {
             'name': 'rule:${provider.name}',
             'raw-path': stagingRaw,
             'raw-sha256': provider.rawSha256,
-            'mrs-path': stagingMRS,
-            'mrs-sha256': await _fileSHA256(stagingMRS),
+            'mrs-path': actualMRS,
+            'mrs-sha256': mrsDigest,
           };
         } else {
           artifact = {
@@ -912,6 +950,149 @@ class RuleGenerationPreparer {
     }
   }
 
+  String _mrsIdentity(_PreparedProvider provider) {
+    return _sha256String(
+      jsonEncode({
+        'version': 1,
+        'compiler': 'MRS-SC03',
+        'raw-sha256': provider.rawSha256.toLowerCase(),
+        'behavior': provider.definition['behavior']?.toString() ?? 'domain',
+        'format': provider.definition['format']?.toString() ?? 'yaml',
+      }),
+    );
+  }
+
+  Future<bool> _readCachedMRS(
+    String root,
+    _PreparedProvider provider,
+    String destinationPath,
+  ) async {
+    final identity = _mrsIdentity(provider);
+    final directory = p.join(root, 'mrs');
+    final metadata = File(p.join(directory, '$identity.json'));
+    if (!await metadata.exists()) return false;
+    try {
+      final record = jsonDecode(await metadata.readAsString());
+      if (record is! Map ||
+          record['identity'] != identity ||
+          record['raw-sha256']?.toString().toLowerCase() !=
+              provider.rawSha256.toLowerCase()) {
+        return false;
+      }
+      final digest = record['mrs-sha256']?.toString().toLowerCase();
+      if (digest == null || digest.length != 64) return false;
+      final source = File(p.join(directory, '$identity.mrs'));
+      if (!await source.exists() || await _fileSHA256(source.path) != digest) {
+        return false;
+      }
+      await File(destinationPath).parent.create(recursive: true);
+      final temporary = File(
+        '$destinationPath.tmp.$pid.${DateTime.now().microsecondsSinceEpoch}.${_cacheNonce++}',
+      );
+      try {
+        await source.copy(temporary.path);
+        if (await _fileSHA256(temporary.path) != digest) return false;
+        if (await File(destinationPath).exists()) {
+          await File(destinationPath).delete();
+        }
+        await temporary.rename(destinationPath);
+      } finally {
+        if (await temporary.exists()) await temporary.delete();
+      }
+      return true;
+    } on Object {
+      return false;
+    }
+  }
+
+  Future<void> _writeCachedMRS(
+    String root,
+    _PreparedProvider provider,
+    String sourcePath,
+    String digest,
+    Object? count,
+    String? readyDigest,
+  ) async {
+    final identity = _mrsIdentity(provider);
+    final flightKey = '$root|mrs|$identity';
+    final existingFlight = _providerCacheFlights[flightKey];
+    if (existingFlight != null) {
+      await existingFlight;
+      return;
+    }
+    final completer = Completer<void>();
+    _providerCacheFlights[flightKey] = completer.future;
+    try {
+      await _writeCachedMRSUnlocked(
+        root,
+        provider,
+        sourcePath,
+        digest,
+        count,
+        readyDigest,
+      );
+      completer.complete();
+    } catch (error, stack) {
+      if (!completer.isCompleted) completer.completeError(error, stack);
+      Error.throwWithStackTrace(error, stack);
+    } finally {
+      if (identical(_providerCacheFlights[flightKey], completer.future)) {
+        unawaited(_providerCacheFlights.remove(flightKey));
+      }
+    }
+  }
+
+  Future<void> _writeCachedMRSUnlocked(
+    String root,
+    _PreparedProvider provider,
+    String sourcePath,
+    String digest,
+    Object? count,
+    String? readyDigest,
+  ) async {
+    final identity = _mrsIdentity(provider);
+    final directory = Directory(p.join(root, 'mrs'));
+    await directory.create(recursive: true);
+    final target = File(p.join(directory.path, '$identity.mrs'));
+    final temporaryTarget = File(
+      '${target.path}.tmp.$pid.${DateTime.now().microsecondsSinceEpoch}.${_cacheNonce++}',
+    );
+    try {
+      await File(sourcePath).copy(temporaryTarget.path);
+      if (await _fileSHA256(temporaryTarget.path) != digest.toLowerCase()) {
+        throw StateError('MRS cache blob digest mismatch');
+      }
+      if (await target.exists()) await target.delete();
+      await temporaryTarget.rename(target.path);
+      final metadata = File(p.join(directory.path, '$identity.json'));
+      final temporaryMetadata = File(
+        '${metadata.path}.tmp.$pid.${DateTime.now().microsecondsSinceEpoch}.${_cacheNonce++}',
+      );
+      try {
+        await temporaryMetadata.writeAsString(
+          jsonEncode({
+            'version': 1,
+            'identity': identity,
+            'compiler': 'MRS-SC03',
+            'raw-sha256': provider.rawSha256.toLowerCase(),
+            'mrs-sha256': digest.toLowerCase(),
+            'behavior': provider.definition['behavior']?.toString() ?? 'domain',
+            'format': provider.definition['format']?.toString() ?? 'yaml',
+            'count': count,
+            'ready-digest': readyDigest,
+          }),
+          flush: true,
+        );
+        if (await metadata.exists()) await metadata.delete();
+        await temporaryMetadata.rename(metadata.path);
+      } finally {
+        if (await temporaryMetadata.exists()) await temporaryMetadata.delete();
+      }
+    } finally {
+      if (await temporaryTarget.exists()) await temporaryTarget.delete();
+    }
+  }
+
   String _providerIdentity(
     Map<String, dynamic> definition, {
     String kind = 'rule',
@@ -923,7 +1104,9 @@ class RuleGenerationPreparer {
         'version': 1,
         'kind': kind,
         'type': definition['type']?.toString() ?? '',
-        'path': definition['path']?.toString() ?? '',
+        'path': definition['type']?.toString() == 'http'
+            ? ''
+            : definition['path']?.toString() ?? '',
         'url': definition['url']?.toString() ?? '',
         'header-sha256': _sha256String(
           jsonEncode({for (final entry in headers) entry.key: entry.value}),
@@ -931,7 +1114,7 @@ class RuleGenerationPreparer {
         'behavior': definition['behavior']?.toString() ?? 'domain',
         'format': definition['format']?.toString() ?? 'yaml',
         'size-limit': _sizeLimit(definition),
-        'compiler': 'MRS-SC02',
+        'compiler': 'MRS-SC03',
       }),
     );
   }

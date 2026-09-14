@@ -29,7 +29,18 @@ class SetupGenerationContracts(unittest.TestCase):
         )
         self.assertIn("scheduleProfilePrewarm", setup)
         self.assertIn("scheduleAllProfilePrewarms", setup)
-        self.assertIn("allowRuleGenerationPreparation: true", setup)
+        self.assertIn("allowRuleGenerationPreparation: false", setup)
+        self.assertIn("attemptedPrewarmFingerprints", setup)
+        self.assertIn("onGenerationPending", setup)
+        self.assertIn("generationPending", setup)
+        self.assertIn("onGenerationReady", setup)
+        self.assertIn("_SetupTaskResult.generationPending", setup)
+        self.assertIn("!activationIsCurrent()", setup)
+        self.assertNotIn("allowRuleGenerationPreparation: true", setup)
+        self.assertLess(
+            setup.index("if (requiresCommittedGeneration && !allowRuleGenerationPreparation)"),
+            setup.index("if (!system.isIOS)"),
+        )
         self.assertIn("profileSwitched: profileSwitched", setup)
         self.assertIn("allowRuleGenerationPreparation: allowRuleGenerationPreparation", setup)
 

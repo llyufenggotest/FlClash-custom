@@ -1,6 +1,11 @@
 part of '../action.dart';
 
-enum _SetupTaskResult { completed, handoffToCoreRestart, failed }
+enum _SetupTaskResult {
+  completed,
+  handoffToCoreRestart,
+  generationPending,
+  failed,
+}
 
 class _RunRequest {
   final bool running;
@@ -64,6 +69,7 @@ class SetupAction extends _$SetupAction {
   Future<bool> fullSetup({
     bool profileSwitched = false,
     int? profileSwitchGeneration,
+    Set<String>? attemptedPrewarmFingerprints,
   }) async {
     if (!ref.read(initProvider)) return true;
     final generation =
@@ -80,6 +86,7 @@ class SetupAction extends _$SetupAction {
         '${generation}_${DateTime.now().microsecondsSinceEpoch}';
     var barrierHeld = false;
     var setupSucceeded = false;
+    String? pendingFingerprint;
     var barrierResumed = true;
     try {
       if (profileSwitched) {
@@ -97,23 +104,33 @@ class SetupAction extends _$SetupAction {
           return false;
         }
       }
-      await ref
-          .read(proxiesActionProvider.notifier)
-          .cancelDelayTests(cancelCoreRequests: profileSwitched);
-      timing?.mark('delay_cancel');
-      if (generation != _profileSwitchGeneration) return false;
-      ref.read(delayDataSourceProvider.notifier).value = {};
-      final setupResult = applyProfile(
+      final setupResult = _runSetup(
         force: true,
         silence: profileSwitched,
         profileSwitched: profileSwitched,
-        allowRuleGenerationPreparation: true,
+        allowRuleGenerationPreparation: false,
         activationGuard: activationIsCurrent,
+        onGenerationPending: (fingerprint) {
+          pendingFingerprint = fingerprint;
+        },
+        onGenerationReady: () async {
+          await ref
+              .read(proxiesActionProvider.notifier)
+              .cancelDelayTests(cancelCoreRequests: profileSwitched);
+          timing?.mark('delay_cancel');
+          if (!activationIsCurrent()) return;
+          ref.read(delayDataSourceProvider.notifier).value = {};
+          ref.read(logsProvider.notifier).value = FixedList(maxLogsLength);
+          ref.read(requestsProvider.notifier).value = FixedList(
+            maxRequestsLength,
+          );
+        },
         timing: timing,
       );
-      ref.read(logsProvider.notifier).value = FixedList(maxLogsLength);
-      ref.read(requestsProvider.notifier).value = FixedList(maxRequestsLength);
-      setupSucceeded = await setupResult;
+      final taskResult = await setupResult;
+      setupSucceeded =
+          taskResult != _SetupTaskResult.failed &&
+          taskResult != _SetupTaskResult.generationPending;
       timing?.mark('setup');
       if (setupSucceeded && _activationOwnership.activate(activationEpoch)) {
         timing?.mark('activation_owned');
@@ -149,6 +166,32 @@ class SetupAction extends _$SetupAction {
           timing: timing,
         ),
       );
+    }
+    final pending = pendingFingerprint;
+    final attempted = attemptedPrewarmFingerprints ?? <String>{};
+    if (profileSwitched &&
+        pending != null &&
+        !attempted.contains(pending) &&
+        expectedProfileId != null &&
+        activationIsCurrent()) {
+      final profile = ref.read(profilesProvider).getProfile(expectedProfileId);
+      if (profile != null) {
+        final nextAttempted = {...attempted, pending};
+        unawaited(() async {
+          await scheduleProfilePrewarm(profile);
+          if (!ref.mounted ||
+              !activationIsCurrent() ||
+              ref.read(currentProfileProvider)?.id != expectedProfileId ||
+              generation != _profileSwitchGeneration) {
+            return;
+          }
+          await fullSetup(
+            profileSwitched: true,
+            profileSwitchGeneration: generation,
+            attemptedPrewarmFingerprints: nextAttempted,
+          );
+        }());
+      }
     }
     return setupSucceeded && barrierResumed;
   }
@@ -537,6 +580,8 @@ class SetupAction extends _$SetupAction {
     bool profileSwitched = false,
     bool allowRuleGenerationPreparation = true,
     bool Function()? activationGuard,
+    void Function(String fingerprint)? onGenerationPending,
+    Future<void> Function()? onGenerationReady,
     Future<void> Function()? preloadInvoke,
     ProfileSwitchPhaseTimer? timing,
   }) async {
@@ -546,10 +591,14 @@ class SetupAction extends _$SetupAction {
       profileSwitched: profileSwitched,
       allowRuleGenerationPreparation: allowRuleGenerationPreparation,
       activationGuard: activationGuard,
+      onGenerationPending: onGenerationPending,
+      onGenerationReady: onGenerationReady,
       preloadInvoke: preloadInvoke,
       timing: timing,
     );
-    final succeeded = result != _SetupTaskResult.failed;
+    final succeeded =
+        result != _SetupTaskResult.failed &&
+        result != _SetupTaskResult.generationPending;
     if (succeeded && !profileSwitched) {
       final profile = ref.read(currentProfileProvider);
       if (profile != null) unawaited(scheduleProfilePrewarm(profile));
@@ -563,6 +612,8 @@ class SetupAction extends _$SetupAction {
     bool profileSwitched = false,
     bool allowRuleGenerationPreparation = false,
     bool Function()? activationGuard,
+    void Function(String fingerprint)? onGenerationPending,
+    Future<void> Function()? onGenerationReady,
     Future<void> Function()? preloadInvoke,
     ProfileSwitchPhaseTimer? timing,
   }) async {
@@ -585,6 +636,8 @@ class SetupAction extends _$SetupAction {
         profileSwitched: profileSwitched,
         allowRuleGenerationPreparation: allowRuleGenerationPreparation,
         activationGuard: activationGuard,
+        onGenerationPending: onGenerationPending,
+        onGenerationReady: onGenerationReady,
         preloadInvoke: preloadInvoke,
         timing: timing,
         onUpdated: profileSwitched
@@ -785,6 +838,8 @@ class SetupAction extends _$SetupAction {
     bool profileSwitched = false,
     bool allowRuleGenerationPreparation = false,
     bool Function()? activationGuard,
+    void Function(String fingerprint)? onGenerationPending,
+    Future<void> Function()? onGenerationReady,
     Future<void> Function()? preloadInvoke,
     ProfileSwitchPhaseTimer? timing,
     FutureOr Function()? onUpdated,
@@ -822,11 +877,44 @@ class SetupAction extends _$SetupAction {
         !profileSwitched &&
         matchesAppliedConfig &&
         (!force || (system.isIOS && _isRunning));
+    final parsedSetupConfig = loadYaml(yamlString);
+    bool hasExternalProvider(Object? providers) =>
+        providers is YamlMap &&
+        providers.values.any(
+          (value) => value is YamlMap && value['type'] != 'inline',
+        );
+    final requiresCommittedGeneration =
+        profileSwitched &&
+        parsedSetupConfig is YamlMap &&
+        (hasExternalProvider(parsedSetupConfig['rule-providers']) ||
+            hasExternalProvider(parsedSetupConfig['proxy-providers']));
     if (skipRedundantReload) {
       globalState.lastConfigMd5 = yamlMd5;
       await preloadInvoke?.call();
       await onUpdated?.call();
       return _SetupTaskResult.completed;
+    }
+    if (requiresCommittedGeneration && !allowRuleGenerationPreparation) {
+      final profileId = profile?.id;
+      if (profileId == null) return _SetupTaskResult.failed;
+      final prepared = await _core.getPreparedRuleGeneration(
+        config: yamlString,
+        profileId: profileId,
+      );
+      if (prepared == null) {
+        onGenerationPending?.call(
+          sha256.convert(utf8.encode(yamlString)).toString(),
+        );
+        timing?.mark('generation_pending');
+        return _SetupTaskResult.generationPending;
+      }
+    }
+    if (activationGuard != null && !activationGuard()) {
+      return _SetupTaskResult.failed;
+    }
+    await onGenerationReady?.call();
+    if (activationGuard != null && !activationGuard()) {
+      return _SetupTaskResult.failed;
     }
     if (system.isAndroid) {
       globalState.lastVpnOptions = ref.read(vpnOptionsProvider);
@@ -867,17 +955,6 @@ class SetupAction extends _$SetupAction {
           if (profileId != null) {
             await appPath.ensureProviderDirs(profileId);
           }
-          final parsedSetupConfig = loadYaml(yamlString);
-          bool hasExternalProvider(Object? providers) =>
-              providers is YamlMap &&
-              providers.values.any(
-                (value) => value is YamlMap && value['type'] != 'inline',
-              );
-          final requiresCommittedGeneration =
-              profileSwitched &&
-              parsedSetupConfig is YamlMap &&
-              (hasExternalProvider(parsedSetupConfig['rule-providers']) ||
-                  hasExternalProvider(parsedSetupConfig['proxy-providers']));
           if (activationGuard != null && !activationGuard()) {
             commonPrint.log(
               'dropping stale setup after provider directory preparation',

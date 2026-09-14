@@ -539,8 +539,10 @@ rules: [RULE-SET,ads,DIRECT]
     expect(observedLimit, 32 * 1024 * 1024);
   });
 
-  test('reuses a verified rule cache across profiles', () async {
+  test('reuses verified rule and MRS caches across profiles', () async {
     var downloads = 0;
+    var compilations = 0;
+    final secondProgress = <RulePreparationProgress>[];
     when(
       () => core.publishRuleGeneration(
         profileId: any(named: 'profileId'),
@@ -570,13 +572,20 @@ rules: [RULE-SET,ads,DIRECT]
       ),
     ).thenAnswer((invocation) async {
       final target = invocation.namedArguments[#targetPath] as String;
-      await File('$target.mrs').writeAsBytes([1, 2, 3]);
+      if (!await File('$target.mrs').exists()) {
+        compilations++;
+        await File('$target.mrs').writeAsBytes([1, 2, 3]);
+      }
       return {'sidecar': '$target.mrs', 'count': 1};
     });
-    Future<RuleGenerationPreparation> prepare(int profileId) {
+    Future<RuleGenerationPreparation> prepare(
+      int profileId, {
+      void Function(RulePreparationProgress)? onProgress,
+    }) {
       return RuleGenerationPreparer(
         core: core,
         homeDir: () async => home.path,
+        onProgress: onProgress,
         download: (_, _, _, destinationPath, _, _) async {
           downloads++;
           return _writeDownload(
@@ -595,8 +604,18 @@ rules: [RULE-SET,ads,DIRECT]
     }
 
     await prepare(11);
-    await prepare(12);
+    await prepare(12, onProgress: secondProgress.add);
     expect(downloads, 1);
+    expect(compilations, 1);
+    expect(
+      secondProgress.map((event) => event.phase),
+      isNot(
+        anyOf(
+          contains(RulePreparationPhase.downloading),
+          contains(RulePreparationPhase.compiling),
+        ),
+      ),
+    );
   });
 
   test('rejects invalid final config before publishing', () async {

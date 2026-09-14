@@ -206,6 +206,18 @@ class CoreController {
     })?
     prepareRuleGenerationOverride,
   }) {
+    if (!allowPreparation) {
+      return () async {
+        final existing = await getPreparedRuleGeneration(
+          config: config,
+          profileId: profileId,
+        );
+        if (existing != null) return existing;
+        throw StateError(
+          'prepared rule generation is missing for profile $profileId',
+        );
+      }();
+    }
     final fingerprint = sha256.convert(utf8.encode(config)).toString();
     return preparedGenerationScheduler.prepare(
       jsonEncode({'profile-id': profileId, 'fingerprint': fingerprint}),

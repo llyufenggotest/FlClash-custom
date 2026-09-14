@@ -409,6 +409,53 @@ void main() {
       verify(() => mock.validateCandidateConfigAtPath(candidatePath)).called(1);
     });
 
+    test(
+      'non-preparing lookup does not join an in-flight generation build',
+      () async {
+        const config = 'mode: rule';
+        const profileId = 77;
+        final gate = Completer<RuleGenerationPreparation>();
+        when(
+          () => mock.getPreparedRuleGeneration(
+            profileId: profileId,
+            fingerprint: any(named: 'fingerprint'),
+          ),
+        ).thenAnswer((_) async => <String, dynamic>{});
+
+        final preparing = controller.findOrPrepareRuleGeneration(
+          config: config,
+          profileId: profileId,
+          prepareRuleGenerationOverride:
+              ({required config, required profileId}) => gate.future,
+        );
+        await Future<void>.delayed(Duration.zero);
+
+        await expectLater(
+          controller.findOrPrepareRuleGeneration(
+            config: config,
+            profileId: profileId,
+            allowPreparation: false,
+          ),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'message',
+              contains('prepared rule generation is missing'),
+            ),
+          ),
+        );
+        gate.complete(
+          const RuleGenerationPreparation(
+            fingerprint: 'f',
+            config: config,
+            generation: 'g',
+            configPath: 'p',
+          ),
+        );
+        expect((await preparing).generation, 'g');
+      },
+    );
+
     test('connect reuses an in-flight subscription prewarm', () async {
       const params = SetupParams(selectedMap: {}, testUrl: 'http://x.com');
       final setupCompleter = Completer<String>();
