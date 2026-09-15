@@ -46,7 +46,7 @@ Map<String, String> _bindgenEnvironment(BuildInput input) {
       'IPHONEOS_DEPLOYMENT_TARGET': '${code.iOS.targetVersion}.0',
     };
   }
-  if (code.targetOS == OS.macos) {
+  if (code.targetOS == OS.macOS) {
     final result = Process.runSync('xcrun', ['--find', 'clang']);
     if (result.exitCode == 0) {
       final clang = File((result.stdout as String).trim());
