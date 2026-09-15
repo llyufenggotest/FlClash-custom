@@ -108,8 +108,9 @@ jobs:
 
       - name: Build unsigned IPA
         run: |
+          set -o pipefail
           yq -i '.hooks.user_defines.setup.build_assets = true | .hooks.user_defines.rust_api.build_assets = true' pubspec.yaml
-          dart setup.dart ios --no-codesign --ios-bundle-id com.follow.clash.llyufeng -v
+          dart setup.dart ios --no-codesign --ios-bundle-id com.follow.clash.llyufeng -v 2>&1 | tee "$RUNNER_TEMP/flclash-ios-build.log"
 
       - name: Verify sideload compatibility dylib
         env:
@@ -203,7 +204,14 @@ jobs:
       # installable and MT-signable, matching the accepted Android acceptance
       # flow for these forks.
       - name: Build unsigned arm64 APK
-        run: dart setup.dart android --arch arm64 -v
+        run: |
+          dart setup.dart android --arch arm64 -v 2>&1 | tee "$RUNNER_TEMP/flclash-android-build.log"
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            echo '--- Flutter/Dart build tail ---'
+            tail -n 160 "$RUNNER_TEMP/flclash-android-build.log"
+            exit "$status"
+          fi
 
       - name: Verify APK exists
         shell: bash
@@ -252,7 +260,13 @@ jobs:
       # runner, so a packaging dependency cannot mask a real build failure. The
       # tagged release workflow still produces the exe installer.
       - name: Build Windows x64 portable
-        run: dart setup.dart windows --targets zip -v
+        run: |
+          dart setup.dart windows --targets zip -v 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\flclash-windows-build.log"
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host '--- Flutter/Dart build tail ---'
+            Get-Content "$env:RUNNER_TEMP\flclash-windows-build.log" -Tail 160
+            exit $LASTEXITCODE
+          }
 
       - name: Verify archive exists
         shell: bash
@@ -308,7 +322,9 @@ jobs:
         run: flutter pub get
 
       - name: Build macOS package
-        run: dart setup.dart macos -v
+        run: |
+          set -o pipefail
+          dart setup.dart macos -v 2>&1 | tee "$RUNNER_TEMP/flclash-macos-build.log"
 
       - name: Verify package exists
         shell: bash
