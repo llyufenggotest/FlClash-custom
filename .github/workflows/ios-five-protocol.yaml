@@ -25,7 +25,6 @@ env:
   FLUTTER_VERSION: '3.47.4'
   NDK_VERSION: '28.2.13676358'
   NDK_RELEASE: r28c
-  GOFLAGS: -mod=mod
 
 jobs:
   ios:
@@ -38,7 +37,7 @@ jobs:
     timeout-minutes: 90
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -46,7 +45,6 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version: '1.26.5'
-          cache: false
           cache-dependency-path: core/go.sum
 
       - name: Setup Flutter
@@ -110,9 +108,8 @@ jobs:
 
       - name: Build unsigned IPA
         run: |
-          set -o pipefail
           yq -i '.hooks.user_defines.setup.build_assets = true | .hooks.user_defines.rust_api.build_assets = true' pubspec.yaml
-          dart setup.dart ios --no-codesign --ios-bundle-id com.follow.clash.llyufeng -v 2>&1 | tee "$RUNNER_TEMP/flclash-ios-build.log"
+          dart setup.dart ios --no-codesign --ios-bundle-id com.follow.clash.llyufeng -v
 
       - name: Verify sideload compatibility dylib
         env:
@@ -162,7 +159,7 @@ jobs:
     timeout-minutes: 90
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -170,7 +167,6 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version: '1.26.5'
-          cache: false
           cache-dependency-path: core/go.sum
 
       - name: Setup Flutter
@@ -197,9 +193,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libclang-dev
-          clang_path="$(find /usr/lib /usr/local/lib -maxdepth 6 \( -name 'libclang.so' -o -name 'libclang.so.*' \) -print -quit)"
-          test -n "$clang_path" || { echo 'libclang.so not found after installation' >&2; exit 1; }
-          echo "LIBCLANG_PATH=$(dirname "$clang_path")" >> "$GITHUB_ENV"
 
       - name: Get dependencies
         run: flutter pub get
@@ -210,14 +203,7 @@ jobs:
       # installable and MT-signable, matching the accepted Android acceptance
       # flow for these forks.
       - name: Build unsigned arm64 APK
-        run: |
-          dart setup.dart android --arch arm64 -v 2>&1 | tee "$RUNNER_TEMP/flclash-android-build.log"
-          status=${PIPESTATUS[0]}
-          if [ "$status" -ne 0 ]; then
-            echo '--- Flutter/Dart build tail ---'
-            tail -n 160 "$RUNNER_TEMP/flclash-android-build.log"
-            exit "$status"
-          fi
+        run: dart setup.dart android --arch arm64 -v
 
       - name: Verify APK exists
         shell: bash
@@ -239,7 +225,7 @@ jobs:
     timeout-minutes: 90
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -247,7 +233,6 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version: '1.26.5'
-          cache: false
           cache-dependency-path: core/go.sum
 
       - name: Enable git long paths
@@ -267,13 +252,7 @@ jobs:
       # runner, so a packaging dependency cannot mask a real build failure. The
       # tagged release workflow still produces the exe installer.
       - name: Build Windows x64 portable
-        run: |
-          dart setup.dart windows --targets zip -v 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\flclash-windows-build.log"
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host '--- Flutter/Dart build tail ---'
-            Get-Content "$env:RUNNER_TEMP\flclash-windows-build.log" -Tail 160
-            exit $LASTEXITCODE
-          }
+        run: dart setup.dart windows --targets zip -v
 
       - name: Verify archive exists
         shell: bash
@@ -308,7 +287,7 @@ jobs:
       fail-fast: false
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -316,7 +295,6 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version: '1.26.5'
-          cache: false
           cache-dependency-path: core/go.sum
 
       - name: Setup Flutter
@@ -330,9 +308,7 @@ jobs:
         run: flutter pub get
 
       - name: Build macOS package
-        run: |
-          set -o pipefail
-          dart setup.dart macos -v 2>&1 | tee "$RUNNER_TEMP/flclash-macos-build.log"
+        run: dart setup.dart macos -v
 
       - name: Verify package exists
         shell: bash
