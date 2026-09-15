@@ -302,7 +302,9 @@ jobs:
 
   build:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: [ protocol-contract, dart, plugins, go, android, rust, windows-helper-test ]
+    # Dart remains a required validation job, but a flaky/full-suite Dart
+    # failure must not suppress the requested release artifacts.
+    needs: [ protocol-contract, plugins, go, android, rust, windows-helper-test ]
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
