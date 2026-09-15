@@ -906,7 +906,6 @@ class RuleGenerationPreparer {
           final sourceValid =
               await source.exists() && await _fileSHA256(source.path) == digest;
           if (!sourceValid) {
-            if (await source.exists()) await source.delete();
             final temporarySource = File(
               '${source.path}.tmp.$pid.${DateTime.now().microsecondsSinceEpoch}.${_cacheNonce++}',
             );
