@@ -895,30 +895,48 @@ class RuleGenerationPreparer {
     _providerCacheFlights[flightKey] = completer.future;
     try {
       final source = File(p.join(root, '$digest.raw'));
-      final sourceValid =
-          await source.exists() && await _fileSHA256(source.path) == digest;
-      if (!sourceValid) {
-        if (await source.exists()) await source.delete();
-        final temporarySource = File(
-          '${source.path}.tmp.$pid.${DateTime.now().microsecondsSinceEpoch}.${_cacheNonce++}',
-        );
+      final rawFlightKey = '$root|raw|$digest';
+      final existingRawFlight = _providerCacheFlights[rawFlightKey];
+      if (existingRawFlight != null) {
+        await existingRawFlight;
+      } else {
+        final rawCompleter = Completer<void>();
+        _providerCacheFlights[rawFlightKey] = rawCompleter.future;
         try {
-          await File(download.path).copy(temporarySource.path);
-          if (await _fileSHA256(temporarySource.path) != digest) {
-            throw StateError('cache blob digest mismatch');
-          }
-          try {
-            await temporarySource.rename(source.path);
-          } on FileSystemException {
-            // Providers with different identities can share the same payload.
-            // Another concurrent writer may have published this digest first.
-            if (!await source.exists() ||
-                await _fileSHA256(source.path) != digest) {
-              rethrow;
+          final sourceValid =
+              await source.exists() && await _fileSHA256(source.path) == digest;
+          if (!sourceValid) {
+            if (await source.exists()) await source.delete();
+            final temporarySource = File(
+              '${source.path}.tmp.$pid.${DateTime.now().microsecondsSinceEpoch}.${_cacheNonce++}',
+            );
+            try {
+              await File(download.path).copy(temporarySource.path);
+              if (await _fileSHA256(temporarySource.path) != digest) {
+                throw StateError('cache blob digest mismatch');
+              }
+              try {
+                await temporarySource.rename(source.path);
+              } on FileSystemException {
+                if (!await source.exists() ||
+                    await _fileSHA256(source.path) != digest) {
+                  rethrow;
+                }
+              }
+            } finally {
+              if (await temporarySource.exists()) {
+                await temporarySource.delete();
+              }
             }
           }
+          rawCompleter.complete();
+        } catch (error, stack) {
+          if (!rawCompleter.isCompleted) rawCompleter.completeError(error, stack);
+          Error.throwWithStackTrace(error, stack);
         } finally {
-          if (await temporarySource.exists()) await temporarySource.delete();
+          if (identical(_providerCacheFlights[rawFlightKey], rawCompleter.future)) {
+            unawaited(_providerCacheFlights.remove(rawFlightKey));
+          }
         }
       }
       final metadata = File(p.join(root, '$identity.json'));
