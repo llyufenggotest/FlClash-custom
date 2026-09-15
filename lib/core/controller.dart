@@ -206,7 +206,7 @@ class CoreController {
     })?
     prepareRuleGenerationOverride,
   }) {
-    if (!allowPreparation) {
+    if (!allowPreparation && prepareRuleGenerationOverride == null) {
       return () async {
         final existing = await getPreparedRuleGeneration(
           config: config,
