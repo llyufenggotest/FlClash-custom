@@ -81,7 +81,7 @@ List<Directory> _hostLibclangDirectories() {
   final directories = <Directory>[];
   final result = Process.runSync('bash', [
     '-lc',
-    'dirname "$(find /usr/lib /usr/local/lib -maxdepth 3 -name "libclang.so*" -type f -print -quit 2>/dev/null)"',
+    r'''dirname "$(find /usr/lib /usr/local/lib -maxdepth 3 -name "libclang.so*" -type f -print -quit 2>/dev/null)"''',
   ]);
   if (result.exitCode == 0) {
     final path = (result.stdout as String).trim();
