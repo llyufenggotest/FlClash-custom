@@ -1,0 +1,165 @@
+import pathlib
+import re
+import unittest
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+
+
+class ProductMigrationContractTest(unittest.TestCase):
+    def read(self, path):
+        return (ROOT / path).read_text(encoding="utf-8")
+
+    def test_fastup_is_normalized_before_decrypt_and_validation(self):
+        source = self.read("lib/providers/actions/profiles.dart")
+        normalize = source.index("convertFastupSubscription")
+        decrypt = source.index("decryptAgeConfig")
+        validate = source.index("validateConfig(prepared)")
+        self.assertLess(normalize, decrypt)
+        self.assertLess(decrypt, validate)
+
+    def test_profile_import_follows_upstream_save_then_put_flow(self):
+        source = self.read("lib/providers/actions/profiles.dart")
+        self.assertIn("Future<void> _addSavedProfile", source)
+        helper_start = source.index("Future<void> _addSavedProfile")
+        helper_end = source.index("Future<void> addOppaProfile", helper_start)
+        helper = source[helper_start:helper_end]
+        self.assertIn("globalState.loadingRun", helper)
+        self.assertIn("final profile = await globalState.loadingRun(", helper)
+        self.assertIn("futureFunction,", helper)
+        self.assertIn("putProfile(profile);", helper)
+        self.assertNotIn("putPreparedProfile", helper)
+        self.assertNotIn("validateAndCommitOnly", helper)
+        self.assertLess(helper.index("globalState.loadingRun("), helper.index("putProfile(profile)"))
+
+    def test_file_url_and_qr_share_prepare_pipeline(self):
+        source = self.read("lib/providers/actions/profiles.dart")
+        self.assertIn("saveFile(bytes, prepare: prepareProfileConfig)", source)
+        self.assertIn(".update(prepare: prepareProfileConfig)", source)
+        self.assertIn("addProfileFormURL(url)", source)
+
+    def test_oppa_product_flow_and_explicit_read_only_policy(self):
+        actions = self.read("lib/providers/actions/profiles.dart")
+        add_view = self.read("lib/views/profiles/add.dart")
+        edit_view = self.read("lib/views/profiles/edit.dart")
+        policy = self.read("lib/common/protocol_edit_policy.dart")
+        self.assertIn("addOppaProfile", actions)
+        self.assertNotIn("OppaProfileDialog", add_view)
+        self.assertIn("ProtocolEditPolicy", edit_view)
+        self.assertIn("xhttp", policy.lower())
+        self.assertIn("blackstone", policy.lower())
+        self.assertIn("oppa", policy.lower())
+
+    def test_desktop_yaml_drop_reuses_profile_validation_pipeline(self):
+        pubspec = self.read("pubspec.yaml")
+        app = self.read("lib/application.dart")
+        actions = self.read("lib/providers/actions/profiles.dart")
+        self.assertIn("desktop_drop:", pubspec)
+        self.assertIn("DropTarget(", app)
+        self.assertIn("!system.isWindows && !system.isMacOS", app)
+        self.assertIn(".yaml", app)
+        self.assertIn(".yml", app)
+        self.assertIn("addProfileFromDroppedFile", app)
+        self.assertIn("startAccessingSecurityScopedResource", app)
+        self.assertIn("stopAccessingSecurityScopedResource", app)
+        self.assertIn("DropItemDirectory", app)
+        self.assertIn("32 * 1024 * 1024", app)
+        self.assertIn("file.openRead()", app)
+        self.assertIn("builder.length + chunk.length", app)
+        self.assertNotIn("await file.length()", app)
+        self.assertNotIn("await file.readAsBytes()", app)
+        self.assertIn("Future<void> addProfileFromDroppedFile", actions)
+        self.assertIn("saveFile(bytes, prepare: prepareProfileConfig)", actions)
+
+    def test_subscription_addition_uses_upstream_profile_persistence(self):
+        actions = self.read("lib/providers/actions/profiles.dart")
+        database = self.read("lib/providers/database.dart")
+
+        self.assertNotIn("ProfileCommitPreparationPolicy", actions)
+        self.assertNotIn("validateAndCommitOnly", actions)
+        self.assertNotIn("_commitPreparedProfile", actions)
+        self.assertIn(".saveFile(bytes, prepare: prepareProfileConfig)", actions)
+        self.assertIn(".update(prepare: prepareProfileConfig)", actions)
+        self.assertIn("putProfile(profile);", actions)
+        self.assertIn("Future<void> putAsync(Profile profile)", database)
+
+    def test_ci_preserves_matrix_and_adds_protocol_gates(self):
+        workflow = self.read(".github/workflows/build.yaml")
+        for platform in ("android", "ios", "linux", "windows", "macos"):
+            self.assertIn(f"platform: {platform}", workflow)
+        self.assertIn("protocol-contract:", workflow)
+        self.assertIn("submodules: recursive", workflow)
+        self.assertIn("5b97d1f820639c51057be1115df6327e6a2dc8be", workflow)
+        self.assertIn("f296a896ac0dc0705c89c47071250a8bcb2a75c4", workflow)
+        self.assertIn("TestJuziHMACWire", workflow)
+        self.assertIn("TestPure", workflow)
+        self.assertIn("with_low_memory", workflow)
+        self.assertIn("MAGIC_SHANLIAN_TRIGGER", workflow)
+        self.assertIn("protocol_smoke", workflow)
+
+    def test_five_platform_workflow_uses_release_toolchains(self):
+        release_workflow = self.read(".github/workflows/build.yaml")
+        matrix_workflow = self.read(".github/workflows/ios-five-protocol.yaml")
+        gradle_versions = self.read("android/gradle/libs.versions.toml")
+        flutter = re.search(
+            r"^  FLUTTER_VERSION: '([^']+)'$", release_workflow, re.MULTILINE
+        )
+        self.assertIsNotNone(flutter)
+        flutter_marker = f"FLUTTER_VERSION: '{flutter.group(1)}'"
+        self.assertIn(flutter_marker, matrix_workflow)
+        self.assertIn("GO_VERSION: '1.26.8'", release_workflow)
+        ndk = re.search(r'^ndkVersion = "([^"]+)"$', gradle_versions, re.MULTILINE)
+        self.assertIsNotNone(ndk)
+        ndk_marker = f"NDK_VERSION: '{ndk.group(1)}'"
+        self.assertIn("NDK_VERSION: r29", release_workflow)
+        self.assertIn(ndk_marker, matrix_workflow)
+        self.assertIn("github.event_name == 'push'", matrix_workflow)
+        self.assertEqual(matrix_workflow.count("github.event_name == 'push'"), 3)
+        self.assertIn("NDK_RELEASE: r28c", matrix_workflow)
+        self.assertIn("ndk-version: ${{ env.NDK_RELEASE }}", matrix_workflow)
+        self.assertIn(
+            "flutter test test/common/oppa_yaml_test.dart", matrix_workflow
+        )
+
+    def test_brand_and_update_source_are_pinned(self):
+        constants = self.read("lib/common/constant.dart")
+        request = self.read("lib/common/request.dart")
+        about = self.read("lib/views/about.dart")
+        self.assertIn("chenx-dust/FlClash-Patched", constants)
+        self.assertIn("api.github.com/repos/$repository/releases/latest", request)
+        self.assertIn("dialogs.openUrl('https://github.com/$repository')", about)
+        self.assertIn("chenx-dust/mihomo/tree/FlClash", about)
+
+    def test_dart_migration_keeps_rule_prewarm_and_current_ui_contracts(self):
+        request = self.read("lib/common/request.dart")
+        methods = self.read("lib/core/method.dart")
+        setup = self.read("lib/providers/actions/setup.dart")
+        profiles = self.read("lib/providers/action.dart")
+        logs = self.read("lib/views/logs.dart")
+        oppa = self.read("lib/views/profiles/oppa_profile_dialog.dart")
+        rust_hook = self.read("plugins/rust_api/hook/build.dart")
+
+        self.assertIn("class RuleProviderFileDownload", request)
+        self.assertIn("downloadRuleProviderToFile", request)
+        for method in (
+            "prewarmRuleProvider",
+            "publishRuleGeneration",
+            "getPreparedRuleGeneration",
+            "validateCandidateConfigAtPath",
+        ):
+            self.assertIn(method, methods)
+        self.assertIn("Future<RuleGenerationPreparation?> prewarmProfile(", setup)
+        self.assertIn("import 'dart:convert';", profiles)
+        self.assertIn("import 'dart:typed_data';", profiles)
+        self.assertIn("dialogs.showMessage", logs)
+        self.assertIn("_listController.setLogs(const [])", logs)
+        self.assertIn("package:fl_clash/widgets/widgets.dart", oppa)
+        self.assertIn("CommonDialog(", oppa)
+        self.assertIn("Process.runSync('llvm-config', ['--libdir'])", rust_hook)
+        self.assertIn("on ProcessException", rust_hook)
+        self.assertIn("llvmConfig = null", rust_hook)
+        self.assertIn("'/usr/lib/llvm-18/lib'", rust_hook)
+        self.assertIn("_containsLibclang", rust_hook)
+
+
+if __name__ == "__main__":
+    unittest.main()
