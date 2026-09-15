@@ -46,6 +46,17 @@ Map<String, String> _bindgenEnvironment(BuildInput input) {
       'IPHONEOS_DEPLOYMENT_TARGET': '${code.iOS.targetVersion}.0',
     };
   }
+  if (code.targetOS == OS.macos) {
+    final result = Process.runSync('xcrun', ['--find', 'clang']);
+    if (result.exitCode == 0) {
+      final clang = File((result.stdout as String).trim());
+      final directory = Directory('${clang.parent.parent.path}/lib');
+      if (directory.existsSync() && directory.listSync().any(_isLibclang)) {
+        return {'LIBCLANG_PATH': directory.path};
+      }
+    }
+    return const {};
+  }
   if (code.targetOS != OS.android) {
     return const {};
   }
