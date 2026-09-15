@@ -45,6 +45,7 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version: '1.26.5'
+          cache: false
           cache-dependency-path: core/go.sum
 
       - name: Setup Flutter
@@ -168,6 +169,7 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version: '1.26.5'
+          cache: false
           cache-dependency-path: core/go.sum
 
       - name: Setup Flutter
@@ -241,6 +243,7 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version: '1.26.5'
+          cache: false
           cache-dependency-path: core/go.sum
 
       - name: Enable git long paths
@@ -309,6 +312,7 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version: '1.26.5'
+          cache: false
           cache-dependency-path: core/go.sum
 
       - name: Setup Flutter
