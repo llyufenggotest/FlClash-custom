@@ -16,6 +16,7 @@ on:
       - five-protocol-ios
       - migration/full-0.8.120
       - migration/full-0.8.122
+      - product/refusion/full-0.8.123
 
 permissions:
   contents: read
