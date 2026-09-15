@@ -25,6 +25,7 @@ env:
   FLUTTER_VERSION: '3.47.4'
   NDK_VERSION: '28.2.13676358'
   NDK_RELEASE: r28c
+  GOFLAGS: -mod=mod
 
 jobs:
   ios:
@@ -196,6 +197,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libclang-dev
+          echo "LIBCLANG_PATH=$(dirname "$(find /usr/lib /usr/local/lib -maxdepth 3 -name 'libclang.so*' -type f -print -quit)")" >> "$GITHUB_ENV"
 
       - name: Get dependencies
         run: flutter pub get

@@ -62,10 +62,32 @@ Map<String, String> _bindgenEnvironment(BuildInput input) {
       return {'LIBCLANG_PATH': directory.path};
     }
   }
+  // Ubuntu installs libclang separately from the Android NDK.  Flutter's
+  // native-assets input still points at the NDK compiler, so also accept the
+  // host LLVM locations used by apt-installed libclang-dev.
+  for (final directory in _hostLibclangDirectories()) {
+    if (directory.existsSync() && directory.listSync().any(_isLibclang)) {
+      return {'LIBCLANG_PATH': directory.path};
+    }
+  }
   throw StateError(
     'No libclang under ${llvmRoot.path} (lib, lib64, or bin); the NDK Flutter '
     'passed cannot run bindgen for rquickjs',
   );
+}
+
+List<Directory> _hostLibclangDirectories() {
+  if (!Platform.isLinux) return const [];
+  final directories = <Directory>[];
+  final result = Process.runSync('bash', [
+    '-lc',
+    'dirname "$(find /usr/lib /usr/local/lib -maxdepth 3 -name "libclang.so*" -type f -print -quit 2>/dev/null)"',
+  ]);
+  if (result.exitCode == 0) {
+    final path = (result.stdout as String).trim();
+    if (path.isNotEmpty) directories.add(Directory(path));
+  }
+  return directories;
 }
 
 bool _isLibclang(FileSystemEntity entity) {
