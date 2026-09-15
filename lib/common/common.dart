@@ -29,6 +29,7 @@ export 'mixin.dart';
 export 'navigator.dart';
 export 'network.dart';
 export 'num.dart';
+export 'oppa_yaml.dart';
 export 'package.dart';
 export 'path.dart';
 export 'picker.dart';

@@ -197,7 +197,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libclang-dev
-          echo "LIBCLANG_PATH=$(dirname "$(find /usr/lib /usr/local/lib -maxdepth 3 -name 'libclang.so*' -type f -print -quit)")" >> "$GITHUB_ENV"
+          clang_path="$(find /usr/lib /usr/local/lib -maxdepth 3 -name 'libclang.so*' -type f -print -quit)"
+          test -n "$clang_path" || { echo 'libclang.so not found after installation' >&2; exit 1; }
+          echo "LIBCLANG_PATH=$(dirname "$clang_path")" >> "$GITHUB_ENV"
 
       - name: Get dependencies
         run: flutter pub get
