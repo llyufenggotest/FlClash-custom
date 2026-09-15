@@ -5,6 +5,11 @@
 #import <os/log.h>
 #import <string.h>
 
+@interface NECoreNativeDiagnosticLog : NSObject
++ (void)appendCoreLogLevel:(NSString *)level message:(NSString *)message;
++ (NSString *)sanitize:(NSString *)message;
+@end
+
 static void *NECoreCallbackQueueKey(void);
 static dispatch_queue_t NECoreCallbackQueue(void);
 
@@ -123,11 +128,17 @@ static void NECoreSystemLog(const char *level, const char *message) {
   if (message == NULL) {
     return;
   }
-  os_log_with_type(
-      NECoreLogger(),
-      NECoreLogType(level),
-      "%{public}s",
-      message);
+  // Bound conversion and redact before *either* output. Invalid UTF-8 and
+  // oversized messages are omitted rather than passed through raw.
+  NSString *levelString = level == NULL || strnlen(level, 65) > 64
+      ? @"default" : ([NSString stringWithUTF8String:level] ?: @"default");
+  NSString *messageString = strnlen(message, 4097) > 4096
+      ? @"[OVERSIZED LOG OMITTED]"
+      : ([NSString stringWithUTF8String:message] ?: @"[INVALID UTF8 LOG OMITTED]");
+  NSString *safeMessage = [NECoreNativeDiagnosticLog sanitize:messageString];
+  os_log_with_type(NECoreLogger(), NECoreLogType(levelString.UTF8String),
+                  "%{private}@", safeMessage);
+  [NECoreNativeDiagnosticLog appendCoreLogLevel:levelString message:safeMessage];
 }
 
 @implementation NECoreBridge
@@ -188,6 +199,11 @@ static void NECoreSystemLog(const char *level, const char *message) {
 + (void)setSuspended:(BOOL)suspended {
   [self initializeBridge];
   suspend(suspended ? 1 : 0);
+}
+
++ (void)releaseMemory {
+  [self initializeBridge];
+  forceGC();
 }
 
 @end
