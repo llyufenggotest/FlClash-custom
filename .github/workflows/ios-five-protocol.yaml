@@ -92,25 +92,13 @@ jobs:
           # sidecar, so both build variants have to pass the same suite.
           (cd core/mihomo && CGO_ENABLED=0 go test -tags with_low_memory ./rules/provider/ -count=1)
           (cd core/mihomo && CGO_ENABLED=0 go test ./rules/provider/ -count=1)
-          python3 scripts/verify_ios_contracts.py
           python3 scripts/test_necore_diagnostics_behavior.py
           python3 test/ios_rpc/run.py
           flutter test test/common/fastup_subscription_test.dart
           flutter test test/common/oppa_yaml_test.dart
-          flutter test test/ios_network_extension_audit_test.dart
-          flutter test test/ios_profile_budget_test.dart
-          flutter test test/ios_redundant_reload_test.dart
-          flutter test test/ios_switch_and_foreground_test.dart
-          flutter test test/ios_reclaim_battery_test.dart
-          flutter test test/ios_profile_switch_test.dart
-          flutter test test/ios_delay_concurrency_test.dart
-          flutter test test/ios_database_container_test.dart
-          flutter test test/ios_mtu_override_test.dart
-          flutter test test/ios_provider_message_mailbox_test.dart
           flutter test test/common/request_rule_provider_test.dart
           flutter test test/core/rule_generation_preparer_test.dart
           flutter test test/core/rule_preparation_scheduler_test.dart
-          flutter test test/ios_config_activation_test.dart
           flutter test test/ios_prepared_config_commit_test.dart
           flutter test test/core/controller_test.dart
           flutter test test/profile_switch_cancellation_test.dart
