@@ -33,6 +33,11 @@ private enum ManagerLoadError: LocalizedError {
   }
 }
 
+struct TunnelStartPayload {
+  let options: [String: NSObject]
+  let snapshotCommitted: Bool
+}
+
 @MainActor
 final class TunnelManagerStore {
   private let sharedStateStore: SharedStateStore
@@ -42,7 +47,9 @@ final class TunnelManagerStore {
     subsystem: Bundle.main.bundleIdentifier ?? "com.follow.clash",
     category: "TunnelManagerStore"
   )
-  private let loadTimeout: TimeInterval = 5
+  // Preference loading is separate from NECore startup. Allow slow iOS
+  // preference services to return without creating a false startup failure.
+  private let loadTimeout: TimeInterval = 15
   private let maxInvalidationReloadCount = 1
 
   private var cacheGeneration: UInt64 = 0
@@ -175,6 +182,29 @@ final class TunnelManagerStore {
       return false
     }
     return proto.providerBundleIdentifier == networkExtensionIdentifier
+  }
+
+  func beginTunnelAttempt() -> String {
+    sharedStateStore.beginTunnelAttempt()
+  }
+
+  /// Commits the App Group snapshot and returns the in-memory start payload.
+  /// Called immediately before `startVPNTunnel(options:)` so the extension has
+  /// three independent ways to obtain its startup state.
+  func prepareTunnelStartPayload() -> TunnelStartPayload {
+    var committed = false
+    if let data = sharedStateStore.sharedStateData() {
+      committed = sharedStateStore.commitSharedStateSnapshot(data)
+      if !committed {
+        log("startVPNTunnel snapshot commit failed bytes=\(data.count)")
+      }
+    } else {
+      log("startVPNTunnel shared state unavailable for snapshot")
+    }
+    return TunnelStartPayload(
+      options: sharedStateStore.makeTunnelStartOptions(),
+      snapshotCommitted: committed
+    )
   }
 
   func isCachedConnection(_ connection: NEVPNConnection) -> Bool {
