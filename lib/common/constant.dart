@@ -82,6 +82,7 @@ const localhost = '127.0.0.1';
 const defaultExternalControllerPort = 9090;
 const clashConfigKey = 'clash_config';
 const configKey = 'config';
+const appliedConfigMd5Key = 'applied_config_md5';
 const systemDnsRecordKey = 'system_dns_record';
 const bootRecordKey = 'boot_record';
 const defaultSystemDnsFallback = '223.5.5.5';

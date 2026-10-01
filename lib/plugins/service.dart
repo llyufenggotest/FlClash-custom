@@ -17,6 +17,8 @@ class Service {
   static Service? _instance;
   late MethodChannel methodChannel;
 
+  static Service get scoped => Service();
+
   final ObserverList<ServiceListener> _listeners =
       ObserverList<ServiceListener>();
 
@@ -70,6 +72,18 @@ class Service {
     return await methodChannel.invokeMethod<bool>('cancelDelayTests') ?? false;
   }
 
+  Future<bool> setProfileSwitchProbeBarrier({
+    required String token,
+    required bool suspended,
+  }) async {
+    if (!system.isIOS) return true;
+    return await methodChannel.invokeMethod<bool>(
+          'setProfileSwitchProbeBarrier',
+          {'token': token, 'suspended': suspended},
+        ) ??
+        false;
+  }
+
   Future<bool> start(SharedState state) async {
     return await methodChannel.invokeMethod<bool>(
           'start',
@@ -104,6 +118,16 @@ class Service {
       return null;
     }
     return DateTime.fromMillisecondsSinceEpoch(ms);
+  }
+
+  Future<String> getNativeLogs() async {
+    if (!system.isIOS) return '';
+    return await methodChannel.invokeMethod<String>('getNativeLogs') ?? '';
+  }
+
+  Future<bool> clearNativeLogs() async {
+    if (!system.isIOS) return true;
+    return await methodChannel.invokeMethod<bool>('clearNativeLogs') ?? false;
   }
 
   bool get hasListeners {

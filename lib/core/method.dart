@@ -10,6 +10,7 @@ enum CoreMethod {
   shutdown,
   validateConfig,
   updateConfig,
+  parseProfileConfigData,
   getProfileConfig,
   getProxies,
   changeProxy,
@@ -17,6 +18,8 @@ enum CoreMethod {
   getTotalTraffic,
   resetTraffic,
   asyncTestDelay,
+  cancelDelayTests,
+  setProfileSwitchProbeBarrier,
   getConnections,
   closeConnections,
   resetConnections,
@@ -39,6 +42,14 @@ enum CoreMethod {
   getMemory,
   getGoroutineCount,
   crash,
+  prewarmProxyProvider,
+  prewarmRuleProvider,
+  publishRuleGeneration,
+  activateRuleGeneration,
+  restoreRuleGeneration,
+  getPreparedRuleGeneration,
+  validateStagedConfigAtPath,
+  validateCandidateConfigAtPath,
   setupConfig,
   clearEffect,
   deleteManagedPath,
@@ -146,8 +157,11 @@ class CoreMethodException implements Exception {
     this.details,
   });
 
-  bool get isCoreUnavailable =>
-      const {'transport_disconnected', 'transport_error'}.contains(code);
+  bool get isCoreUnavailable => const {
+    'transport_disconnected',
+    'transport_error',
+    'network_extension_unavailable',
+  }.contains(code);
 
   @override
   String toString() => 'CoreMethodException($code, $message, $details)';
@@ -161,4 +175,11 @@ LogLevel coreFailureLogLevel(Object? error) {
     return LogLevel.warning;
   }
   return error.isCoreUnavailable ? LogLevel.debug : LogLevel.warning;
+}
+
+bool isCoreUnavailableError(Object? error) {
+  if (error is TimeoutException) {
+    return true;
+  }
+  return error is CoreMethodException && error.isCoreUnavailable;
 }
