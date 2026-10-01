@@ -427,6 +427,13 @@ func rejectLinkedComponents(path string, allowMissing bool) error {
 	volume := filepath.VolumeName(absolute)
 	remainder := strings.TrimPrefix(absolute, volume)
 	current := volume + string(filepath.Separator)
+	if home, homeErr := filepath.Abs(C.Path.HomeDir()); homeErr == nil {
+		if rel, relErr := filepath.Rel(home, absolute); relErr == nil &&
+			(rel == "." || rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)) {
+			current = home
+			remainder = rel
+		}
+	}
 	for _, component := range strings.Split(strings.Trim(remainder, string(filepath.Separator)), string(filepath.Separator)) {
 		if component == "" {
 			continue
