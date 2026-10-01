@@ -1,10 +1,25 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
+
+func readRepoFile(t *testing.T, path string) string {
+	t.Helper()
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot resolve test source path")
+	}
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(filename), path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
 
 func TestShutdownRetiresRuleProvidersWithoutChangingStopListener(t *testing.T) {
 	executorSource := readRepoFile(t, filepath.Join("mihomo", "hub", "executor", "executor.go"))

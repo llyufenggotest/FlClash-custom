@@ -133,6 +133,26 @@ func handleShutdown() bool {
 	return true
 }
 
+func handlePrewarmRuleProvider(params *PrewarmRuleProviderParams) (any, error) {
+	if !isInit.Load() {
+		return nil, fmt.Errorf("not initialized")
+	}
+	if params.Name == "" || len(params.Definition) == 0 || params.TargetPath == "" {
+		return nil, fmt.Errorf("invalid rule provider prewarm arguments")
+	}
+	return executor.PrepareRuleProvider(params.Name, params.Definition, params.TargetPath)
+}
+
+func handleValidateCandidateConfig(params *ValidateCandidateConfigParams) string {
+	if !isInit.Load() {
+		return "not initialized"
+	}
+	if err := validateCandidateConfigAtPath(params.CandidateConfigPath); err != nil {
+		return err.Error()
+	}
+	return ""
+}
+
 func handleValidateConfig(data string) string {
 	if _, err := config.UnmarshalRawConfig([]byte(data)); err != nil {
 		return err.Error()
