@@ -89,16 +89,18 @@ Map<String, String> _bindgenEnvironment(BuildInput input) {
 
 List<Directory> _hostLibclangDirectories() {
   if (!Platform.isLinux) return const [];
-  final directories = <Directory>[];
-  final result = Process.runSync('bash', [
-    '-lc',
-    r'''dirname "$(find /usr/lib /usr/local/lib -maxdepth 4 -name 'libclang.so*' -type f -print -quit 2>/dev/null)"''',
+  final result = Process.runSync('find', [
+    '/usr/lib',
+    '/usr/local/lib',
+    '-maxdepth',
+    '4',
+    '-name',
+    'libclang.so*',
+    '-print',
+    '-quit',
   ]);
-  if (result.exitCode == 0) {
-    final path = (result.stdout as String).trim();
-    if (path.isNotEmpty) directories.add(Directory(path));
-  }
-  return directories;
+  final path = (result.stdout as String).trim();
+  return path.isEmpty ? const [] : [File(path).parent];
 }
 
 bool _isLibclang(FileSystemEntity entity) {
